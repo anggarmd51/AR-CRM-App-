@@ -1,0 +1,10 @@
+{
+  "name": "Personal CRM - Field Sales & Pipeline Manager",
+  "description": "AR Personal CRM Enterprise: High-performance offline-first CRM for solo account managers with AR Cloud Sync, pipeline Kanban, GPS check-in, and AI meeting summarization.",
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

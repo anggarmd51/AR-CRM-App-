@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --canvas-cream: #fcfcfa;
+    --warm-parchment: #f8f5ee;
+    --primary-ink: #1f1f1f;
+    --sprout-orange: #ff4800;
+  }
+
+  body {
+    background-color: #fcfcfa;
+    color: #1f1f1f;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+
+  h1, h2, h3, .font-serif-heading {
+    font-family: 'Source Serif 4', Georgia, Cambria, "Times New Roman", Times, serif;
+    letter-spacing: -0.02em;
+  }
+}
+
+/* Custom scrollbar for Kanban & code without heavy shadows */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f8f5ee;
+}
+::-webkit-scrollbar-thumb {
+  background: #dcd6c8;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #b5ada0;
+}

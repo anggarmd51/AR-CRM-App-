@@ -1,0 +1,30 @@
+{
+  "short_name": "AR CRM",
+  "name": "AR Personal CRM Enterprise",
+  "description": "High-performance offline-first Personal CRM for solo account managers with AR Cloud Sync, pipeline Kanban, GPS check-in, and AI meeting summarization.",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/assets/aistudio/Logo_AR_CRM_dengan_Hub_Oranye_ce6dcc6a.png",
+      "type": "image/png",
+      "sizes": "1254x1254",
+      "purpose": "any"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#FCFCFA",
+  "theme_color": "#1A2E40",
+  "display": "standalone",
+  "orientation": "portrait"
+}
