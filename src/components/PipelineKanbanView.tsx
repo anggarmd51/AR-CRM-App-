@@ -125,7 +125,7 @@ export const PipelineKanbanView: React.FC<PipelineKanbanViewProps> = ({
 
         {/* Lead Score Filter Pills (8px radius) */}
         <div className="flex items-center gap-1 bg-[#f8f5ee] p-1 rounded-[8px] border border-[#1f1f1f]">
-          {['all', 'Hot', 'Warm', 'Cold'].map((score) => (
+          {['all', 'Hot', 'Warm', 'Cold', 'Unrated'].map((score) => (
             <button
               key={score}
               onClick={() => setSelectedScore(score)}

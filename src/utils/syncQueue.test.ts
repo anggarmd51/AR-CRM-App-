@@ -120,3 +120,54 @@ test('CrmSyncEngine auto-archives won deals to Archive_Logs when moved to Closin
   assert.ok(archiveMutation);
   assert.equal(archiveMutation?.payload.company_name, target.company_name);
 });
+
+test('CrmSyncEngine keeps queued mutations local and never calls the network', async () => {
+  storageMap.clear();
+  const engine = new CrmSyncEngine();
+  CrmStorage.setSimulatedOffline(false);
+  const originalFetch = globalThis.fetch;
+  let fetchCalled = false;
+  globalThis.fetch = (async () => {
+    fetchCalled = true;
+    throw new Error('Network access is disabled in this test');
+  }) as typeof fetch;
+
+  try {
+    engine.enqueueAddLead({
+      company_name: 'Local-only Corp',
+      contact_person: 'Tester',
+      phone: '08123',
+      industry: 'Software',
+      city: 'Jakarta',
+      pipeline_stage: 'Prospect',
+      deal_value: 0,
+      next_followup_date: '',
+      lead_score: 'Warm',
+    });
+
+    const result = await engine.processQueue();
+    assert.deepEqual(result, { processed: 0, failed: 0 });
+    assert.equal(fetchCalled, false);
+    assert.equal(CrmStorage.getQueue().length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('importing a prospect does not invent a deal value, follow-up date, or lead score', () => {
+  storageMap.clear();
+  const engine = new CrmSyncEngine();
+  CrmStorage.setSimulatedOffline(true);
+
+  const imported = engine.enqueueImportGlobalLead({
+    company_name: 'Review Needed Ltd',
+    contact_person: 'Contact to verify',
+    phone: '',
+    industry: '',
+    city: '',
+  });
+
+  assert.equal(imported.deal_value, 0);
+  assert.equal(imported.next_followup_date, '');
+  assert.equal(imported.lead_score, 'Unrated');
+});

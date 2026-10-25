@@ -1,6 +1,6 @@
 export type PipelineStage = 'Prospect' | 'Meeting' | 'Negotiation' | 'Closing Won' | 'Closing Lost';
 
-export type LeadScore = 'Hot' | 'Warm' | 'Cold';
+export type LeadScore = 'Hot' | 'Warm' | 'Cold' | 'Unrated';
 
 export interface Lead {
   id: string;
@@ -24,7 +24,6 @@ export interface Activity {
   activity_type: string;
   notes: string;
   ai_summary?: string;
-  location_gps?: string;
   created_at?: string;
   _syncStatus?: 'synced' | 'pending_insert';
 }

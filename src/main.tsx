@@ -1,5 +1,6 @@
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
+import { FirebaseAuthGate } from './components/FirebaseAuthGate.tsx';
 import './index.css';
 
 // Register Service Worker for offline PWA functionality
@@ -11,5 +12,4 @@ if ('serviceWorker' in navigator && process.env.NODE_ENV === 'production') {
   });
 }
 
-createRoot(document.getElementById('root')!).render(<App />);
-
+createRoot(document.getElementById('root')!).render(<FirebaseAuthGate><App /></FirebaseAuthGate>);

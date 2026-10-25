@@ -84,7 +84,7 @@ export const SecuritySettingsModal: React.FC<SecuritySettingsModalProps> = ({
                 Keamanan & Kunci Aplikasi
               </h3>
               <p className="text-xs text-[#6b665c]">
-                Proteksi data prospek pribadi dengan PIN / Biometrik
+                Kunci tampilan lokal perangkat
               </p>
             </div>
           </div>
@@ -98,6 +98,9 @@ export const SecuritySettingsModal: React.FC<SecuritySettingsModalProps> = ({
 
         {/* Content */}
         <div className="p-5 space-y-4 text-xs">
+          <p role="note" className="rounded-[8px] border border-[#9b2c2c]/30 bg-[#fff5f0] p-3 text-[11px] text-[#9b2c2c]">
+            PIN/biometrik ini hanya mengunci tampilan pada perangkat. Ini bukan login akun dan tidak mengenkripsi data browser.
+          </p>
           {message && (
             <div
               className={`p-3 rounded-[8px] border text-xs font-semibold flex items-center gap-2 ${

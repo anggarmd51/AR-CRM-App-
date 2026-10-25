@@ -1,0 +1,122 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Verified designated owner UID; this identifier is not an authentication credential.
+    function designatedOwner() {
+      return request.auth != null
+        && request.auth.uid == 'MlJVDEJvxrhdlwX87OGED0VfD6t1';
+    }
+
+    function configuredWorkspace(workspaceId) {
+      return workspaceId == 'ar-crm-owner';
+    }
+
+    function ownerMembership(workspaceId) {
+      let workspacePath = /databases/$(database)/documents/workspaces/$(workspaceId);
+      let memberPath = /databases/$(database)/documents/workspaces/$(workspaceId)/members/$(request.auth.uid);
+      return configuredWorkspace(workspaceId)
+        && designatedOwner()
+        && exists(workspacePath)
+        && get(workspacePath).data.ownerId == request.auth.uid
+        && exists(memberPath)
+        && get(memberPath).data.role == 'owner';
+    }
+
+    function validStage(value) {
+      return value in ['Prospect', 'Meeting', 'Negotiation', 'Closing Won', 'Closing Lost'];
+    }
+
+    function validLeadFields(data) {
+      return data.keys().hasAll([
+          'company_name', 'contact_person', 'phone', 'industry', 'city',
+          'pipeline_stage', 'deal_value', 'next_followup_date', 'lead_score',
+          'ownerId', 'role', 'created_at', 'updated_at'
+        ])
+        && data.keys().hasOnly([
+          'company_name', 'contact_person', 'phone', 'industry', 'city',
+          'pipeline_stage', 'deal_value', 'next_followup_date', 'lead_score',
+          'ownerId', 'role', 'created_at', 'updated_at'
+        ])
+        && data.company_name is string && data.company_name.size() > 0 && data.company_name.size() <= 200
+        && data.contact_person is string && data.contact_person.size() <= 200
+        && (data.phone is string || data.phone is int || data.phone is float)
+        && data.industry is string && data.industry.size() <= 120
+        && data.city is string && data.city.size() <= 120
+        && validStage(data.pipeline_stage)
+        && (data.deal_value is int || data.deal_value is float) && data.deal_value >= 0
+        && data.next_followup_date is string
+        && (data.next_followup_date == '' || data.next_followup_date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'))
+        && data.lead_score in ['Hot', 'Warm', 'Cold', 'Unrated']
+        && data.ownerId is string && data.ownerId == request.auth.uid
+        && data.role == 'owner'
+        && data.created_at is timestamp
+        && data.updated_at is timestamp;
+    }
+
+    function validActivityFields(data) {
+      return data.keys().hasAll([
+          'lead_id', 'activity_type', 'notes', 'ownerId', 'role', 'created_at'
+        ])
+        && data.keys().hasOnly([
+          'lead_id', 'activity_type', 'notes', 'ownerId', 'role', 'created_at'
+        ])
+        && data.lead_id is string && data.lead_id.size() > 0 && data.lead_id.size() <= 150
+        && data.activity_type is string && data.activity_type.size() > 0 && data.activity_type.size() <= 80
+        && data.notes is string && data.notes.size() <= 12000
+        && data.ownerId is string && data.ownerId == request.auth.uid
+        && data.role == 'owner'
+        && data.created_at is timestamp;
+    }
+
+    function immutableLeadIdentity(existing, incoming) {
+      return incoming.ownerId == existing.ownerId
+        && incoming.role == existing.role
+        && incoming.created_at == existing.created_at;
+    }
+
+    match /workspaces/{workspaceId} {
+      allow get: if ownerMembership(workspaceId);
+      allow list, create, update, delete: if false;
+
+      match /members/{userId} {
+        allow get: if designatedOwner()
+          && userId == request.auth.uid
+          && ownerMembership(workspaceId);
+        allow list, create, update, delete: if false;
+      }
+
+      match /leads/{leadId} {
+        allow get, list: if ownerMembership(workspaceId)
+          && resource.data.ownerId == request.auth.uid;
+        allow create: if ownerMembership(workspaceId)
+          && validLeadFields(request.resource.data);
+        allow update: if ownerMembership(workspaceId)
+          && resource.data.ownerId == request.auth.uid
+          && resource.data.role == 'owner'
+          && validLeadFields(request.resource.data)
+          && immutableLeadIdentity(resource.data, request.resource.data)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'pipeline_stage', 'next_followup_date', 'updated_at'
+          ]);
+        allow delete: if false;
+      }
+
+      match /activities/{activityId} {
+        allow get, list: if ownerMembership(workspaceId)
+          && resource.data.ownerId == request.auth.uid;
+        allow create: if ownerMembership(workspaceId)
+          && validActivityFields(request.resource.data)
+          && exists(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(request.resource.data.lead_id))
+          && get(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(request.resource.data.lead_id)).data.ownerId == request.auth.uid
+          && get(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(request.resource.data.lead_id)).data.role == 'owner';
+        allow update: if false;
+        allow delete: if false;
+      }
+    }
+
+    // All other collections, documents and subcollections remain private by default.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

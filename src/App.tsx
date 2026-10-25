@@ -19,20 +19,21 @@ import { SecurityLockScreen } from './components/SecurityLockScreen.tsx';
 import { SecuritySettingsModal } from './components/SecuritySettingsModal.tsx';
 import { AndroidFrame } from './components/AndroidFrame.tsx';
 import { Lead, Activity, GlobalLead, PipelineStage } from './types/crm.ts';
-import { CrmStorage, syncEngine } from './utils/syncQueue.ts';
 import { filterFollowUps } from './utils/crmCalculations.ts';
 import { downloadLeadsCsv } from './utils/exportCsv.ts';
 import { SecurityVault } from './utils/securityLock.ts';
 import { CheckCircle2 } from 'lucide-react';
+import { getFirebaseAuth } from './firebase.ts';
+import { createActivity, createLead, subscribeToActivities, subscribeToLeads, updateLeadStage } from './firebaseRepository.ts';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<NavTab>('dashboard');
   const [leads, setLeads] = useState<Lead[]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [globalLeads, setGlobalLeads] = useState<GlobalLead[]>([]);
-  const [pendingCount, setPendingCount] = useState<number>(0);
-  const [isSyncing, setIsSyncing] = useState<boolean>(false);
-  const [isSimulatedOffline, setIsSimulatedOffline] = useState<boolean>(false);
+  const [pendingCount] = useState<number>(0);
+  const [isSyncing] = useState<boolean>(false);
+  const [isSimulatedOffline] = useState<boolean>(false);
   const [isPhoneFrame, setIsPhoneFrame] = useState<boolean>(false);
 
   // Security Vault & Lock State
@@ -167,81 +168,35 @@ export default function App() {
     };
   }, [showToast]);
 
-  // Load state from local storage & subscribe to sync engine
-  const refreshLocalData = useCallback(() => {
-    setLeads(CrmStorage.getLeads());
-    setActivities(CrmStorage.getActivities());
-    setGlobalLeads(CrmStorage.getGlobalLeads());
-    setPendingCount(syncEngine.getPendingCount());
-    setIsSimulatedOffline(CrmStorage.isSimulatedOffline());
-  }, []);
-
+  // Firebase is the sole source of truth for authenticated CRM records. No
+  // localStorage hydration or automatic migration is performed here.
   useEffect(() => {
-    refreshLocalData();
-
-    // Subscribe to queue changes
-    const unsubscribe = syncEngine.subscribe((count, syncing) => {
-      setPendingCount(count);
-      setIsSyncing(syncing);
-      // Reload leads and activities when queue changes
-      setLeads(CrmStorage.getLeads());
-      setActivities(CrmStorage.getActivities());
-      setGlobalLeads(CrmStorage.getGlobalLeads());
-    });
-
-    // Auto pull remote Cloud Database data on initial load
-    syncEngine.pullRemoteData().then(() => {
-      refreshLocalData();
-    });
-
-    return () => {
-      unsubscribe();
-    };
-  }, [refreshLocalData]);
+    const user = getFirebaseAuth().currentUser;
+    if (!user) return;
+    setGlobalLeads([]);
+    const onError = (error: Error) => showToast(`Firebase gagal memuat data: ${error.message}`);
+    const stopLeads = subscribeToLeads(user.uid, setLeads, onError);
+    const stopActivities = subscribeToActivities(user.uid, setActivities, onError);
+    return () => { stopLeads(); stopActivities(); };
+  }, [showToast]);
 
   // Actions
   const handleToggleSimulatedOffline = () => {
-    const next = !isSimulatedOffline;
-    CrmStorage.setSimulatedOffline(next);
-    setIsSimulatedOffline(next);
-    if (!next) {
-      showToast('Connection restored: Flushing offline sync queue...');
-      syncEngine.processQueue().then((res) => {
-        if (res.processed > 0) {
-          showToast(`Synced ${res.processed} pending operation(s) to Cloud Database!`);
-        }
-        refreshLocalData();
-      });
-    } else {
-      showToast('Offline Mode enabled. Operations will queue locally.');
-    }
+    showToast('Mode offline lokal dinonaktifkan: Firebase tetap menjadi sumber data CRM.');
   };
 
   const handleSyncNow = async () => {
-    if (!syncEngine.isOnline()) {
-      showToast('App is currently offline. Disable offline mode to sync.');
-      return;
-    }
-    showToast('Syncing with Cloud Database...');
-    const queueResult = await syncEngine.processQueue();
-    await syncEngine.pullRemoteData();
-    refreshLocalData();
-    showToast(
-      queueResult.processed > 0
-        ? `Sync complete! Synced ${queueResult.processed} action(s).`
-        : 'Up to date with Cloud Database!'
-    );
+    showToast('Data CRM diperbarui real-time melalui Firebase; tidak ada antrian lokal untuk dikirim.');
   };
 
   // Add Lead
-  const handleAddLead = (leadData: Omit<Lead, 'id' | '_syncStatus' | 'created_at' | 'updated_at'>) => {
-    const newLead = syncEngine.enqueueAddLead(leadData);
-    refreshLocalData();
-    showToast(
-      syncEngine.isOnline()
-        ? `Lead "${newLead.company_name}" added and syncing to Cloud Database!`
-        : `Lead "${newLead.company_name}" saved to local offline cache.`
-    );
+  const handleAddLead = async (leadData: Omit<Lead, 'id' | '_syncStatus' | 'created_at' | 'updated_at'>) => {
+    try {
+      await createLead(getFirebaseAuth().currentUser!.uid, leadData);
+      showToast(`Lead "${leadData.company_name}" disimpan di Firebase.`);
+    } catch (error) {
+      showToast(`Lead gagal disimpan: ${(error as Error).message}`);
+    }
   };
 
   // Update Lead Stage (with automatic archive logging for Closing Won)
@@ -250,20 +205,14 @@ export default function App() {
     newStage: PipelineStage,
     nextFollowupDate?: string
   ) => {
-    syncEngine.enqueueUpdateLeadStage(leadId, newStage, nextFollowupDate);
-    refreshLocalData();
-    if (selectedLead && selectedLead.id === leadId) {
-      setSelectedLead((prev) => (prev ? { ...prev, pipeline_stage: newStage } : null));
-    }
-    if (newStage === 'Closing Won') {
-      showToast('Deal berhasil ditutup (Closing Won)! Otomatis dicatat ke sheet Archive_Logs.');
-    } else {
-      showToast(
-        syncEngine.isOnline()
-          ? `Stage updated to ${newStage} (Syncing to Cloud Database...)`
-          : `Stage updated to ${newStage} (Saved locally)`
-      );
-    }
+    void updateLeadStage(getFirebaseAuth().currentUser!.uid, leadId, newStage, nextFollowupDate).then(() => {
+      setSelectedLead((prev) => (prev?.id === leadId ? {
+        ...prev,
+        pipeline_stage: newStage,
+        ...(nextFollowupDate !== undefined ? { next_followup_date: nextFollowupDate } : {}),
+      } : prev));
+      showToast(`Stage diubah ke ${newStage}.`);
+    }).catch((error: Error) => showToast(`Stage gagal diubah: ${error.message}`));
   };
 
   // Add Activity / Check-In
@@ -271,39 +220,50 @@ export default function App() {
     lead_id: string;
     activity_type: string;
     notes: string;
-    ai_summary: string;
-    location_gps: string;
   }) => {
-    syncEngine.enqueueAddActivity(activityData);
-    refreshLocalData();
-    showToast(
-      syncEngine.isOnline()
-        ? 'GPS Check-in recorded and syncing to Cloud Database!'
-        : 'GPS Check-in recorded to local offline storage.'
-    );
+    try {
+      await createActivity(getFirebaseAuth().currentUser!.uid, activityData);
+      showToast('Aktivitas disimpan di Firebase.');
+    } catch (error) {
+      showToast(`Aktivitas gagal disimpan: ${(error as Error).message}`);
+      throw error;
+    }
   };
 
   // Import Global Lead
-  const handleImportGlobalLead = (globalLead: GlobalLead) => {
-    syncEngine.enqueueImportGlobalLead(globalLead);
-    refreshLocalData();
-    showToast(`Imported "${globalLead.company_name}" into AR CRM sales pipeline!`);
+  const handleImportGlobalLead = async (globalLead: GlobalLead) => {
+    try {
+      await createLead(getFirebaseAuth().currentUser!.uid, {
+        company_name: globalLead.company_name,
+        contact_person: globalLead.contact_person,
+        phone: globalLead.phone,
+        industry: globalLead.industry,
+        city: globalLead.city,
+        pipeline_stage: 'Prospect',
+        deal_value: Number(globalLead.estimated_value) || 0,
+        next_followup_date: '',
+        lead_score: 'Unrated',
+      });
+      showToast(`"${globalLead.company_name}" disimpan di Firebase.`);
+    } catch (error) {
+      showToast(`Lead gagal diimpor: ${(error as Error).message}`);
+    }
   };
 
   // Export CSV Report
   const handleExportCsv = useCallback(() => {
-    const currentLeads = CrmStorage.getLeads();
+    const currentLeads = leads;
     if (currentLeads.length === 0) {
       showToast('Tidak ada data prospek untuk diekspor.');
       return;
     }
     const filename = downloadLeadsCsv(currentLeads);
     showToast(`Laporan rekapitulasi ${currentLeads.length} prospek berhasil diunduh (${filename})!`);
-  }, [showToast]);
+  }, [leads, showToast]);
 
   const followUpMetrics = filterFollowUps(leads);
   const dueCount = followUpMetrics.dueToday.length + followUpMetrics.overdue.length;
-  const isOnline = syncEngine.isOnline();
+  const isOnline = typeof navigator === 'undefined' || navigator.onLine;
 
   const getTabTitle = () => {
     switch (currentTab) {

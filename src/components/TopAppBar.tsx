@@ -51,7 +51,7 @@ export const TopAppBar: React.FC<TopAppBarProps> = ({
               {title}
             </h1>
             <p className="text-[11px] text-[#6b665c] font-medium truncate flex items-center gap-1.5">
-              <span className="text-[#1A2E40] font-semibold">AR Cloud Sync Engine</span>
+              <span className="text-[#155e3c] font-semibold">Firestore live — workspace owner</span>
               <span className="inline-block w-1 h-1 rounded-full bg-[#1f1f1f]/30"></span>
               <span>AR Editorial System</span>
             </p>
@@ -83,7 +83,7 @@ export const TopAppBar: React.FC<TopAppBarProps> = ({
             ) : (
               <>
                 <span className="w-2 h-2 rounded-full bg-[#ff4800]"></span>
-                <span className="hidden sm:inline">Live</span>
+                <span className="hidden sm:inline">Online</span>
               </>
             )}
           </button>
@@ -92,14 +92,14 @@ export const TopAppBar: React.FC<TopAppBarProps> = ({
           <button
             onClick={onSyncNow}
             disabled={isSyncing}
-            title="Sync changes with Cloud Database"
+            title="Periksa status koneksi Firebase"
             className="flex items-center gap-1.5 bg-[#f8f5ee] hover:bg-[#f2ede4] text-[#1f1f1f] border border-[#1f1f1f] px-3 py-1.5 rounded-[8px] text-xs font-semibold transition-all disabled:opacity-50"
           >
             <RefreshCw
               className={`w-3.5 h-3.5 text-[#ff4800] ${isSyncing ? 'animate-spin' : ''}`}
             />
             <span className="hidden md:inline">
-              {isSyncing ? 'Syncing...' : pendingCount > 0 ? `Sync (${pendingCount})` : 'Sync'}
+              {isSyncing ? 'Memuat...' : pendingCount > 0 ? `Belum tersinkron (${pendingCount})` : 'Firestore live'}
             </span>
           </button>
 

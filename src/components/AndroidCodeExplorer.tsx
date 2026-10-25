@@ -61,10 +61,10 @@ export const AndroidCodeExplorer: React.FC = () => {
         <div>
           <h2 className="text-xl font-bold text-[#1f1f1f] tracking-tight flex items-center gap-2 font-serif-heading">
             <Code2 className="w-5 h-5 text-[#ff4800]" />
-            Android Native Architecture (Kotlin & Jetpack Compose)
+            Contoh Android Native Architecture (Kotlin & Jetpack Compose)
           </h2>
           <p className="text-xs text-[#6b665c]">
-            Production-grade native Android code with Room SQLite, Retrofit API, WorkManager offline sync, and M3 UI
+            Referensi kode saja; belum terhubung ke Firebase dan belum diverifikasi sebagai aplikasi native produksi.
           </p>
         </div>
 

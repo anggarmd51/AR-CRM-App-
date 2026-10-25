@@ -1,6 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
-  Compass,
   Search,
   Download,
   Building2,
@@ -11,16 +10,10 @@ import {
   ArrowRight,
   Filter,
   DollarSign,
-  Sparkles,
   UserCheck,
   ShieldCheck,
-  TrendingUp,
-  RotateCcw,
-  Loader2,
-  Layers,
 } from 'lucide-react';
 import { GlobalLead, Lead } from '../types/crm.ts';
-import { searchAndEnrichProspects } from '../utils/aiLeadEnrichment.ts';
 import { formatCurrency } from '../utils/crmCalculations.ts';
 
 interface GlobalLeadsViewProps {
@@ -30,86 +23,30 @@ interface GlobalLeadsViewProps {
   onNavigateToPipeline: () => void;
 }
 
-const SAMPLE_AI_QUERIES = [
-  'Manufaktur di Medan',
-  'Klinik Kecantikan Jakarta',
-  'Distributor F&B Surabaya',
-  'Logistik & Cold Chain',
-  'Fintech & Payment Gateway',
-];
-
 export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({
   personalLeads,
   globalLeads = [],
   onImportGlobalLead,
   onNavigateToPipeline,
 }) => {
-  // Search input state
-  const [aiSearchInput, setAiSearchInput] = useState('');
-  const [activeQuery, setActiveQuery] = useState('');
-  
-  // Loading & View state
-  const [isScanning, setIsScanning] = useState(false);
-  const [scanStepIndex, setScanStepIndex] = useState(0);
-  const [viewSource, setViewSource] = useState<'ai' | 'standard'>('ai');
-  const [enrichedResults, setEnrichedResults] = useState<GlobalLead[]>([]);
+  // No generated prospect data is used. This view only shows locally stored records.
   
   // Secondary Filters
   const [selectedIndustry, setSelectedIndustry] = useState<string>('all');
   const [dealValueFilter, setDealValueFilter] = useState<'all' | '50m' | '100m'>('all');
   const [importingId, setImportingId] = useState<string | null>(null);
 
-  // Initialize with initial AI prospect directory
-  useEffect(() => {
-    const initialLeads = searchAndEnrichProspects('');
-    setEnrichedResults(initialLeads);
-  }, []);
-
   // Names of companies already in personal CRM pipeline
   const personalCompanyNames = new Set(
     personalLeads.map((l) => l.company_name.toLowerCase().trim())
   );
 
-  // Handle AI Search Execution
-  const handleRunAiSearch = (queryToRun?: string) => {
-    const query = (queryToRun !== undefined ? queryToRun : aiSearchInput).trim();
-    if (!query) return;
-
-    if (queryToRun !== undefined) {
-      setAiSearchInput(queryToRun);
-    }
-    setActiveQuery(query);
-    setViewSource('ai');
-    setIsScanning(true);
-    setScanStepIndex(0);
-
-    // Realistic scanning phase animations
-    const step1Timer = setTimeout(() => setScanStepIndex(1), 400);
-    const step2Timer = setTimeout(() => setScanStepIndex(2), 850);
-
-    const finishTimer = setTimeout(() => {
-      const results = searchAndEnrichProspects(query);
-      setEnrichedResults(results);
-      setIsScanning(false);
-    }, 1250);
-
-    return () => {
-      clearTimeout(step1Timer);
-      clearTimeout(step2Timer);
-      clearTimeout(finishTimer);
-    };
-  };
-
   const handleResetSearch = () => {
-    setAiSearchInput('');
-    setActiveQuery('');
     setSelectedIndustry('all');
     setDealValueFilter('all');
-    setEnrichedResults(searchAndEnrichProspects(''));
   };
 
-  // Determine active dataset based on tab
-  const currentDataset = viewSource === 'ai' ? enrichedResults : globalLeads;
+  const currentDataset = globalLeads;
 
   // Extract unique industries for filter dropdown
   const industries = [
@@ -140,12 +77,6 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({
     }, 600);
   };
 
-  const scanningSteps = [
-    'AI sedang memindai direktori B2B & profil perusahaan...',
-    'Memperkaya profil decision maker & memverifikasi direct dial/email...',
-    'Menghitung AI Match Score & estimasi potensi nilai deal...',
-  ];
-
   return (
     <div className="space-y-4 pb-24">
       {/* Header */}
@@ -153,14 +84,14 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({
         <div>
           <div className="flex items-center gap-2">
             <span className="p-1 bg-[#1f1f1f] text-white rounded-[6px]">
-              <Sparkles className="w-4 h-4 text-[#ff4800]" />
+              <Search className="w-4 h-4 text-[#ff4800]" />
             </span>
             <h2 className="text-xl font-bold text-[#1f1f1f] tracking-tight font-serif-heading">
-              AI Lead Finder & Enrichment
+              Direktori Prospek
             </h2>
           </div>
           <p className="text-xs text-[#6b665c] mt-0.5">
-            Pindai prospek korporat B2B, temukan pengambil keputusan terverifikasi, dan masukkan ke pipeline dengan 1-click
+            Prospek yang tersimpan lokal. Tidak ada pencarian eksternal atau verifikasi otomatis yang aktif.
           </p>
         </div>
 
@@ -173,118 +104,17 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({
         </button>
       </div>
 
-      {/* AI Prospecting Search Bar (AR CRM Design System) */}
-      <div className="bg-[#f8f5ee] border border-[#1f1f1f] rounded-[16px] p-4 space-y-3 shadow-none">
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-          {/* Text Input with prompt */}
-          <div className="relative flex-1">
-            <Search className="w-4 h-4 absolute left-3 top-3 text-[#6b665c]" />
-            <input
-              type="text"
-              placeholder="Cari industri/niche target (contoh: Manufaktur di Medan, Klinik Kecantikan, Distributor F&B)"
-              value={aiSearchInput}
-              onChange={(e) => setAiSearchInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  handleRunAiSearch();
-                }
-              }}
-              className="w-full bg-[#fcfcfa] border border-[#1f1f1f] rounded-[8px] pl-9 pr-3 py-2.5 text-xs text-[#1f1f1f] placeholder-[#6b665c] focus:outline-none focus:ring-1 focus:ring-[#ff4800]"
-            />
-          </div>
-
-          {/* AI Search CTA Button */}
-          <button
-            onClick={() => handleRunAiSearch()}
-            disabled={isScanning || !aiSearchInput.trim()}
-            className="flex items-center justify-center gap-2 bg-[#ff4800] hover:bg-[#e03f00] disabled:bg-[#ff4800]/50 text-white text-xs font-bold px-4 py-2.5 rounded-[8px] border border-[#1f1f1f] transition-all active:scale-[0.98] shrink-0"
-          >
-            {isScanning ? (
-              <>
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                <span>Memindai AI...</span>
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>Cari Prospek dengan AI</span>
-              </>
-            )}
-          </button>
-        </div>
-
-        {/* Quick Sample Queries / Chips */}
-        <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
-          <span className="text-[11px] font-semibold text-[#6b665c] mr-1">Rekomendasi Niche:</span>
-          {SAMPLE_AI_QUERIES.map((q) => (
-            <button
-              key={q}
-              onClick={() => handleRunAiSearch(q)}
-              className="text-[11px] font-medium bg-[#fcfcfa] hover:bg-[#f2ede4] text-[#1f1f1f] px-2.5 py-1 rounded-[6px] border border-[#1f1f1f]/50 hover:border-[#1f1f1f] transition-all"
-            >
-              {q}
-            </button>
-          ))}
-          {activeQuery && (
-            <button
-              onClick={handleResetSearch}
-              className="text-[11px] text-[#ff4800] hover:underline flex items-center gap-1 ml-auto font-medium"
-            >
-              <RotateCcw className="w-3 h-3" />
-              <span>Reset Pencarian</span>
-            </button>
-          )}
-        </div>
+      <div role="status" className="bg-[#fff5f0] border border-[#ff4800]/60 rounded-[12px] p-4 space-y-1">
+        <p className="text-xs font-bold text-[#1f1f1f]">Pencarian prospek eksternal dinonaktifkan</p>
+        <p className="text-[11px] text-[#6b665c]">
+          Data katalog dan kontak sintetis telah dihapus. Daftar di bawah hanya menampilkan record yang sudah tersimpan di browser; sumber dan kebenarannya belum diverifikasi.
+        </p>
       </div>
-
-      {/* AI Scanning / Enrichment Animation Banner */}
-      {isScanning && (
-        <div className="bg-[#f8f5ee] border border-[#ff4800] rounded-[12px] p-4 flex items-center gap-3.5 animate-pulse">
-          <div className="w-8 h-8 rounded-full bg-[#ff4800] flex items-center justify-center text-white shrink-0">
-            <Sparkles className="w-4 h-4 animate-spin" />
-          </div>
-          <div className="flex-1 space-y-1">
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-bold text-[#1f1f1f]">
-                AI sedang memindai dan memperkaya data prospek...
-              </p>
-              <span className="text-[10px] font-mono font-bold text-[#ff4800]">
-                {scanStepIndex + 1}/3
-              </span>
-            </div>
-            <p className="text-[11px] text-[#6b665c]">
-              {scanningSteps[scanStepIndex]}
-            </p>
-          </div>
-        </div>
-      )}
 
       {/* Source Selector & Secondary Filters Row */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 pt-1">
-        {/* Dataset Source Toggle */}
-        <div className="flex items-center gap-1 bg-[#f8f5ee] border border-[#1f1f1f] p-1 rounded-[8px] self-start">
-          <button
-            onClick={() => setViewSource('ai')}
-            className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-[6px] transition-all ${
-              viewSource === 'ai'
-                ? 'bg-[#1f1f1f] text-white'
-                : 'text-[#6b665c] hover:text-[#1f1f1f]'
-            }`}
-          >
-            <Sparkles className="w-3 h-3 text-[#ff4800]" />
-            <span>AI Discovered ({enrichedResults.length})</span>
-          </button>
-          <button
-            onClick={() => setViewSource('standard')}
-            className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-[6px] transition-all ${
-              viewSource === 'standard'
-                ? 'bg-[#1f1f1f] text-white'
-                : 'text-[#6b665c] hover:text-[#1f1f1f]'
-            }`}
-          >
-            <Layers className="w-3 h-3" />
-            <span>Sheet Global Leads ({globalLeads.length})</span>
-          </button>
+        <div className="text-xs font-semibold text-[#1f1f1f] bg-[#f8f5ee] border border-[#1f1f1f] px-3 py-2 rounded-[8px] self-start">
+          Record lokal: {globalLeads.length}
         </div>
 
         {/* Secondary Filters: Industry & Deal Value */}
@@ -324,23 +154,18 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({
         </div>
       </div>
 
-      {/* Results Count & Query Notice */}
+      {/* Results Count & Provenance Notice */}
       <div className="flex items-center justify-between text-xs text-[#6b665c] px-0.5">
         <span>
-          Menampilkan <strong className="text-[#1f1f1f]">{displayedLeads.length}</strong> prospek B2B
-          {activeQuery && (
-            <span>
-              {' '}untuk kata kunci &ldquo;<strong className="text-[#1f1f1f]">{activeQuery}</strong>&rdquo;
-            </span>
-          )}
+          Menampilkan <strong className="text-[#1f1f1f]">{displayedLeads.length}</strong> record prospek lokal
         </span>
-        <span className="text-[11px] flex items-center gap-1 font-medium text-[#1f1f1f]">
-          <ShieldCheck className="w-3.5 h-3.5 text-[#155e3c]" />
-          Verified Decision Makers
+        <span className="text-[11px] flex items-center gap-1 font-medium text-[#9b2c2c]">
+          <ShieldCheck className="w-3.5 h-3.5" />
+          Belum diverifikasi
         </span>
       </div>
 
-      {/* AR CRM Enriched Lead Cards Grid */}
+      {/* Locally stored lead records */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
         {displayedLeads.map((lead) => {
           const isAlreadyInPipeline = personalCompanyNames.has(
@@ -367,7 +192,7 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({
               }`}
             >
               <div className="space-y-3">
-                {/* Company Header with Logo/Initials and AI Score */}
+                {/* Company Header with local record label */}
                 <div className="flex items-start justify-between gap-2.5">
                   <div className="flex items-start gap-2.5">
                     {/* Company Monogram Badge */}
@@ -393,27 +218,12 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({
                     </div>
                   </div>
 
-                  {/* AI Match Score Badge (AR CRM Intelligence) */}
-                  {lead.ai_match_score ? (
-                    <div className="flex flex-col items-end shrink-0">
-                      <span className="text-[10px] font-bold text-[#ff4800] bg-[#fff5f0] border border-[#ff4800]/40 px-2 py-0.5 rounded-[4px] flex items-center gap-1">
-                        <TrendingUp className="w-3 h-3" />
-                        {lead.ai_match_score}% {lead.intent_level || 'Match'}
-                      </span>
-                      {lead.employee_count && (
-                        <span className="text-[10px] text-[#6b665c] mt-0.5 font-medium">
-                          {lead.employee_count}
-                        </span>
-                      )}
-                    </div>
-                  ) : (
-                    <span className="text-[10px] font-semibold bg-[#fcfcfa] border border-[#1f1f1f] px-2 py-0.5 rounded-[4px]">
-                      Verified Lead
-                    </span>
-                  )}
+                  <span className="text-[10px] font-semibold bg-[#fcfcfa] border border-[#1f1f1f] px-2 py-0.5 rounded-[4px] shrink-0">
+                    Record lokal
+                  </span>
                 </div>
 
-                {/* Decision Maker Section (AR CRM Verified Profile) */}
+                {/* Contact fields; source is not independently verified. */}
                 <div className="bg-[#fcfcfa] border border-[#1f1f1f] rounded-[8px] p-2.5 space-y-1.5">
                   <div className="flex items-center justify-between gap-1 flex-wrap">
                     <div className="flex items-center gap-1.5">
@@ -429,7 +239,7 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({
                     )}
                   </div>
 
-                  {/* Contact verification row */}
+                  {/* Contact details */}
                   <div className="flex items-center gap-3 text-[11px] text-[#1f1f1f] flex-wrap pt-0.5 border-t border-[#1f1f1f]/10">
                     <div className="flex items-center gap-1">
                       <Phone className="w-3 h-3 text-[#155e3c]" />
@@ -443,13 +253,13 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({
                       </div>
                     )}
 
-                    <span className="text-[9px] font-bold text-[#155e3c] bg-[#edf7f1] border border-[#155e3c]/30 px-1.5 py-0.2 rounded-[3px] ml-auto">
-                      VERIFIED DIRECT
+                    <span className="text-[9px] font-bold text-[#9b2c2c] bg-[#fff5f0] border border-[#9b2c2c]/30 px-1.5 py-0.2 rounded-[3px] ml-auto">
+                      BELUM DIVERIFIKASI
                     </span>
                   </div>
                 </div>
 
-                {/* AI Intelligence Insights (AR CRM Analytics) */}
+                {/* Additional stored notes */}
                 {lead.insights && (
                   <p className="text-[11px] text-[#6b665c] italic border-l-2 border-[#ff4800] pl-2 py-0.5 leading-snug">
                     {lead.insights}
@@ -514,22 +324,22 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({
       </div>
 
       {/* Empty State */}
-      {displayedLeads.length === 0 && !isScanning && (
+      {displayedLeads.length === 0 && (
         <div className="border border-[#1f1f1f] rounded-[16px] bg-[#f8f5ee] p-8 text-center space-y-3">
           <div className="w-10 h-10 rounded-full bg-[#fcfcfa] border border-[#1f1f1f] flex items-center justify-center mx-auto text-[#6b665c]">
             <Search className="w-5 h-5" />
           </div>
           <div>
-            <h4 className="font-bold text-sm text-[#1f1f1f]">Tidak ada prospek yang sesuai</h4>
+            <h4 className="font-bold text-sm text-[#1f1f1f]">Belum ada record prospek lokal</h4>
             <p className="text-xs text-[#6b665c] max-w-sm mx-auto mt-1">
-              Coba gunakan kata kunci industri lain atau ubah filter nilai deal di atas.
+              Pencarian eksternal dinonaktifkan sampai ada sumber prospek nyata dengan provenance yang dapat diperiksa.
             </p>
           </div>
           <button
             onClick={handleResetSearch}
             className="text-xs font-bold text-[#ff4800] hover:underline"
           >
-            Tampilkan Semua Prospek Rekomendasi
+            Reset filter
           </button>
         </div>
       )}

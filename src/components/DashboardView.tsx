@@ -258,10 +258,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       </button>
                     )}
 
-                    {/* Quick GPS Check-In / Log Activity (Sprout Orange CTA) */}
+                    {/* Quick check-in / log activity (Sprout Orange CTA) */}
                     <button
                       onClick={() => onOpenActivityLogger(lead)}
-                      title="Log Meeting Check-In with GPS"
+                      title="Log Meeting Check-In"
                       className="px-3 py-1.5 rounded-[8px] bg-[#ff4800] hover:bg-[#e03f00] text-white text-xs font-bold flex items-center gap-1.5 transition-all border border-[#1f1f1f]"
                     >
                       <MapPin className="w-3.5 h-3.5" />
@@ -334,7 +334,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
         {activities.length === 0 ? (
           <div className="bg-[#f8f5ee] border border-[#1f1f1f] rounded-[16px] p-5 text-center text-xs text-[#6b665c]">
-            No field activities logged yet. Tap "New Log" or "Check-In" on any lead to record GPS coordinates and AI notes.
+            No field activities logged yet. Tap "New Log" or "Check-In" on any lead to record notes.
           </div>
         ) : (
           <div className="space-y-2.5">
@@ -352,23 +352,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         <span className="text-[#6b665c] font-medium">• {matchedLead.company_name}</span>
                       )}
                     </div>
-                    {act.location_gps && (
-                      <span className="flex items-center gap-1 font-mono text-[10px] text-[#1f1f1f] bg-[#fcfcfa] border border-[#1f1f1f] px-2.5 py-0.5 rounded-[4px]">
-                        <MapPin className="w-3 h-3 text-[#ff4800]" />
-                        {act.location_gps}
-                      </span>
-                    )}
                   </div>
                   <p className="text-[#1f1f1f] leading-relaxed">{act.notes}</p>
-                  {act.ai_summary && (
-                    <div className="bg-[#fcfcfa] border border-[#1f1f1f] rounded-[8px] p-3 text-[#1f1f1f] text-[11px] whitespace-pre-line">
-                      <span className="font-bold text-[#ff4800] flex items-center gap-1 mb-1">
-                        <Sparkles className="w-3.5 h-3.5" />
-                        AI Action Items:
-                      </span>
-                      {act.ai_summary}
-                    </div>
-                  )}
                 </div>
               );
             })}

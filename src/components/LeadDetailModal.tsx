@@ -162,14 +162,14 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
             <div className="flex items-center justify-between text-[#6b665c]">
               <span>Lead Score:</span>
               <span className="text-[#ff4800] font-bold flex items-center gap-1">
-                <Flame className="w-3.5 h-3.5 fill-[#ff4800]" />
+                {lead.lead_score === 'Hot' && <Flame className="w-3.5 h-3.5 fill-[#ff4800]" />}
                 {lead.lead_score}
               </span>
             </div>
             <div className="flex items-center justify-between text-[#6b665c]">
               <span>Sync State:</span>
               <span className="font-mono text-[10px] text-[#1f1f1f] font-bold">
-                {lead._syncStatus === 'synced' ? 'Synced with Cloud Database' : 'Local Cache (Pending Sync)'}
+                {lead._syncStatus === 'synced' ? 'Cloud status unknown (local copy)' : 'Local only — not synced'}
               </span>
             </div>
           </div>
@@ -202,23 +202,8 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
                   >
                     <div className="flex items-center justify-between">
                       <span className="font-bold text-[#1f1f1f] text-xs">{act.activity_type}</span>
-                      {act.location_gps && (
-                        <span className="flex items-center gap-1 text-[10px] font-mono text-[#1f1f1f] bg-[#fcfcfa] border border-[#1f1f1f] px-2 py-0.5 rounded-[4px]">
-                          <MapPin className="w-3 h-3 text-[#ff4800]" />
-                          {act.location_gps}
-                        </span>
-                      )}
                     </div>
                     <p className="text-[#1f1f1f]">{act.notes}</p>
-                    {act.ai_summary && (
-                      <div className="bg-[#fcfcfa] p-2.5 rounded-[8px] text-[#1f1f1f] text-[11px] whitespace-pre-line border border-[#1f1f1f]">
-                        <span className="font-bold text-[#ff4800] flex items-center gap-1 mb-0.5">
-                          <Sparkles className="w-3 h-3" />
-                          AI Summary:
-                        </span>
-                        {act.ai_summary}
-                      </div>
-                    )}
                   </div>
                 ))}
               </div>

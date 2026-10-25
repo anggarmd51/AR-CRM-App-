@@ -16,14 +16,12 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
   const [companyName, setCompanyName] = useState('');
   const [contactPerson, setContactPerson] = useState('');
   const [phone, setPhone] = useState('');
-  const [industry, setIndustry] = useState('Logistics & Transport');
-  const [city, setCity] = useState('Jakarta');
+  const [industry, setIndustry] = useState('');
+  const [city, setCity] = useState('');
   const [pipelineStage, setPipelineStage] = useState<PipelineStage>('Prospect');
-  const [dealValue, setDealValue] = useState<number>(25000000);
-  const [nextFollowupDate, setNextFollowupDate] = useState(
-    new Date(Date.now() + 86400000 * 2).toISOString().slice(0, 10)
-  );
-  const [leadScore, setLeadScore] = useState<LeadScore>('Hot');
+  const [dealValue, setDealValue] = useState<number>(0);
+  const [nextFollowupDate, setNextFollowupDate] = useState('');
+  const [leadScore, setLeadScore] = useState<LeadScore>('Unrated');
 
   if (!isOpen) return null;
 
@@ -68,7 +66,7 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
             </div>
             <div>
               <h3 className="font-bold text-[#1f1f1f] text-base font-serif-heading">Quick Lead Input</h3>
-              <p className="text-xs text-[#6b665c]">Add account to personal sales pipeline & AR Cloud Sync</p>
+              <p className="text-xs text-[#6b665c]">Lead akan disimpan langsung ke Firestore workspace.</p>
             </div>
           </div>
           <button
@@ -141,6 +139,7 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
               onChange={(e) => setIndustry(e.target.value)}
               className="w-full bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] px-3 py-2 text-[#1f1f1f] font-medium focus:outline-none"
             >
+              <option value="">Pilih industri (opsional)</option>
               {industriesList.map((ind) => (
                 <option key={ind} value={ind}>
                   {ind}
@@ -198,8 +197,8 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
                 <Flame className="w-3.5 h-3.5 text-[#ff4800]" />
                 <span>Lead Score Tag</span>
               </label>
-              <div className="grid grid-cols-3 gap-1.5 pt-0.5">
-                {(['Hot', 'Warm', 'Cold'] as LeadScore[]).map((score) => (
+              <div className="grid grid-cols-4 gap-1.5 pt-0.5">
+                {(['Hot', 'Warm', 'Cold', 'Unrated'] as LeadScore[]).map((score) => (
                   <button
                     key={score}
                     type="button"

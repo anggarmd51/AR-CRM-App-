@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { History, MapPin, Sparkles, Plus, Search, Calendar, Building2 } from 'lucide-react';
+import { History, Plus, Search, Calendar, Building2 } from 'lucide-react';
 import { Activity, Lead } from '../types/crm.ts';
 
 interface ActivitiesListViewProps {
@@ -20,7 +20,7 @@ export const ActivitiesListView: React.FC<ActivitiesListViewProps> = ({
 
   const filtered = activities.filter((act) => {
     const matchedLead = leads.find((l) => l.id === act.lead_id);
-    const searchTarget = `${act.notes} ${act.activity_type} ${act.location_gps || ''} ${
+    const searchTarget = `${act.notes} ${act.activity_type} ${
       matchedLead ? matchedLead.company_name + ' ' + matchedLead.contact_person : ''
     }`.toLowerCase();
 
@@ -44,12 +44,12 @@ export const ActivitiesListView: React.FC<ActivitiesListViewProps> = ({
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h2 className="text-xl font-bold text-[#1f1f1f] tracking-tight flex items-center gap-2 font-serif-heading">
+            <h2 className="text-xl font-bold text-[#1f1f1f] tracking-tight flex items-center gap-2 font-serif-heading">
             <History className="w-5 h-5 text-[#ff4800]" />
-            Field Activities & GPS Check-Ins
+            Field Activities & Check-Ins
           </h2>
           <p className="text-xs text-[#6b665c]">
-            Audit trail of client visits, phone calls, and AI-summarized touchpoints
+            Audit trail of client visits and phone calls
           </p>
         </div>
 
@@ -68,7 +68,7 @@ export const ActivitiesListView: React.FC<ActivitiesListViewProps> = ({
           <Search className="w-4 h-4 absolute left-3 top-2.5 text-[#6b665c]" />
           <input
             type="text"
-            placeholder="Search notes, company, GPS..."
+            placeholder="Search notes, company..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] pl-9 pr-3 py-2 text-xs text-[#1f1f1f] placeholder-[#6b665c] focus:outline-none focus:bg-[#fcfcfa]"
@@ -119,30 +119,10 @@ export const ActivitiesListView: React.FC<ActivitiesListViewProps> = ({
                     )}
                   </div>
 
-                  {act.location_gps && (
-                    <a
-                      href={`https://maps.google.com/?q=${act.location_gps}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="flex items-center gap-1 font-mono text-[10px] text-[#1f1f1f] bg-[#fcfcfa] hover:bg-[#eae4d5] px-2.5 py-1 rounded-[4px] border border-[#1f1f1f] transition-colors"
-                    >
-                      <MapPin className="w-3 h-3 text-[#ff4800]" />
-                      <span>GPS: {act.location_gps}</span>
-                    </a>
-                  )}
                 </div>
 
                 <p className="text-xs text-[#1f1f1f] leading-relaxed">{act.notes}</p>
 
-                {act.ai_summary && (
-                  <div className="bg-[#fcfcfa] border border-[#1f1f1f] rounded-[8px] p-3 text-[#1f1f1f] text-xs whitespace-pre-line">
-                    <span className="font-bold text-[#ff4800] flex items-center gap-1.5 mb-1">
-                      <Sparkles className="w-3.5 h-3.5" />
-                      AI Action Items & Executive Summary
-                    </span>
-                    {act.ai_summary}
-                  </div>
-                )}
 
                 <div className="text-[10px] text-[#6b665c] flex items-center justify-between pt-1 border-t border-[#1f1f1f]/10">
                   <span className="flex items-center gap-1 font-medium">

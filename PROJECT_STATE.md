@@ -2,11 +2,13 @@
 ## AR Personal CRM Enterprise (Solo Account Manager Edition)
 
 > **Document Version:** 2.2.1 (Dynamic PIN Length & Vault Synchronization Edition)  
-> **Status:** Production-Ready / Operational & Audited  
+> **Status:** Dokumen historis; klaim kesiapan produksi belum diverifikasi pada checkout ini
 > **Live Production URL (Vercel):** [https://arcrmapp.vercel.app/](https://arcrmapp.vercel.app/)  
 > **Author & Architect:** Lead Full-Stack Software Architect & UI/UX State Specialist  
 > **Last Updated:** October 2026  
 > **Target Platform:** Offline-First Progressive Web App (PWA) & Native Android (Jetpack Compose / Room DB)
+
+> **Pembaruan keamanan:** dokumen ini historis; seluruh uraian arsitektur, GAS/Sheets, offline-first, GPS, AI, dan klaim fitur di bawahnya bukan gambaran implementasi branch Firebase saat ini. Pada branch `cue/firebase-stabilization`, aplikasi menggunakan Firebase Auth/Firestore untuk Leads/Activities, tidak mengimpor data lama, dan Rules/client binding membatasi owner serta satu workspace yang dikonfigurasi. Menurut konteks pemilik, Rules production dan dokumen owner/workspace sudah disiapkan sebelumnya; hal itu tidak diverifikasi ulang secara live dalam pekerjaan ini. Data CRM lama belum dimigrasikan. Lihat `docs/FIREBASE_MIGRATION_STATUS.md` dan `docs/OWNER_BOOTSTRAP_AND_DATA_MIGRATION_RUNBOOK.md` untuk status, batas cutover, dan prosedur migrasi terkini.
 
 ---
 
