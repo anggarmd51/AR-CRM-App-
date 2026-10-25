@@ -12,6 +12,7 @@ import {
   Building2,
   MapPin,
   Check,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { Lead, PipelineStage, PIPELINE_STAGES, STAGE_CONFIG } from '../types/crm.ts';
 import { formatCurrency, formatDateDisplay } from '../utils/crmCalculations.ts';
@@ -22,6 +23,7 @@ interface PipelineKanbanViewProps {
   onSelectLead: (lead: Lead) => void;
   onOpenQuickLead: () => void;
   onOpenWhatsApp: (lead: Lead) => void;
+  onExportCsv?: () => void;
 }
 
 export const PipelineKanbanView: React.FC<PipelineKanbanViewProps> = ({
@@ -30,6 +32,7 @@ export const PipelineKanbanView: React.FC<PipelineKanbanViewProps> = ({
   onSelectLead,
   onOpenQuickLead,
   onOpenWhatsApp,
+  onExportCsv,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedScore, setSelectedScore] = useState<string>('all');
@@ -85,6 +88,17 @@ export const PipelineKanbanView: React.FC<PipelineKanbanViewProps> = ({
               List View
             </button>
           </div>
+
+          {onExportCsv && (
+            <button
+              onClick={onExportCsv}
+              title="Download Rekapitulasi CSV"
+              className="bg-[#f8f5ee] hover:bg-[#f2ede4] text-[#1f1f1f] text-xs font-semibold px-3 py-2 rounded-[8px] border border-[#1f1f1f] flex items-center gap-1.5 transition-all active:scale-95"
+            >
+              <FileSpreadsheet className="w-4 h-4 text-[#ff4800]" />
+              <span className="hidden sm:inline">Export CSV</span>
+            </button>
+          )}
 
           <button
             onClick={onOpenQuickLead}

@@ -1,146 +1,42 @@
-import { Lead, Activity, GlobalLead, QueuedMutation, PipelineStage } from '../types/crm.ts';
+import { Lead, Activity, GlobalLead, QueuedMutation, PipelineStage, WonDealArchiveRecord } from '../types/crm.ts';
 
 const STORAGE_KEY_LEADS = 'personal_crm_leads_v2';
 const STORAGE_KEY_ACTIVITIES = 'personal_crm_activities_v2';
+const STORAGE_KEY_GLOBAL_LEADS = 'personal_crm_global_leads_v2';
 const STORAGE_KEY_QUEUE = 'personal_crm_mutations_queue_v2';
+const STORAGE_KEY_ARCHIVES = 'personal_crm_won_archives_v2';
 const STORAGE_KEY_SIMULATE_OFFLINE = 'personal_crm_simulate_offline';
 
-// Default initial seed data if fresh storage
-export const SEED_LEADS: Lead[] = [
-  {
-    id: 'LEAD-101',
-    company_name: 'PT Nusantara Logistics',
-    contact_person: 'Budi Santoso',
-    phone: '+6281234567890',
-    industry: 'Logistics & Supply Chain',
-    city: 'Jakarta',
-    pipeline_stage: 'Meeting',
-    deal_value: 45000000,
-    next_followup_date: new Date().toISOString().slice(0, 10), // Today
-    lead_score: 'Hot',
-    created_at: new Date(Date.now() - 86400000 * 2).toISOString(),
-    _syncStatus: 'synced',
-  },
-  {
-    id: 'LEAD-102',
-    company_name: 'CV Makmur Sentosa',
-    contact_person: 'Dewi Lestari',
-    phone: '+6281987654321',
-    industry: 'Manufacturing',
-    city: 'Surabaya',
-    pipeline_stage: 'Negotiation',
-    deal_value: 85000000,
-    next_followup_date: new Date(Date.now() + 86400000 * 2).toISOString().slice(0, 10),
-    lead_score: 'Hot',
-    created_at: new Date(Date.now() - 86400000 * 5).toISOString(),
-    _syncStatus: 'synced',
-  },
-  {
-    id: 'LEAD-103',
-    company_name: 'PT Digital Solusi Utama',
-    contact_person: 'Rian Pratama',
-    phone: '+6285211223344',
-    industry: 'Information Technology',
-    city: 'Bandung',
-    pipeline_stage: 'Prospect',
-    deal_value: 30000000,
-    next_followup_date: new Date(Date.now() - 86400000).toISOString().slice(0, 10), // Overdue
-    lead_score: 'Warm',
-    created_at: new Date(Date.now() - 86400000 * 7).toISOString(),
-    _syncStatus: 'synced',
-  },
-  {
-    id: 'LEAD-104',
-    company_name: 'Karya Prima Medika',
-    contact_person: 'dr. Hendra Kusuma',
-    phone: '+6287733445566',
-    industry: 'Healthcare & Pharma',
-    city: 'Semarang',
-    pipeline_stage: 'Closing Won',
-    deal_value: 120000000,
-    next_followup_date: '',
-    lead_score: 'Hot',
-    created_at: new Date(Date.now() - 86400000 * 12).toISOString(),
-    _syncStatus: 'synced',
-  },
-];
+// Legacy mock ID signatures to permanently purge from user storage
+const LEGACY_MOCK_LEAD_IDS = new Set(['LEAD-101', 'LEAD-102', 'LEAD-103', 'LEAD-104']);
+const LEGACY_MOCK_ACTIVITY_IDS = new Set(['ACT-201', 'ACT-202']);
+const LEGACY_MOCK_GLOBAL_IDS = new Set(['GL-1', 'GL-2', 'GL-3', 'GL-4', 'GL-5']);
+const LEGACY_DUMMY_NAMES = new Set([
+  'pt nusantara logistics',
+  'cv makmur sentosa',
+  'pt digital solusi utama',
+  'karya prima medika',
+]);
 
-export const SEED_ACTIVITIES: Activity[] = [
-  {
-    id: 'ACT-201',
-    lead_id: 'LEAD-101',
-    activity_type: 'Meeting Check-In',
-    notes: 'In-person meeting at client headquarters in Kuningan. Demonstrated fleet tracking dashboard.',
-    ai_summary: '• Demonstrated telematics dashboard to VP Ops.\n• Key interest: driver safety reports.\n• Next step: Send pilot contract terms by tomorrow.',
-    location_gps: '-6.2231, 106.8291',
-    created_at: new Date(Date.now() - 3600000 * 4).toISOString(),
-    _syncStatus: 'synced',
-  },
-  {
-    id: 'ACT-202',
-    lead_id: 'LEAD-102',
-    activity_type: 'Negotiation Call',
-    notes: 'Discussed annual payment discounts. Offered 7% discount on 2-year commitment.',
-    ai_summary: '• Commercial terms reviewed with finance director.\n• 7% multi-year discount approved.\n• Next step: Issue revised formal PO.',
-    location_gps: '-7.2575, 112.7521',
-    created_at: new Date(Date.now() - 3600000 * 28).toISOString(),
-    _syncStatus: 'synced',
-  },
-];
+function isLegacyDummyLead(lead: Lead): boolean {
+  if (!lead || !lead.id) return false;
+  if (LEGACY_MOCK_LEAD_IDS.has(lead.id)) return true;
+  if (lead.company_name && LEGACY_DUMMY_NAMES.has(lead.company_name.toLowerCase().trim())) return true;
+  return false;
+}
 
-// Curated high-potential global leads database for Lead Finder
-export const GLOBAL_LEADS_CATALOG: GlobalLead[] = [
-  {
-    id: 'GL-1',
-    company_name: 'Garuda Cold Chain Logistics',
-    contact_person: 'Bambang Soedjarwo',
-    phone: '+6281290011223',
-    industry: 'Cold Storage & Logistics',
-    city: 'Jakarta',
-    estimated_value: 95000000,
-    tags: ['High Growth', 'Logistics 4.0'],
-  },
-  {
-    id: 'GL-2',
-    company_name: 'Artha Agro Mandiri',
-    contact_person: 'Maya Wulandari',
-    phone: '+6281312345678',
-    industry: 'Agriculture & Exports',
-    city: 'Medan',
-    estimated_value: 65000000,
-    tags: ['Export Ready', 'B2B Supplies'],
-  },
-  {
-    id: 'GL-3',
-    company_name: 'Sinergi Finansial Asia',
-    contact_person: 'Fajar Nugraha',
-    phone: '+6285678901234',
-    industry: 'Fintech & Payments',
-    city: 'Jakarta',
-    estimated_value: 140000000,
-    tags: ['Enterprise Deal', 'Fintech'],
-  },
-  {
-    id: 'GL-4',
-    company_name: 'Surya Baja Konstruksi',
-    contact_person: 'Ir. Agus Wijaya',
-    phone: '+6281898765432',
-    industry: 'Construction & Steel',
-    city: 'Surabaya',
-    estimated_value: 110000000,
-    tags: ['Infrastructure', 'High Value'],
-  },
-  {
-    id: 'GL-5',
-    company_name: 'Prima Meditech Farma',
-    contact_person: 'Ratna Sari',
-    phone: '+6287812398765',
-    industry: 'Medical Devices',
-    city: 'Bandung',
-    estimated_value: 50000000,
-    tags: ['Healthcare', 'Reliable'],
-  },
-];
+function isLegacyDummyActivity(act: Activity): boolean {
+  if (!act || !act.id) return false;
+  if (LEGACY_MOCK_ACTIVITY_IDS.has(act.id)) return true;
+  if (act.lead_id && LEGACY_MOCK_LEAD_IDS.has(act.lead_id)) return true;
+  return false;
+}
+
+function isLegacyDummyGlobalLead(gl: GlobalLead): boolean {
+  if (!gl || !gl.id) return false;
+  if (LEGACY_MOCK_GLOBAL_IDS.has(gl.id)) return true;
+  return false;
+}
 
 // Safe Storage Helper
 function getStoredItem<T>(key: string, defaultValue: T): T {
@@ -166,28 +62,41 @@ function setStoredItem<T>(key: string, value: T): void {
 export const CrmStorage = {
   getLeads(): Lead[] {
     const stored = getStoredItem<Lead[]>(STORAGE_KEY_LEADS, []);
-    if (!stored || stored.length === 0) {
-      setStoredItem(STORAGE_KEY_LEADS, SEED_LEADS);
-      return SEED_LEADS;
+    const cleaned = stored.filter((l) => !isLegacyDummyLead(l));
+    if (cleaned.length !== stored.length) {
+      setStoredItem(STORAGE_KEY_LEADS, cleaned);
     }
-    return stored;
+    return cleaned;
   },
 
   setLeads(leads: Lead[]): void {
-    setStoredItem(STORAGE_KEY_LEADS, leads);
+    setStoredItem(STORAGE_KEY_LEADS, leads.filter((l) => !isLegacyDummyLead(l)));
   },
 
   getActivities(): Activity[] {
     const stored = getStoredItem<Activity[]>(STORAGE_KEY_ACTIVITIES, []);
-    if (!stored || stored.length === 0) {
-      setStoredItem(STORAGE_KEY_ACTIVITIES, SEED_ACTIVITIES);
-      return SEED_ACTIVITIES;
+    const cleaned = stored.filter((a) => !isLegacyDummyActivity(a));
+    if (cleaned.length !== stored.length) {
+      setStoredItem(STORAGE_KEY_ACTIVITIES, cleaned);
     }
-    return stored;
+    return cleaned;
   },
 
   setActivities(activities: Activity[]): void {
-    setStoredItem(STORAGE_KEY_ACTIVITIES, activities);
+    setStoredItem(STORAGE_KEY_ACTIVITIES, activities.filter((a) => !isLegacyDummyActivity(a)));
+  },
+
+  getGlobalLeads(): GlobalLead[] {
+    const stored = getStoredItem<GlobalLead[]>(STORAGE_KEY_GLOBAL_LEADS, []);
+    const cleaned = stored.filter((gl) => !isLegacyDummyGlobalLead(gl));
+    if (cleaned.length !== stored.length) {
+      setStoredItem(STORAGE_KEY_GLOBAL_LEADS, cleaned);
+    }
+    return cleaned;
+  },
+
+  setGlobalLeads(leads: GlobalLead[]): void {
+    setStoredItem(STORAGE_KEY_GLOBAL_LEADS, leads.filter((gl) => !isLegacyDummyGlobalLead(gl)));
   },
 
   getQueue(): QueuedMutation[] {
@@ -196,6 +105,14 @@ export const CrmStorage = {
 
   setQueue(queue: QueuedMutation[]): void {
     setStoredItem(STORAGE_KEY_QUEUE, queue);
+  },
+
+  getWonArchives(): WonDealArchiveRecord[] {
+    return getStoredItem<WonDealArchiveRecord[]>(STORAGE_KEY_ARCHIVES, []);
+  },
+
+  setWonArchives(archives: WonDealArchiveRecord[]): void {
+    setStoredItem(STORAGE_KEY_ARCHIVES, archives);
   },
 
   isSimulatedOffline(): boolean {
@@ -210,7 +127,9 @@ export const CrmStorage = {
     if (typeof localStorage !== 'undefined') {
       localStorage.removeItem(STORAGE_KEY_LEADS);
       localStorage.removeItem(STORAGE_KEY_ACTIVITIES);
+      localStorage.removeItem(STORAGE_KEY_GLOBAL_LEADS);
       localStorage.removeItem(STORAGE_KEY_QUEUE);
+      localStorage.removeItem(STORAGE_KEY_ARCHIVES);
     }
   },
 };
@@ -339,6 +258,52 @@ export class CrmSyncEngine {
         pipeline_stage: newStage,
         next_followup_date: nextFollowupDate || '',
       },
+      timestamp: Date.now(),
+      retries: 0,
+      status: 'pending',
+    };
+
+    const queue = [...CrmStorage.getQueue(), mutation];
+    CrmStorage.setQueue(queue);
+    this.notify();
+
+    // Auto-archive deal to separate Archive_Logs sheet if moved to Closing Won
+    if (newStage === 'Closing Won') {
+      const updatedLead = leads.find((l) => l.id === leadId);
+      if (updatedLead) {
+        this.enqueueArchiveClosingWon(updatedLead);
+      }
+    }
+
+    if (this.isOnline()) {
+      this.processQueue();
+    }
+  }
+
+  /**
+   * Automatically queues an archive entry to Archive_Logs sheet for won deals.
+   */
+  public enqueueArchiveClosingWon(lead: Lead): void {
+    const archiveRecord: WonDealArchiveRecord = {
+      id: `ARCHIVE-${Date.now()}`,
+      lead_id: lead.id,
+      company_name: lead.company_name,
+      contact_person: lead.contact_person,
+      phone: String(lead.phone || ''),
+      deal_value: Number(lead.deal_value) || 0,
+      industry: lead.industry,
+      city: lead.city,
+      won_date: new Date().toISOString().slice(0, 10),
+      archived_at: new Date().toISOString(),
+    };
+
+    const currentArchives = CrmStorage.getWonArchives();
+    CrmStorage.setWonArchives([archiveRecord, ...currentArchives]);
+
+    const mutation: QueuedMutation = {
+      id: `mut-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      action: 'archiveClosingWon',
+      payload: archiveRecord,
       timestamp: Date.now(),
       retries: 0,
       status: 'pending',
@@ -483,6 +448,20 @@ export class CrmSyncEngine {
             }
           }
 
+          // BUG-02 Fix: Dynamically resolve foreign key lead_id for addActivity and archiveClosingWon
+          if (
+            (item.action === 'addActivity' || item.action === 'archiveClosingWon') &&
+            item.payload.lead_id &&
+            item.payload.lead_id.startsWith('TEMP-')
+          ) {
+            const currentLeads = CrmStorage.getLeads();
+            const matchingLead = currentLeads.find((l) => l.id === item.payload.lead_id);
+            if (matchingLead && !matchingLead.id.startsWith('TEMP-')) {
+              endpointPayload.lead_id = matchingLead.id;
+              item.payload.lead_id = matchingLead.id;
+            }
+          }
+
           const response = await fetch('/api/gas-proxy', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -508,7 +487,7 @@ export class CrmSyncEngine {
               });
               CrmStorage.setLeads(leads);
 
-              // Also update any activity referencing this temp lead id
+              // Update any activity referencing this temp lead id in local cache
               const activities = CrmStorage.getActivities().map((a) => {
                 if (a.lead_id === tempId) {
                   return { ...a, lead_id: realId };
@@ -516,6 +495,25 @@ export class CrmSyncEngine {
                 return a;
               });
               CrmStorage.setActivities(activities);
+
+              // Update local won archives if any referenced this tempId
+              const archives = CrmStorage.getWonArchives().map((arc) => {
+                if (arc.lead_id === tempId) {
+                  return { ...arc, lead_id: realId };
+                }
+                return arc;
+              });
+              CrmStorage.setWonArchives(archives);
+
+              // BUG-02 Fix: Propagate realId to all downstream queued mutations
+              for (const qItem of queue) {
+                if (qItem.payload && qItem.payload.lead_id === tempId) {
+                  qItem.payload.lead_id = realId;
+                }
+                if (qItem.payload && qItem.payload.id === tempId) {
+                  qItem.payload.id = realId;
+                }
+              }
             } else if (item.action === 'addActivity') {
               const realActId = result.id;
               const tempId = item.payload.tempId;
@@ -561,71 +559,150 @@ export class CrmSyncEngine {
   }
 
   /**
-   * Pulls fresh data from remote Cloud Database and merges with local offline cache.
+   * Pulls fresh data from remote Cloud Database (Google Sheets) and merges with local offline cache.
    */
-  public async pullRemoteData(): Promise<{ leadsCount: number; activitiesCount: number }> {
+  public async pullRemoteData(): Promise<{ leadsCount: number; activitiesCount: number; globalLeadsCount: number }> {
     if (!this.isOnline()) {
       return {
         leadsCount: CrmStorage.getLeads().length,
         activitiesCount: CrmStorage.getActivities().length,
+        globalLeadsCount: CrmStorage.getGlobalLeads().length,
       };
     }
 
     try {
-      const [leadsRes, actRes] = await Promise.all([
-        fetch('/api/gas-proxy?action=getLeads'),
-        fetch('/api/gas-proxy?action=getActivities'),
+      const [leadsRes, actRes, archiveRes, globalRes] = await Promise.all([
+        fetch('/api/gas-proxy?action=getLeads').catch(() => null),
+        fetch('/api/gas-proxy?action=getActivities').catch(() => null),
+        fetch('/api/gas-proxy?action=getArchiveLogs').catch(() => null),
+        fetch('/api/gas-proxy?action=getGlobalLeads').catch(() => null),
       ]);
 
-      if (leadsRes.ok) {
-        const remoteLeads: any[] = await leadsRes.json();
-        if (Array.isArray(remoteLeads) && remoteLeads.length > 0) {
-          // Merge with local leads, keeping any pending local additions or changes
+      // 1. Process Leads from Sheet "Leads"
+      if (leadsRes && leadsRes.ok) {
+        const remoteLeads: any = await leadsRes.json().catch(() => null);
+        if (Array.isArray(remoteLeads)) {
           const localLeads = CrmStorage.getLeads();
           const pendingLeads = localLeads.filter((l) => l._syncStatus && l._syncStatus !== 'synced');
-          
+
+          const remoteMapped: Lead[] = remoteLeads
+            .filter((rl: any) => rl && rl.id)
+            .map((rl: any) => {
+              const rawPhone = rl.phone !== undefined && rl.phone !== null ? String(rl.phone).trim() : '';
+              let formattedPhone = rawPhone;
+              if (rawPhone && !rawPhone.startsWith('+')) {
+                if (rawPhone.startsWith('62')) {
+                  formattedPhone = `+${rawPhone}`;
+                } else if (rawPhone.startsWith('0')) {
+                  formattedPhone = `+62${rawPhone.slice(1)}`;
+                } else {
+                  formattedPhone = `+${rawPhone}`;
+                }
+              }
+
+              const rawFollowup = rl.next_followup_date ? String(rl.next_followup_date).slice(0, 10) : '';
+
+              return {
+                id: String(rl.id),
+                company_name: String(rl.company_name || ''),
+                contact_person: String(rl.contact_person || ''),
+                phone: formattedPhone,
+                industry: String(rl.industry || ''),
+                city: String(rl.city || ''),
+                pipeline_stage: (rl.pipeline_stage || 'Prospect') as PipelineStage,
+                deal_value: Number(rl.deal_value) || 0,
+                next_followup_date: rawFollowup,
+                lead_score: (rl.lead_score || 'Warm') as any,
+                created_at: rl.created_at ? String(rl.created_at) : new Date().toISOString(),
+                updated_at: rl.updated_at ? String(rl.updated_at) : new Date().toISOString(),
+                _syncStatus: 'synced' as const,
+              };
+            });
+
+          // Merge: keep local pending mutations, combine with remote leads
           const merged: Lead[] = [
             ...pendingLeads,
-            ...remoteLeads.map((rl) => ({
-              id: String(rl.id),
-              company_name: String(rl.company_name || ''),
-              contact_person: String(rl.contact_person || ''),
-              phone: rl.phone || '',
-              industry: String(rl.industry || ''),
-              city: String(rl.city || ''),
-              pipeline_stage: (rl.pipeline_stage || 'Prospect') as PipelineStage,
-              deal_value: Number(rl.deal_value) || 0,
-              next_followup_date: rl.next_followup_date || '',
-              lead_score: (rl.lead_score || 'Warm') as any,
-              created_at: rl.created_at,
-              updated_at: rl.updated_at,
-              _syncStatus: 'synced' as const,
-            })).filter((rl) => !pendingLeads.some((pl) => pl.id === rl.id)),
+            ...remoteMapped.filter((rl) => !pendingLeads.some((pl) => pl.id === rl.id)),
           ];
           CrmStorage.setLeads(merged);
         }
       }
 
-      if (actRes.ok) {
-        const remoteActs: any[] = await actRes.json();
-        if (Array.isArray(remoteActs) && remoteActs.length > 0) {
+      // 2. Process Activities from Sheet "Activities"
+      if (actRes && actRes.ok) {
+        const remoteActs: any = await actRes.json().catch(() => null);
+        if (Array.isArray(remoteActs)) {
           const localActs = CrmStorage.getActivities();
           const pendingActs = localActs.filter((a) => a._syncStatus && a._syncStatus !== 'synced');
 
-          const merged: Activity[] = [
-            ...pendingActs,
-            ...remoteActs.map((ra) => ({
+          const remoteMapped: Activity[] = remoteActs
+            .filter((ra: any) => ra && ra.id)
+            .map((ra: any) => ({
               id: String(ra.id),
               lead_id: String(ra.lead_id),
-              activity_type: String(ra.activity_type || 'Activity'),
+              activity_type: String(ra.activity_type || 'Meeting Check-In'),
               notes: String(ra.notes || ''),
-              ai_summary: ra.ai_summary || '',
-              location_gps: ra.location_gps || '',
-              created_at: ra.created_at,
+              ai_summary: String(ra.ai_summary || ''),
+              location_gps: String(ra.location_gps || ''),
+              created_at: ra.created_at ? String(ra.created_at) : new Date().toISOString(),
               _syncStatus: 'synced' as const,
-            })).filter((ra) => !pendingActs.some((pa) => pa.id === ra.id)),
+            }));
+
+          const merged: Activity[] = [
+            ...pendingActs,
+            ...remoteMapped.filter((ra) => !pendingActs.some((pa) => pa.id === ra.id)),
           ];
           CrmStorage.setActivities(merged);
+        }
+      }
+
+      // 3. Process Archive Logs from Sheet "Archive_Logs"
+      if (archiveRes && archiveRes.ok) {
+        const remoteArchives: any = await archiveRes.json().catch(() => null);
+        if (Array.isArray(remoteArchives)) {
+          const localArchives = CrmStorage.getWonArchives();
+          const mergedArchives: WonDealArchiveRecord[] = [
+            ...localArchives.filter((la) => !remoteArchives.some((ra: any) => ra && ra.id === la.id)),
+            ...remoteArchives
+              .filter((ra: any) => ra && ra.id)
+              .map((ra: any) => ({
+                id: String(ra.id),
+                lead_id: String(ra.lead_id || ''),
+                company_name: String(ra.company_name || ''),
+                contact_person: String(ra.contact_person || ''),
+                phone: String(ra.phone || ''),
+                deal_value: Number(ra.deal_value) || 0,
+                industry: String(ra.industry || ''),
+                city: String(ra.city || ''),
+                won_date: String(ra.won_date || ''),
+                archived_at: String(ra.archived_at || ''),
+              })),
+          ];
+          CrmStorage.setWonArchives(mergedArchives);
+        }
+      }
+
+      // 4. Process Global Leads from Sheet "Global_Leads"
+      if (globalRes && globalRes.ok) {
+        const remoteGlobal: any = await globalRes.json().catch(() => null);
+        if (Array.isArray(remoteGlobal)) {
+          const mappedGlobal: GlobalLead[] = remoteGlobal
+            .filter((gl: any) => gl && gl.id)
+            .map((gl: any) => ({
+              id: String(gl.id),
+              company_name: String(gl.company_name || ''),
+              contact_person: String(gl.contact_person || ''),
+              phone: String(gl.phone || ''),
+              industry: String(gl.industry || ''),
+              city: String(gl.city || ''),
+              estimated_value: Number(gl.estimated_value) || 0,
+              tags: Array.isArray(gl.tags)
+                ? gl.tags
+                : typeof gl.tags === 'string' && gl.tags
+                ? gl.tags.split(',').map((t: string) => t.trim())
+                : [],
+            }));
+          CrmStorage.setGlobalLeads(mappedGlobal);
         }
       }
     } catch (e) {
@@ -635,6 +712,7 @@ export class CrmSyncEngine {
     return {
       leadsCount: CrmStorage.getLeads().length,
       activitiesCount: CrmStorage.getActivities().length,
+      globalLeadsCount: CrmStorage.getGlobalLeads().length,
     };
   }
 }

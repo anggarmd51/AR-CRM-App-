@@ -1,4 +1,4 @@
-import { RefreshCw, Smartphone, Monitor, WifiOff, Code2 } from 'lucide-react';
+import { RefreshCw, Smartphone, Monitor, WifiOff, Code2, ShieldCheck, Shield, FileSpreadsheet } from 'lucide-react';
 
 interface TopAppBarProps {
   title: string;
@@ -12,6 +12,9 @@ interface TopAppBarProps {
   onTogglePhoneFrame: () => void;
   isAndroidCodeActive?: boolean;
   onToggleAndroidCode?: () => void;
+  onOpenSecurity?: () => void;
+  isSecurityActive?: boolean;
+  onExportCsv?: () => void;
 }
 
 export const TopAppBar: React.FC<TopAppBarProps> = ({
@@ -26,6 +29,9 @@ export const TopAppBar: React.FC<TopAppBarProps> = ({
   onTogglePhoneFrame,
   isAndroidCodeActive = false,
   onToggleAndroidCode,
+  onOpenSecurity,
+  isSecurityActive = false,
+  onExportCsv,
 }) => {
   return (
     <header className="sticky top-0 z-30 bg-[#fcfcfa] border-b border-[#1f1f1f] px-4 py-3">
@@ -110,6 +116,43 @@ export const TopAppBar: React.FC<TopAppBarProps> = ({
             >
               <Code2 className={`w-3.5 h-3.5 ${isAndroidCodeActive ? 'text-white' : 'text-[#ff4800]'}`} />
               <span className="hidden sm:inline">Android Code</span>
+            </button>
+          )}
+
+          {/* Export CSV Rekapitulasi */}
+          {onExportCsv && (
+            <button
+              onClick={onExportCsv}
+              title="Download Rekapitulasi Leads (CSV)"
+              className="flex items-center gap-1.5 bg-[#f8f5ee] hover:bg-[#f2ede4] text-[#1f1f1f] border border-[#1f1f1f] px-3 py-1.5 rounded-[8px] text-xs font-semibold transition-all active:scale-95"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-[#ff4800]" />
+              <span className="hidden xl:inline">Export CSV</span>
+            </button>
+          )}
+
+          {/* Security PIN Lock Settings */}
+          {onOpenSecurity && (
+            <button
+              onClick={onOpenSecurity}
+              title={isSecurityActive ? "Kunci PIN Aktif: Klik untuk Pengaturan" : "Atur Kunci PIN Keamanan"}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] text-xs font-semibold border border-[#1f1f1f] transition-all ${
+                isSecurityActive
+                  ? 'bg-[#edf7f1] text-[#155e3c] border-[#155e3c]/40'
+                  : 'bg-[#f8f5ee] hover:bg-[#f2ede4] text-[#1f1f1f]'
+              }`}
+            >
+              {isSecurityActive ? (
+                <>
+                  <ShieldCheck className="w-3.5 h-3.5 text-[#155e3c]" />
+                  <span className="hidden sm:inline">PIN On</span>
+                </>
+              ) : (
+                <>
+                  <Shield className="w-3.5 h-3.5 text-[#6b665c]" />
+                  <span className="hidden sm:inline">Keamanan</span>
+                </>
+              )}
             </button>
           )}
 

@@ -49,9 +49,30 @@ export interface GlobalLead {
   employee_count?: string;
 }
 
+export interface WonDealArchiveRecord {
+  id: string;
+  lead_id: string;
+  company_name: string;
+  contact_person: string;
+  phone: string;
+  deal_value: number;
+  industry: string;
+  city: string;
+  won_date: string;
+  archived_at: string;
+}
+
+export interface SecuritySettings {
+  isEnabled: boolean;
+  pin: string | null;
+  useBiometric: boolean;
+  autoLockMinutes: number;
+  lastUnlockTimestamp: number;
+}
+
 export interface QueuedMutation {
   id: string;
-  action: 'addLead' | 'updateLeadStage' | 'addActivity' | 'importGlobalLead';
+  action: 'addLead' | 'updateLeadStage' | 'addActivity' | 'importGlobalLead' | 'archiveClosingWon';
   payload: Record<string, any>;
   timestamp: number;
   retries: number;

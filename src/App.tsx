@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { TopAppBar } from './components/TopAppBar.tsx';
 import { BottomNavBar, NavTab } from './components/BottomNavBar.tsx';
 import { DashboardView } from './components/DashboardView.tsx';
@@ -15,20 +15,29 @@ import { QuickLeadModal } from './components/QuickLeadModal.tsx';
 import { ActivityLoggerModal } from './components/ActivityLoggerModal.tsx';
 import { LeadDetailModal } from './components/LeadDetailModal.tsx';
 import { WhatsAppModal } from './components/WhatsAppModal.tsx';
+import { SecurityLockScreen } from './components/SecurityLockScreen.tsx';
+import { SecuritySettingsModal } from './components/SecuritySettingsModal.tsx';
 import { AndroidFrame } from './components/AndroidFrame.tsx';
 import { Lead, Activity, GlobalLead, PipelineStage } from './types/crm.ts';
 import { CrmStorage, syncEngine } from './utils/syncQueue.ts';
 import { filterFollowUps } from './utils/crmCalculations.ts';
+import { downloadLeadsCsv } from './utils/exportCsv.ts';
+import { SecurityVault } from './utils/securityLock.ts';
 import { CheckCircle2 } from 'lucide-react';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<NavTab>('dashboard');
   const [leads, setLeads] = useState<Lead[]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
+  const [globalLeads, setGlobalLeads] = useState<GlobalLead[]>([]);
   const [pendingCount, setPendingCount] = useState<number>(0);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [isSimulatedOffline, setIsSimulatedOffline] = useState<boolean>(false);
   const [isPhoneFrame, setIsPhoneFrame] = useState<boolean>(false);
+
+  // Security Vault & Lock State
+  const [isAppLocked, setIsAppLocked] = useState<boolean>(() => SecurityVault.isCurrentlyLocked());
+  const [isSecuritySettingsOpen, setIsSecuritySettingsOpen] = useState(false);
 
   // Modals
   const [isQuickLeadOpen, setIsQuickLeadOpen] = useState(false);
@@ -40,17 +49,129 @@ export default function App() {
   // Snackbar Toast
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  const showToast = (msg: string) => {
+  const showToast = useCallback((msg: string) => {
     setToastMessage(msg);
     setTimeout(() => {
       setToastMessage(null);
     }, 3500);
-  };
+  }, []);
+
+  // Refs for robust popstate back gesture handling
+  const currentTabRef = useRef(currentTab);
+  currentTabRef.current = currentTab;
+  const selectedLeadRef = useRef(selectedLead);
+  selectedLeadRef.current = selectedLead;
+  const isQuickLeadOpenRef = useRef(isQuickLeadOpen);
+  isQuickLeadOpenRef.current = isQuickLeadOpen;
+  const isActivityLoggerOpenRef = useRef(isActivityLoggerOpen);
+  isActivityLoggerOpenRef.current = isActivityLoggerOpen;
+  const whatsAppLeadRef = useRef(whatsAppLead);
+  whatsAppLeadRef.current = whatsAppLead;
+  const isSecuritySettingsOpenRef = useRef(isSecuritySettingsOpen);
+  isSecuritySettingsOpenRef.current = isSecuritySettingsOpen;
+
+  // Track double tap back to exit on root dashboard
+  const lastBackPressTimeRef = useRef<number>(0);
+
+  // Safe modal openers with history push for Android back gesture support
+  const openModalWithHistory = useCallback((openFn: () => void, modalName: string) => {
+    if (typeof window !== 'undefined') {
+      window.history.pushState({ modal: true, modalName }, '');
+    }
+    openFn();
+  }, []);
+
+  // Safe modal closer that unwinds history state cleanly
+  const closeModalWithHistory = useCallback((closeFn: () => void) => {
+    closeFn();
+    if (typeof window !== 'undefined' && window.history.state?.modal) {
+      window.history.back();
+    }
+  }, []);
+
+  // Tab changer with history entry
+  const changeTabWithHistory = useCallback((tab: NavTab) => {
+    if (tab === currentTabRef.current) return;
+    if (typeof window !== 'undefined') {
+      window.history.pushState({ tab }, '');
+    }
+    setCurrentTab(tab);
+  }, []);
+
+  // Set up Mobile Back Gesture (popstate) Interceptor & App Lock on Resume
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    // Establish root history state
+    if (!window.history.state) {
+      window.history.replaceState({ root: true, tab: 'dashboard' }, '');
+    }
+
+    const handlePopState = () => {
+      // 1. LIFO: Close top-most / child modals first before parent LeadDetailModal
+      if (isActivityLoggerOpenRef.current) {
+        setIsActivityLoggerOpen(false);
+        setActivityLead(null);
+        return;
+      }
+      if (whatsAppLeadRef.current) {
+        setWhatsAppLead(null);
+        return;
+      }
+      if (isSecuritySettingsOpenRef.current) {
+        setIsSecuritySettingsOpen(false);
+        return;
+      }
+      if (isQuickLeadOpenRef.current) {
+        setIsQuickLeadOpen(false);
+        return;
+      }
+      if (selectedLeadRef.current) {
+        setSelectedLead(null);
+        return;
+      }
+
+      // 2. If no modal is open but user is on a secondary tab, navigate back to Dashboard
+      if (currentTabRef.current !== 'dashboard') {
+        setCurrentTab('dashboard');
+        return;
+      }
+
+      // 3. User is on Root Dashboard: double back confirmation to prevent accidental exit
+      const now = Date.now();
+      if (now - lastBackPressTimeRef.current < 2000) {
+        // Allow app exit / default behavior
+        return;
+      } else {
+        lastBackPressTimeRef.current = now;
+        window.history.pushState({ root: true, tab: 'dashboard' }, '');
+        showToast('Tekan kembali sekali lagi untuk keluar dari aplikasi.');
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+
+    // Auto-lock when resumed from background if timeout expired
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        if (SecurityVault.isCurrentlyLocked()) {
+          setIsAppLocked(true);
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [showToast]);
 
   // Load state from local storage & subscribe to sync engine
   const refreshLocalData = useCallback(() => {
     setLeads(CrmStorage.getLeads());
     setActivities(CrmStorage.getActivities());
+    setGlobalLeads(CrmStorage.getGlobalLeads());
     setPendingCount(syncEngine.getPendingCount());
     setIsSimulatedOffline(CrmStorage.isSimulatedOffline());
   }, []);
@@ -65,6 +186,7 @@ export default function App() {
       // Reload leads and activities when queue changes
       setLeads(CrmStorage.getLeads());
       setActivities(CrmStorage.getActivities());
+      setGlobalLeads(CrmStorage.getGlobalLeads());
     });
 
     // Auto pull remote Cloud Database data on initial load
@@ -122,7 +244,7 @@ export default function App() {
     );
   };
 
-  // Update Lead Stage
+  // Update Lead Stage (with automatic archive logging for Closing Won)
   const handleUpdateLeadStage = (
     leadId: string,
     newStage: PipelineStage,
@@ -133,11 +255,15 @@ export default function App() {
     if (selectedLead && selectedLead.id === leadId) {
       setSelectedLead((prev) => (prev ? { ...prev, pipeline_stage: newStage } : null));
     }
-    showToast(
-      syncEngine.isOnline()
-        ? `Stage updated to ${newStage} (Syncing to Cloud Database...)`
-        : `Stage updated to ${newStage} (Saved locally)`
-    );
+    if (newStage === 'Closing Won') {
+      showToast('Deal berhasil ditutup (Closing Won)! Otomatis dicatat ke sheet Archive_Logs.');
+    } else {
+      showToast(
+        syncEngine.isOnline()
+          ? `Stage updated to ${newStage} (Syncing to Cloud Database...)`
+          : `Stage updated to ${newStage} (Saved locally)`
+      );
+    }
   };
 
   // Add Activity / Check-In
@@ -164,6 +290,17 @@ export default function App() {
     showToast(`Imported "${globalLead.company_name}" into AR CRM sales pipeline!`);
   };
 
+  // Export CSV Report
+  const handleExportCsv = useCallback(() => {
+    const currentLeads = CrmStorage.getLeads();
+    if (currentLeads.length === 0) {
+      showToast('Tidak ada data prospek untuk diekspor.');
+      return;
+    }
+    const filename = downloadLeadsCsv(currentLeads);
+    showToast(`Laporan rekapitulasi ${currentLeads.length} prospek berhasil diunduh (${filename})!`);
+  }, [showToast]);
+
   const followUpMetrics = filterFollowUps(leads);
   const dueCount = followUpMetrics.dueToday.length + followUpMetrics.overdue.length;
   const isOnline = syncEngine.isOnline();
@@ -188,7 +325,7 @@ export default function App() {
   return (
     <AndroidFrame isPhoneFrame={isPhoneFrame} isOnline={isOnline}>
       <div className="flex-1 flex flex-col min-h-screen bg-[#fcfcfa]">
-        {/* Top App Bar */}
+        {/* Top App Bar with Security Lock & CSV Export */}
         <TopAppBar
           title={getTabTitle()}
           isOnline={isOnline}
@@ -201,8 +338,11 @@ export default function App() {
           onTogglePhoneFrame={() => setIsPhoneFrame(!isPhoneFrame)}
           isAndroidCodeActive={currentTab === 'android_code'}
           onToggleAndroidCode={() =>
-            setCurrentTab((prev) => (prev === 'android_code' ? 'dashboard' : 'android_code'))
+            changeTabWithHistory(currentTab === 'android_code' ? 'dashboard' : 'android_code')
           }
+          onOpenSecurity={() => openModalWithHistory(() => setIsSecuritySettingsOpen(true), 'securitySettings')}
+          isSecurityActive={SecurityVault.isSecurityEnabled()}
+          onExportCsv={handleExportCsv}
         />
 
         {/* Main Content Area */}
@@ -211,15 +351,19 @@ export default function App() {
             <DashboardView
               leads={leads}
               activities={activities}
-              onOpenQuickLead={() => setIsQuickLeadOpen(true)}
+              onOpenQuickLead={() => openModalWithHistory(() => setIsQuickLeadOpen(true), 'quickLead')}
               onOpenActivityLogger={(lead) => {
                 setActivityLead(lead || null);
-                setIsActivityLoggerOpen(true);
+                openModalWithHistory(() => setIsActivityLoggerOpen(true), 'activityLogger');
               }}
-              onSelectLead={(lead) => setSelectedLead(lead)}
-              onOpenWhatsApp={(lead) => setWhatsAppLead(lead)}
-              onNavigateToPipeline={() => setCurrentTab('pipeline')}
-              onNavigateToFinder={() => setCurrentTab('leads_finder')}
+              onSelectLead={(lead) => openModalWithHistory(() => setSelectedLead(lead), 'leadDetail')}
+              onOpenWhatsApp={(lead) => {
+                setWhatsAppLead(lead);
+                openModalWithHistory(() => setWhatsAppLead(lead), 'whatsapp');
+              }}
+              onNavigateToPipeline={() => changeTabWithHistory('pipeline')}
+              onNavigateToFinder={() => changeTabWithHistory('leads_finder')}
+              onExportCsv={handleExportCsv}
             />
           )}
 
@@ -227,17 +371,22 @@ export default function App() {
             <PipelineKanbanView
               leads={leads}
               onUpdateLeadStage={handleUpdateLeadStage}
-              onSelectLead={(lead) => setSelectedLead(lead)}
-              onOpenQuickLead={() => setIsQuickLeadOpen(true)}
-              onOpenWhatsApp={(lead) => setWhatsAppLead(lead)}
+              onSelectLead={(lead) => openModalWithHistory(() => setSelectedLead(lead), 'leadDetail')}
+              onOpenQuickLead={() => openModalWithHistory(() => setIsQuickLeadOpen(true), 'quickLead')}
+              onOpenWhatsApp={(lead) => {
+                setWhatsAppLead(lead);
+                openModalWithHistory(() => setWhatsAppLead(lead), 'whatsapp');
+              }}
+              onExportCsv={handleExportCsv}
             />
           )}
 
           {currentTab === 'leads_finder' && (
             <GlobalLeadsView
               personalLeads={leads}
+              globalLeads={globalLeads}
               onImportGlobalLead={handleImportGlobalLead}
-              onNavigateToPipeline={() => setCurrentTab('pipeline')}
+              onNavigateToPipeline={() => changeTabWithHistory('pipeline')}
             />
           )}
 
@@ -247,9 +396,9 @@ export default function App() {
               leads={leads}
               onOpenActivityLogger={(lead) => {
                 setActivityLead(lead || null);
-                setIsActivityLoggerOpen(true);
+                openModalWithHistory(() => setIsActivityLoggerOpen(true), 'activityLogger');
               }}
-              onSelectLead={(lead) => setSelectedLead(lead)}
+              onSelectLead={(lead) => openModalWithHistory(() => setSelectedLead(lead), 'leadDetail')}
             />
           )}
 
@@ -259,7 +408,7 @@ export default function App() {
         {/* Android Material 3 Bottom Navigation Bar */}
         <BottomNavBar
           currentTab={currentTab}
-          onSelectTab={setCurrentTab}
+          onSelectTab={changeTabWithHistory}
           followUpDueCount={dueCount}
         />
 
@@ -271,19 +420,21 @@ export default function App() {
           </div>
         )}
 
-        {/* MODALS */}
+        {/* MODALS WITH MOBILE BACK GESTURE INTEGRATION */}
         <QuickLeadModal
           isOpen={isQuickLeadOpen}
-          onClose={() => setIsQuickLeadOpen(false)}
+          onClose={() => closeModalWithHistory(() => setIsQuickLeadOpen(false))}
           onAddLead={handleAddLead}
         />
 
         <ActivityLoggerModal
           isOpen={isActivityLoggerOpen}
-          onClose={() => {
-            setIsActivityLoggerOpen(false);
-            setActivityLead(null);
-          }}
+          onClose={() =>
+            closeModalWithHistory(() => {
+              setIsActivityLoggerOpen(false);
+              setActivityLead(null);
+            })
+          }
           leads={leads}
           initialLead={activityLead}
           onSaveActivity={handleSaveActivity}
@@ -291,22 +442,45 @@ export default function App() {
 
         <LeadDetailModal
           isOpen={!!selectedLead}
-          onClose={() => setSelectedLead(null)}
+          onClose={() => closeModalWithHistory(() => setSelectedLead(null))}
           lead={selectedLead}
           activities={activities}
           onUpdateStage={handleUpdateLeadStage}
           onOpenActivityLogger={(l) => {
             setActivityLead(l);
-            setIsActivityLoggerOpen(true);
+            openModalWithHistory(() => setIsActivityLoggerOpen(true), 'activityLogger');
           }}
-          onOpenWhatsApp={(l) => setWhatsAppLead(l)}
+          onOpenWhatsApp={(l) => {
+            setWhatsAppLead(l);
+            openModalWithHistory(() => setWhatsAppLead(l), 'whatsapp');
+          }}
         />
 
         <WhatsAppModal
           isOpen={!!whatsAppLead}
-          onClose={() => setWhatsAppLead(null)}
+          onClose={() => closeModalWithHistory(() => setWhatsAppLead(null))}
           lead={whatsAppLead}
         />
+
+        <SecuritySettingsModal
+          isOpen={isSecuritySettingsOpen}
+          onClose={() => closeModalWithHistory(() => setIsSecuritySettingsOpen(false))}
+          onLockNow={() => {
+            closeModalWithHistory(() => setIsSecuritySettingsOpen(false));
+            SecurityVault.lockNow();
+            setIsAppLocked(true);
+          }}
+        />
+
+        {/* Local Security Shield Fullscreen Lock Overlay */}
+        {isAppLocked && (
+          <SecurityLockScreen
+            onUnlocked={() => {
+              SecurityVault.recordUnlock();
+              setIsAppLocked(false);
+            }}
+          />
+        )}
       </div>
     </AndroidFrame>
   );

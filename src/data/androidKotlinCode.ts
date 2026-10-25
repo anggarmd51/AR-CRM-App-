@@ -220,10 +220,12 @@ interface CrmDao {
     path: 'app/src/main/java/com/solocrm/personalcrm/data/remote/CrmApiService.kt',
     category: 'network',
     title: 'Retrofit API: CrmApiService.kt',
-    description: 'Communicates with AR Cloud Sync Web REST API for GET and POST actions.',
+    description: 'Communicates with AR Cloud Sync Web REST API for GET and POST actions with type-safe DTOs and Room Entity mappers.',
     code: `package com.solocrm.personalcrm.data.remote
 
 import com.google.gson.annotations.SerializedName
+import com.solocrm.personalcrm.data.local.LeadEntity
+import com.solocrm.personalcrm.data.local.ActivityEntity
 import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.GET
@@ -253,6 +255,65 @@ interface CrmApiService {
     @POST("exec")
     suspend fun importGlobalLead(@Body body: ImportGlobalLeadRequest): Response<ApiResponse>
 }
+
+// Remote Data Transfer Objects (DTO) with Room Entity Mappers
+data class RemoteLeadDto(
+    val id: String,
+    @SerializedName("company_name") val companyName: String,
+    @SerializedName("contact_person") val contactPerson: String,
+    val phone: String,
+    val industry: String,
+    val city: String,
+    @SerializedName("pipeline_stage") val pipelineStage: String,
+    @SerializedName("deal_value") val dealValue: Double,
+    @SerializedName("next_followup_date") val nextFollowupDate: String,
+    @SerializedName("lead_score") val leadScore: String
+) {
+    fun toEntity(): LeadEntity = LeadEntity(
+        id = id,
+        companyName = companyName,
+        contactPerson = contactPerson,
+        phone = phone,
+        industry = industry,
+        city = city,
+        pipelineStage = pipelineStage,
+        dealValue = dealValue,
+        nextFollowupDate = nextFollowupDate,
+        leadScore = leadScore,
+        syncStatus = "SYNCED"
+    )
+}
+
+data class RemoteActivityDto(
+    val id: String,
+    @SerializedName("lead_id") val leadId: String,
+    @SerializedName("activity_type") val activityType: String,
+    val notes: String,
+    @SerializedName("ai_summary") val aiSummary: String,
+    @SerializedName("location_gps") val locationGps: String,
+    @SerializedName("timestamp") val timestamp: String? = null
+) {
+    fun toEntity(): ActivityEntity = ActivityEntity(
+        id = id,
+        leadId = leadId,
+        activityType = activityType,
+        notes = notes,
+        aiSummary = aiSummary,
+        locationGps = locationGps,
+        syncStatus = "SYNCED"
+    )
+}
+
+data class RemoteGlobalLeadDto(
+    val id: String,
+    @SerializedName("company_name") val companyName: String,
+    @SerializedName("contact_person") val contactPerson: String,
+    val phone: String,
+    val industry: String,
+    val city: String,
+    @SerializedName("deal_value") val dealValue: Double = 0.0,
+    @SerializedName("lead_score") val leadScore: String = "Warm"
+)
 
 data class AddLeadRequest(
     val action: String = "addLead",

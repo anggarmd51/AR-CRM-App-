@@ -20,12 +20,12 @@ import {
   Layers,
 } from 'lucide-react';
 import { GlobalLead, Lead } from '../types/crm.ts';
-import { GLOBAL_LEADS_CATALOG } from '../utils/syncQueue.ts';
 import { searchAndEnrichProspects } from '../utils/aiLeadEnrichment.ts';
 import { formatCurrency } from '../utils/crmCalculations.ts';
 
 interface GlobalLeadsViewProps {
   personalLeads: Lead[];
+  globalLeads?: GlobalLead[];
   onImportGlobalLead: (lead: GlobalLead) => void;
   onNavigateToPipeline: () => void;
 }
@@ -40,6 +40,7 @@ const SAMPLE_AI_QUERIES = [
 
 export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({
   personalLeads,
+  globalLeads = [],
   onImportGlobalLead,
   onNavigateToPipeline,
 }) => {
@@ -108,7 +109,7 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({
   };
 
   // Determine active dataset based on tab
-  const currentDataset = viewSource === 'ai' ? enrichedResults : GLOBAL_LEADS_CATALOG;
+  const currentDataset = viewSource === 'ai' ? enrichedResults : globalLeads;
 
   // Extract unique industries for filter dropdown
   const industries = [
@@ -282,7 +283,7 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({
             }`}
           >
             <Layers className="w-3 h-3" />
-            <span>Standard Directory ({GLOBAL_LEADS_CATALOG.length})</span>
+            <span>Sheet Global Leads ({globalLeads.length})</span>
           </button>
         </div>
 
