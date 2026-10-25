@@ -1,4 +1,5 @@
 const STORAGE_KEY_PIN = 'ar_crm_security_pin';
+const STORAGE_KEY_PIN_LENGTH = 'ar_crm_security_pin_length';
 const STORAGE_KEY_ENABLED = 'ar_crm_security_enabled';
 const STORAGE_KEY_BIOMETRIC = 'ar_crm_biometric_enabled';
 const STORAGE_KEY_LAST_UNLOCK = 'ar_crm_last_unlock_time';
@@ -53,10 +54,20 @@ export const SecurityVault = {
     return Boolean(localStorage.getItem(STORAGE_KEY_PIN));
   },
 
+  getPinLength(): number {
+    if (typeof localStorage === 'undefined') return 4;
+    const val = localStorage.getItem(STORAGE_KEY_PIN_LENGTH);
+    if (!val) return 4;
+    const parsed = parseInt(val, 10);
+    if (isNaN(parsed) || parsed < 4 || parsed > 6) return 4;
+    return parsed;
+  },
+
   async setPin(pin: string): Promise<void> {
     if (typeof localStorage === 'undefined') return;
     const hashed = await hashPin(pin);
     localStorage.setItem(STORAGE_KEY_PIN, hashed);
+    localStorage.setItem(STORAGE_KEY_PIN_LENGTH, String(pin.length));
     localStorage.setItem(STORAGE_KEY_ENABLED, 'true');
     this.resetFailedAttempts();
     this.recordUnlock();
@@ -228,6 +239,7 @@ export const SecurityVault = {
   resetAllSecurity(): void {
     if (typeof localStorage === 'undefined') return;
     localStorage.removeItem(STORAGE_KEY_PIN);
+    localStorage.removeItem(STORAGE_KEY_PIN_LENGTH);
     localStorage.removeItem(STORAGE_KEY_ENABLED);
     localStorage.removeItem(STORAGE_KEY_BIOMETRIC);
     localStorage.removeItem(STORAGE_KEY_LAST_UNLOCK);

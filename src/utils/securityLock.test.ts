@@ -82,3 +82,37 @@ test('SecurityVault lock state and reset work as expected', () => {
   assert.equal(SecurityVault.hasPin(), false);
   assert.equal(SecurityVault.isCurrentlyLocked(), false);
 });
+
+test('SecurityVault dynamically handles 4, 5, and 6-digit PIN lengths', async () => {
+  storageMap.clear();
+
+  // Default length when unconfigured
+  assert.equal(SecurityVault.getPinLength(), 4);
+
+  // Set 6-digit PIN
+  await SecurityVault.setPin('123456');
+  assert.equal(SecurityVault.getPinLength(), 6);
+  assert.equal((await SecurityVault.verifyPin('123456')).success, true);
+  assert.equal((await SecurityVault.verifyPin('1234')).success, false);
+  assert.equal((await SecurityVault.verifyPin('12345')).success, false);
+  assert.equal((await SecurityVault.verifyPin('1234567')).success, false);
+
+  // Clear attempts to avoid lockout in subsequent tests
+  SecurityVault.resetFailedAttempts();
+
+  // Set 5-digit PIN
+  await SecurityVault.setPin('98765');
+  assert.equal(SecurityVault.getPinLength(), 5);
+  assert.equal((await SecurityVault.verifyPin('98765')).success, true);
+  assert.equal((await SecurityVault.verifyPin('9876')).success, false);
+
+  // Set 4-digit PIN
+  await SecurityVault.setPin('4321');
+  assert.equal(SecurityVault.getPinLength(), 4);
+  assert.equal((await SecurityVault.verifyPin('4321')).success, true);
+
+  // Reset all security
+  SecurityVault.resetAllSecurity();
+  assert.equal(SecurityVault.getPinLength(), 4);
+});
+

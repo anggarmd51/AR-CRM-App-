@@ -1,10 +1,10 @@
 # PROJECT STATE & ARCHITECTURAL SPECIFICATION
 ## AR Personal CRM Enterprise (Solo Account Manager Edition)
 
-> **Document Version:** 2.2.0 (Production-Clean & Zero-Mock Hardened Edition)  
+> **Document Version:** 2.2.1 (Dynamic PIN Length & Vault Synchronization Edition)  
 > **Status:** Production-Ready / Operational & Audited  
 > **Live Production URL (Vercel):** [https://arcrmapp.vercel.app/](https://arcrmapp.vercel.app/)  
-> **Author & Architect:** Lead Full-Stack Software Architect & Database Integration Specialist  
+> **Author & Architect:** Lead Full-Stack Software Architect & UI/UX State Specialist  
 > **Last Updated:** October 2026  
 > **Target Platform:** Offline-First Progressive Web App (PWA) & Native Android (Jetpack Compose / Room DB)
 
@@ -241,6 +241,7 @@ Modul `src/data/androidKotlinCode.ts` menyertakan implementasi native Android le
 | **DEAD-02**| `package.json` | Dependency Hygiene | Menghapus dependensi paket `motion` yang tidak terpakai dari `dependencies` guna merampingkan bundle size. |
 | **DEAD-03**| Workspace Root | Asset Cleanup | Menghapus 6 file screenshot mockup usang (`mobile_*.png`) dari direktori root proyek. |
 | **TYPE-01**| `src/data/androidKotlinCode.ts`| Type Safety | Menambahkan deklarasi data class `RemoteLeadDto`, `RemoteActivityDto`, `RemoteGlobalLeadDto` serta fungsi mapper ekstensi `.toEntity()` yang memetakan DTO ke Room Entity. |
+| **SEC-04** | `src/utils/securityLock.ts` & `src/components/SecurityLockScreen.tsx` | Dynamic PIN Length & UI Sync | Memperbaiki inkonsistensi panjang PIN antara form pengaturan (4-6 digit) dan layar kunci. Menyimpan panjang digit PIN (`STORAGE_KEY_PIN_LENGTH`) secara dinamis, menyesuaikan jumlah bulatan indikator PIN, dan mengeksekusi verifikasi saat input pengguna mencapai panjang PIN yang dikonfigurasi (4, 5, atau 6 digit). Menambahkan dukungan input keyboard desktop. |
 
 ---
 
@@ -280,10 +281,10 @@ Pada pembaruan v2.2.0 ini, sistem telah dibersihkan secara menyeluruh dari selur
 Pengujian otomatis menggunakan test runner native `node:test` (`npm run test`):
 - `syncQueue.test.ts`: **PASSED** (Inisialisasi clean state 0 records, verifikasi auto-purge residu dummy, mutasi optimistik, pembaruan tahapan, dan auto-archive Closing Won).
 - `exportCsv.test.ts`: **PASSED** (Validasi format CSV RFC-4180, sanitasi formula injection untuk `=`, `+`, `-`, `@`, dan *escaping* karakter khusus).
-- `securityLock.test.ts`: **PASSED** (Validasi hashing PIN SHA-256 tersalt, verifikasi PIN, verifikasi lockout rate-limiting setelah 5 kali gagal, status timeout, dan reset).
+- `securityLock.test.ts`: **PASSED** (Validasi hashing PIN SHA-256 tersalt, verifikasi PIN dinamis 4, 5, dan 6 digit, verifikasi lockout rate-limiting setelah 5 kali gagal, status timeout, dan reset).
 - `crmCalculations.test.ts`: **PASSED** (Kalkulasi Total Pipeline, Closed Won, Weighted Probability, win rate, kategorisasi tanggal follow-up, serta pembersihan nomor telepon WhatsApp internasional).
 - `aiLeadEnrichment.test.ts`: **PASSED** (Pencarian token industri, boost relevansi geografis, dan sintesis prospek dinamis).
-- **Hasil Akhir:** **19 dari 19 Unit Tests Lulus 100% (Green)**.
+- **Hasil Akhir:** **20 dari 20 Unit Tests Lulus 100% (Green)**.
 
 ---
 

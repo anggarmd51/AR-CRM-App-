@@ -48,7 +48,7 @@ export const SecuritySettingsModal: React.FC<SecuritySettingsModalProps> = ({
 
   const handleToggleEnable = (enabled: boolean) => {
     if (enabled && !hasExistingPin) {
-      setMessage({ type: 'error', text: 'Silakan atur PIN 4 digit terlebih dahulu.' });
+      setMessage({ type: 'error', text: 'Silakan atur PIN 4-6 digit terlebih dahulu.' });
       return;
     }
     SecurityVault.setSecurityEnabled(enabled);

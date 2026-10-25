@@ -11,26 +11,12 @@ export const SecurityLockScreen: React.FC<SecurityLockScreenProps> = ({ onUnlock
   const [error, setError] = useState<string | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
   const [biometricAvailable, setBiometricAvailable] = useState(false);
+  const [targetPinLength, setTargetPinLength] = useState<number>(() => SecurityVault.getPinLength());
 
   useEffect(() => {
     setBiometricAvailable(SecurityVault.isBiometricSupported() && SecurityVault.isBiometricEnabled());
+    setTargetPinLength(SecurityVault.getPinLength());
   }, []);
-
-  const handleKeyPress = (num: string) => {
-    if (pin.length < 6) {
-      const nextPin = pin + num;
-      setPin(nextPin);
-      setError(null);
-      if (nextPin.length >= 4) {
-        checkPin(nextPin);
-      }
-    }
-  };
-
-  const handleDelete = () => {
-    setPin((prev) => prev.slice(0, -1));
-    setError(null);
-  };
 
   const checkPin = async (candidatePin: string) => {
     setIsVerifying(true);
@@ -50,6 +36,37 @@ export const SecurityLockScreen: React.FC<SecurityLockScreenProps> = ({ onUnlock
       }, 500);
     }
   };
+
+  const handleKeyPress = (num: string) => {
+    if (isVerifying) return;
+    if (pin.length < targetPinLength) {
+      const nextPin = pin + num;
+      setPin(nextPin);
+      setError(null);
+      if (nextPin.length === targetPinLength) {
+        checkPin(nextPin);
+      }
+    }
+  };
+
+  const handleDelete = () => {
+    if (isVerifying) return;
+    setPin((prev) => prev.slice(0, -1));
+    setError(null);
+  };
+
+  // Keyboard navigation support for desktop users
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'].includes(e.key)) {
+        handleKeyPress(e.key);
+      } else if (e.key === 'Backspace') {
+        handleDelete();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [pin, targetPinLength, isVerifying]);
 
   const handleBiometricUnlock = async () => {
     const success = await SecurityVault.authenticateWithBiometrics();
@@ -85,7 +102,7 @@ export const SecurityLockScreen: React.FC<SecurityLockScreenProps> = ({ onUnlock
       {/* PIN Dots Indicator */}
       <div className="flex flex-col items-center space-y-3 my-auto">
         <div className="flex items-center gap-3">
-          {[0, 1, 2, 3].map((idx) => {
+          {Array.from({ length: targetPinLength }).map((_, idx) => {
             const isFilled = pin.length > idx;
             return (
               <div
@@ -106,7 +123,7 @@ export const SecurityLockScreen: React.FC<SecurityLockScreenProps> = ({ onUnlock
           </p>
         ) : (
           <p className="text-[11px] text-white/60">
-            {isVerifying ? 'Memverifikasi PIN...' : 'Masukkan 4 digit PIN Anda'}
+            {isVerifying ? 'Memverifikasi PIN...' : `Masukkan ${targetPinLength} digit PIN Anda`}
           </p>
         )}
       </div>
