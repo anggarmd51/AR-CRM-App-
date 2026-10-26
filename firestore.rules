@@ -38,8 +38,8 @@ service cloud.firestore {
           'ownerId', 'role', 'created_at', 'updated_at'
         ])
         && data.company_name is string && data.company_name.size() > 0 && data.company_name.size() <= 200
-        && data.contact_person is string && data.contact_person.size() <= 200
-        && (data.phone is string || data.phone is int || data.phone is float)
+        && data.contact_person is string && data.contact_person.size() > 0 && data.contact_person.size() <= 200
+        && data.phone is string
         && data.industry is string && data.industry.size() <= 120
         && data.city is string && data.city.size() <= 120
         && validStage(data.pipeline_stage)
@@ -108,7 +108,8 @@ service cloud.firestore {
           && validActivityFields(request.resource.data)
           && exists(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(request.resource.data.lead_id))
           && get(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(request.resource.data.lead_id)).data.ownerId == request.auth.uid
-          && get(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(request.resource.data.lead_id)).data.role == 'owner';
+          && get(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(request.resource.data.lead_id)).data.role == 'owner'
+          && validLeadFields(get(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(request.resource.data.lead_id)).data);
         allow update: if false;
         allow delete: if false;
       }

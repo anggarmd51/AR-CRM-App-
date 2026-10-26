@@ -191,12 +191,8 @@ export default function App() {
 
   // Add Lead
   const handleAddLead = async (leadData: Omit<Lead, 'id' | '_syncStatus' | 'created_at' | 'updated_at'>) => {
-    try {
-      await createLead(getFirebaseAuth().currentUser!.uid, leadData);
-      showToast(`Lead "${leadData.company_name}" disimpan di Firebase.`);
-    } catch (error) {
-      showToast(`Lead gagal disimpan: ${(error as Error).message}`);
-    }
+    await createLead(getFirebaseAuth().currentUser!.uid, leadData);
+    showToast(`Lead "${leadData.company_name}" disimpan di Firebase.`);
   };
 
   // Update Lead Stage (with automatic archive logging for Closing Won)

@@ -6,7 +6,7 @@ export interface Lead {
   id: string;
   company_name: string;
   contact_person: string;
-  phone: string | number;
+  phone: string;
   industry: string;
   city: string;
   pipeline_stage: PipelineStage;

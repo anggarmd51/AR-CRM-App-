@@ -22,10 +22,7 @@ let auth: Auth | undefined;
 let db: Firestore | undefined;
 let authEmulatorConnected = false;
 let firestoreEmulatorConnected = false;
-const useFirebaseEmulators = shouldUseFirebaseEmulators(
-  import.meta.env.DEV,
-  import.meta.env.VITE_FIREBASE_USE_EMULATOR,
-);
+const useFirebaseEmulators = shouldUseFirebaseEmulators(import.meta.env.DEV);
 
 export function getFirebaseApp(): FirebaseApp {
   if (!firebaseIsConfigured) throw new Error('Firebase is not configured. Set the VITE_FIREBASE_* environment variables.');

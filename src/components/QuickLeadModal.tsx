@@ -5,7 +5,7 @@ import { Lead, PipelineStage, LeadScore, PIPELINE_STAGES } from '../types/crm.ts
 interface QuickLeadModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onAddLead: (leadData: Omit<Lead, 'id' | '_syncStatus' | 'created_at' | 'updated_at'>) => void;
+  onAddLead: (leadData: Omit<Lead, 'id' | '_syncStatus' | 'created_at' | 'updated_at'>) => Promise<void>;
 }
 
 export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
@@ -22,26 +22,35 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
   const [dealValue, setDealValue] = useState<number>(0);
   const [nextFollowupDate, setNextFollowupDate] = useState('');
   const [leadScore, setLeadScore] = useState<LeadScore>('Unrated');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!companyName.trim() || !contactPerson.trim()) return;
+    if (!companyName.trim() || !contactPerson.trim() || isSubmitting) return;
 
-    onAddLead({
-      company_name: companyName.trim(),
-      contact_person: contactPerson.trim(),
-      phone: phone.trim(),
-      industry,
-      city,
-      pipeline_stage: pipelineStage,
-      deal_value: Number(dealValue) || 0,
-      next_followup_date: nextFollowupDate,
-      lead_score: leadScore,
-    });
-
-    onClose();
+    setIsSubmitting(true);
+    setSubmitError(null);
+    try {
+      await onAddLead({
+        company_name: companyName.trim(),
+        contact_person: contactPerson.trim(),
+        phone: phone.trim(),
+        industry,
+        city,
+        pipeline_stage: pipelineStage,
+        deal_value: Number(dealValue) || 0,
+        next_followup_date: nextFollowupDate,
+        lead_score: leadScore,
+      });
+      onClose();
+    } catch {
+      setSubmitError('Lead gagal disimpan ke Firestore. Periksa koneksi atau izin, lalu coba lagi.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const industriesList = [
@@ -71,6 +80,7 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
           </div>
           <button
             onClick={onClose}
+            disabled={isSubmitting}
             className="p-1.5 rounded-[8px] hover:bg-[#eae4d5] text-[#1f1f1f] transition-colors"
           >
             <X className="w-5 h-5" />
@@ -79,6 +89,7 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
 
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="p-5 space-y-4 text-xs">
+          {submitError && <p role="alert" className="rounded-[8px] border border-[#9b2c2c]/30 bg-[#fff5f5] p-3 text-[#9b2c2c]">{submitError}</p>}
           {/* Company & Contact */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1">
@@ -223,16 +234,18 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
             <button
               type="button"
               onClick={onClose}
+              disabled={isSubmitting}
               className="px-4 py-2 rounded-[8px] text-[#6b665c] hover:text-[#1f1f1f] font-semibold transition-colors"
             >
               Cancel
             </button>
             <button
               type="submit"
+              disabled={isSubmitting}
               className="bg-[#ff4800] hover:bg-[#e03f00] text-white font-bold px-5 py-2.5 rounded-[8px] border border-[#1f1f1f] flex items-center gap-1.5 transition-all"
             >
               <Check className="w-4 h-4 stroke-[2.5]" />
-              <span>Create Lead</span>
+              <span>{isSubmitting ? 'Saving…' : 'Create Lead'}</span>
             </button>
           </div>
         </form>

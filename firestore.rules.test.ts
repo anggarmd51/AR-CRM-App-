@@ -14,7 +14,7 @@ const deniedWorkspace = 'unassigned-workspace';
 const wrongRoleWorkspace = 'wrong-role-workspace';
 const wrongRootWorkspace = 'wrong-root-workspace';
 let env: RulesTestEnvironment;
-let productionEnv: RulesTestEnvironment;
+let lockedEnv: RulesTestEnvironment;
 
 const createdAt = Timestamp.fromDate(new Date('2026-01-01T00:00:00.000Z'));
 const updatedAt = Timestamp.fromDate(new Date('2026-01-02T00:00:00.000Z'));
@@ -49,22 +49,27 @@ function validActivity(leadId: string, ownerId = ownerUid) {
 }
 
 before(async () => {
-  const productionRules = readFileSync(new URL('./firestore.rules', import.meta.url), 'utf8');
-  // Replace explicit production bindings in the emulator only; all fixtures stay synthetic.
-  const ownerBinding = /request\.auth\.uid == '([^']+)'/;
-  const workspaceBinding = /workspaceId == '([^']+)'/;
-  const configuredOwner = productionRules.match(ownerBinding)?.[1];
-  const configuredWorkspace = productionRules.match(workspaceBinding)?.[1];
+  const sourceRules = readFileSync(new URL('./firestore.rules', import.meta.url), 'utf8');
+  // Replace only the single explicit owner/workspace bindings in emulator rules;
+  // all fixtures and project IDs remain synthetic.
+  const ownerMatches = [...sourceRules.matchAll(/request\.auth\.uid == '([^']+)'/g)];
+  const workspaceMatches = [...sourceRules.matchAll(/workspaceId == '([^']+)'/g)];
+  assert.equal(ownerMatches.length, 1, 'expected exactly one designated-owner binding');
+  assert.equal(workspaceMatches.length, 1, 'expected exactly one configured-workspace binding');
+  const configuredOwner = ownerMatches[0][1];
+  const configuredWorkspace = workspaceMatches[0][1];
   assert.equal(configuredOwner, FIREBASE_RULES_OWNER_UID);
   assert.equal(configuredWorkspace, FIREBASE_RULES_WORKSPACE_ID);
-  const configuredRules = productionRules
-    .replace(ownerBinding, `request.auth.uid == '${ownerUid}'`)
-    .replace(workspaceBinding, `workspaceId == '${workspace}'`);
-  const lockedRules = productionRules
-    .replace(ownerBinding, "request.auth.uid == '__CONFIGURE_OWNER_UID__'")
-    .replace(workspaceBinding, `workspaceId == '${workspace}'`);
+  const ownerClause = `request.auth.uid == '${configuredOwner}'`;
+  const workspaceClause = `workspaceId == '${configuredWorkspace}'`;
+  const configuredRules = sourceRules
+    .replace(ownerClause, `request.auth.uid == '${ownerUid}'`)
+    .replace(workspaceClause, `workspaceId == '${workspace}'`);
+  const lockedRules = sourceRules
+    .replace(ownerClause, "request.auth.uid == '__CONFIGURE_OWNER_UID__'")
+    .replace(workspaceClause, `workspaceId == '${workspace}'`);
   env = await initializeTestEnvironment({ projectId, firestore: { rules: configuredRules } });
-  productionEnv = await initializeTestEnvironment({ projectId: `${projectId}-locked`, firestore: { rules: lockedRules } });
+  lockedEnv = await initializeTestEnvironment({ projectId: `${projectId}-locked`, firestore: { rules: lockedRules } });
   await env.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();
     await setDoc(doc(db, 'workspaces', workspace), { ownerId: ownerUid, created_at: createdAt });
@@ -84,18 +89,24 @@ before(async () => {
 
     await setDoc(doc(db, 'workspaces', workspace, 'leads', 'owned-lead'), validLead());
     await setDoc(doc(db, 'workspaces', otherWorkspace, 'leads', 'other-owned-lead'), validLead());
+    await setDoc(doc(db, 'workspaces', workspace, 'leads', 'shared-lead-id'), validLead());
+    await setDoc(doc(db, 'workspaces', otherWorkspace, 'leads', 'shared-lead-id'), validLead());
+    await setDoc(doc(db, 'workspaces', workspace, 'leads', 'malformed-parent'), { ...validLead(), pipeline_stage: 'Invalid' });
     await setDoc(doc(db, 'workspaces', deniedWorkspace, 'leads', 'unassigned-lead'), validLead(otherUid));
     await setDoc(doc(db, 'workspaces', workspace, 'activities', 'existing-activity'), validActivity('owned-lead'));
+    await setDoc(doc(db, 'workspaces', otherWorkspace, 'activities', 'other-activity'), validActivity('shared-lead-id'));
   });
 });
 
-after(async () => { await env?.cleanup(); await productionEnv?.cleanup(); });
+after(async () => { await env?.cleanup(); await lockedEnv?.cleanup(); });
 
 test('unauthenticated and non-owner users cannot read or write owner data', async () => {
   const unauth = env.unauthenticatedContext().firestore();
   const other = env.authenticatedContext(otherUid).firestore();
   await assertFails(getDoc(doc(unauth, 'workspaces', workspace, 'leads', 'owned-lead')));
+  await assertFails(getDoc(doc(unauth, 'workspaces', workspace, 'activities', 'existing-activity')));
   await assertFails(getDoc(doc(other, 'workspaces', workspace, 'leads', 'owned-lead')));
+  await assertFails(getDoc(doc(other, 'workspaces', workspace, 'activities', 'existing-activity')));
   await assertFails(setDoc(doc(other, 'workspaces', workspace, 'leads', 'other-lead'), validLead(otherUid)));
 });
 
@@ -109,6 +120,7 @@ test('designated owner can read and create a valid lead and same-workspace activ
 test('owner cannot access a workspace without matching root ownership and membership', async () => {
   const db = env.authenticatedContext(ownerUid).firestore();
   await assertFails(getDoc(doc(db, 'workspaces', otherWorkspace, 'leads', 'other-owned-lead')));
+  await assertFails(getDoc(doc(db, 'workspaces', otherWorkspace, 'activities', 'other-activity')));
   await assertFails(setDoc(doc(db, 'workspaces', otherWorkspace, 'leads', 'blocked-extra-workspace'), validLead()));
   await assertFails(getDoc(doc(db, 'workspaces', deniedWorkspace, 'leads', 'unassigned-lead')));
   await assertFails(setDoc(doc(db, 'workspaces', deniedWorkspace, 'leads', 'tampered-workspace'), validLead()));
@@ -143,10 +155,14 @@ test('owner identity and role cannot be changed on a lead', async () => {
   await assertSucceeds(updateDoc(lead, { pipeline_stage: 'Meeting', updated_at: updatedAt }));
 });
 
-test('activities require a same-workspace lead owned by the authenticated owner', async () => {
+test('activity parent lookup is workspace-scoped and requires a valid lead schema', async () => {
   const db = env.authenticatedContext(ownerUid).firestore();
   await assertFails(setDoc(doc(db, 'workspaces', workspace, 'activities', 'missing-lead'), validActivity('does-not-exist')));
+  // A lead ID that exists only in another workspace cannot satisfy this path lookup.
   await assertFails(setDoc(doc(db, 'workspaces', workspace, 'activities', 'cross-workspace'), validActivity('other-owned-lead')));
+  // Matching IDs in two workspaces resolve only to the valid parent in this workspace.
+  await assertSucceeds(setDoc(doc(db, 'workspaces', workspace, 'activities', 'local-parent'), validActivity('shared-lead-id')));
+  await assertFails(setDoc(doc(db, 'workspaces', workspace, 'activities', 'malformed-parent'), validActivity('malformed-parent')));
   await assertFails(updateDoc(doc(db, 'workspaces', workspace, 'activities', 'existing-activity'), { notes: 'cannot edit activity' }));
 });
 
@@ -161,6 +177,8 @@ test('lead and activity schemas reject tampered ownership, role, type, enum, GPS
   await assertFails(setDoc(doc(db, 'workspaces', workspace, 'leads', 'forged-owner'), validLead(otherUid)));
   await assertFails(setDoc(doc(db, 'workspaces', workspace, 'leads', 'forged-role'), { ...validLead(), role: 'admin' }));
   await assertFails(setDoc(doc(db, 'workspaces', workspace, 'leads', 'bad-stage'), { ...validLead(), pipeline_stage: 'Admin' }));
+  await assertFails(setDoc(doc(db, 'workspaces', workspace, 'leads', 'empty-contact'), { ...validLead(), contact_person: '' }));
+  await assertFails(setDoc(doc(db, 'workspaces', workspace, 'leads', 'numeric-phone'), { ...validLead(), phone: 812345678 }));
   await assertFails(setDoc(doc(db, 'workspaces', workspace, 'leads', 'bad-value'), { ...validLead(), deal_value: 'large' }));
   await assertFails(setDoc(doc(db, 'workspaces', workspace, 'leads', 'bad-date'), { ...validLead(), next_followup_date: 'tomorrow' }));
   await assertFails(setDoc(doc(db, 'workspaces', workspace, 'leads', 'gps-injected'), { ...validLead(), location_gps: '0,0', latitude: 0, longitude: 0, coords: { lat: 0, lng: 0 } }));
@@ -173,12 +191,39 @@ test('lead and activity schemas reject tampered ownership, role, type, enum, GPS
   await assertFails(setDoc(doc(db, 'workspaces', workspace, 'activities', 'unknown-field'), { ...validActivity('owned-lead'), unknown_field: 'denied' }));
 });
 
-test('unknown collections and unconfigured production rules remain denied', async () => {
+test('field length boundaries and update allowlists are enforced', async () => {
+  const db = env.authenticatedContext(ownerUid).firestore();
+  const maxLengthLead = {
+    ...validLead(),
+    company_name: 'C'.repeat(200),
+    contact_person: 'P'.repeat(200),
+    industry: 'I'.repeat(120),
+    city: 'T'.repeat(120),
+  };
+  await assertSucceeds(setDoc(doc(db, 'workspaces', workspace, 'leads', 'max-length-lead'), maxLengthLead));
+  await assertFails(setDoc(doc(db, 'workspaces', workspace, 'leads', 'long-company'), { ...validLead(), company_name: 'C'.repeat(201) }));
+  await assertFails(setDoc(doc(db, 'workspaces', workspace, 'leads', 'long-contact'), { ...validLead(), contact_person: 'P'.repeat(201) }));
+  await assertFails(setDoc(doc(db, 'workspaces', workspace, 'leads', 'long-industry'), { ...validLead(), industry: 'I'.repeat(121) }));
+  await assertFails(setDoc(doc(db, 'workspaces', workspace, 'leads', 'long-city'), { ...validLead(), city: 'T'.repeat(121) }));
+  await assertFails(setDoc(doc(db, 'workspaces', workspace, 'leads', 'negative-value'), { ...validLead(), deal_value: -1 }));
+
+  const maxLengthActivity = {
+    ...validActivity('owned-lead'),
+    activity_type: 'A'.repeat(80),
+    notes: 'N'.repeat(12000),
+  };
+  await assertSucceeds(setDoc(doc(db, 'workspaces', workspace, 'activities', 'max-length-activity'), maxLengthActivity));
+  await assertFails(setDoc(doc(db, 'workspaces', workspace, 'activities', 'long-activity-type'), { ...validActivity('owned-lead'), activity_type: 'A'.repeat(81) }));
+  await assertFails(setDoc(doc(db, 'workspaces', workspace, 'activities', 'long-notes'), { ...validActivity('owned-lead'), notes: 'N'.repeat(12001) }));
+  await assertFails(updateDoc(doc(db, 'workspaces', workspace, 'leads', 'owned-lead'), { pipeline_stage: 'Meeting', unexpected: true }));
+});
+
+test('unknown collections and unconfigured rules remain denied', async () => {
   const owner = env.authenticatedContext(ownerUid).firestore();
   await assertFails(setDoc(doc(owner, 'unknown', 'synthetic'), { value: 'denied' }));
   await assertFails(getDoc(doc(owner, 'workspaces', workspace, 'unknown-subcollection', 'synthetic')));
 
-  const unconfigured = productionEnv.authenticatedContext(ownerUid).firestore();
+  const unconfigured = lockedEnv.authenticatedContext(ownerUid).firestore();
   await assertFails(getDoc(doc(unconfigured, 'workspaces', workspace)));
   await assertFails(setDoc(doc(unconfigured, 'workspaces', workspace, 'leads', 'denied'), validLead()));
 });
