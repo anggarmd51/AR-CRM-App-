@@ -5,14 +5,14 @@
 > **Status:** Hardening lokal dan pemeriksaan yang diminta lulus; project tetap belum siap dirilis/cutover. Empat temuan high pada jalur dependency production belum terselesaikan dan menjadi blocker rilis, selain gate staging, konfigurasi Vercel, App Check Console, backup/restore, migrasi, dan verifikasi live.
 > **URL production terakhir tercatat (status live saat ini belum diperiksa):** [https://arcrmapp.vercel.app/](https://arcrmapp.vercel.app/)
 > **Author & Architect:** Lead Full-Stack Software Architect & UI/UX State Specialist  
-> **Last Updated:** 26 Oktober 2026, 23:56 WIB
+> **Last Updated:** 27 Oktober 2026, 00:00 WIB
 > **Target Platform:** Offline-First Progressive Web App (PWA) & Native Android (Jetpack Compose / Room DB)
 
 > **Catatan sumber kebenaran:** bagian arsitektur v2.2.1 di bawah adalah dokumentasi historis. Pembaruan implementasi setelah baseline audit di bawah adalah status terbaru checkout lokal; bagian audit 20:59 WIB diberi label historis dan memuat temuan sebelum hardening ini. Branch `cue/firebase-stabilization` memakai Firebase Auth/Firestore untuk Leads/Activities dan tidak mengimpor data lama secara otomatis. Catatan cloud dan artefak release adalah last-known evidence, bukan verifikasi live baru. Data operasional belum dimigrasikan; jangan memakai spreadsheet lama yang dikosongkan sebagai sumber.
 
-## Pembaruan implementasi setelah audit — 26 Oktober 2026, 23:56 WIB
+## Pembaruan implementasi setelah audit — 27 Oktober 2026, 00:00 WIB
 
-**Status lokal:** hardening telah diverifikasi dan sedang disiapkan untuk commit lokal di branch `cue/firebase-stabilization`. Tidak ada push, merge, deploy, akses Firebase/Vercel production, atau perubahan Rules/Console. HEAD sebelum commit task ini adalah `de0e164`.
+**Status lokal:** hardening telah diverifikasi dan di-commit secara lokal di branch `cue/firebase-stabilization`; commit utama `d7c8bcc69af8a19ec11bf8fdd38c3052ffaf029c`. Tidak ada push, merge, deploy, akses Firebase/Vercel production, atau perubahan Rules/Console. HEAD sebelum commit task ini adalah `de0e164`.
 
 - Outbox antrean IndexedDB menyimpan payload business-only yang di-allowlist dan dienkripsi AES-GCM, dipartisi per owner/workspace; tidak ada fallback `localStorage`. Payload dibersihkan setelah acknowledgement server. UI menunjukkan queued/syncing/acknowledged/failed, retry dan koreksi payload; dependency lead→activity dipertahankan. Create ber-ID tetap memakai rekonsiliasi server yang membandingkan seluruh field bisnis/owner. Batas XSS/origin, metadata, serta pemulihan browser dijelaskan di [`OFFLINE_QUEUE_DESIGN.md`](docs/OFFLINE_QUEUE_DESIGN.md).
 - App Check staging melakukan preflight token dan fail-closed sebelum Auth/Firestore; guard memvalidasi target hosted, pola ID staging `ar-crm-staging-<suffix>` dan exact allowlist. Tidak ada project/site key/environment staging yang diprovisikan atau diuji live; production dan Rules/Console tidak diubah.
@@ -36,11 +36,11 @@ Tidak ada upgrade aman dalam rentang manifest/lock saat ini yang didukung bukti.
 
 Empat finding production di atas **blocker rilis yang belum terselesaikan**. Untuk advisory gRPC, upstream menyebut `requireClientCertificate: true` hanya bila server memakai konfigurasi `getAuthContext` terkait, dan top-level error handler untuk menyaring pesan; ini bukan bukti mitigasi untuk transitive dependency di sini. Tindak lanjut: tunggu/periksa pembaruan Firebase/Firestore yang mengizinkan gRPC fixed version, atau rancang override eksplisit dengan uji kompatibilitas penuh; audit ulang sebelum release.
 
-Hasil ini **tidak** membuktikan crash/reload behavior seluruh browser, provisioning staging, metrik/enforcement App Check Console, backup/restore, migrasi data, atau readiness production/cutover. Advisory high production tetap memblokir release sampai terselesaikan dan diverifikasi; jangan klaim project production-safe. Commit lokal hardening akan dicatat setelah hash tersedia; tidak ada push/merge/deploy.
+Hasil ini **tidak** membuktikan crash/reload behavior seluruh browser, provisioning staging, metrik/enforcement App Check Console, backup/restore, migrasi data, atau readiness production/cutover. Advisory high production tetap memblokir release sampai terselesaikan dan diverifikasi; jangan klaim project production-safe. Commit hardening lokal utama: `d7c8bcc69af8a19ec11bf8fdd38c3052ffaf029c` (`feat(firebase): add durable encrypted offline outbox`). Tidak ada push/merge/deploy.
 
 ## Baseline audit sebelum hardening — 26 Oktober 2026, 20:59 WIB (historis)
 
-Catatan di bagian ini merekam temuan sebelum perubahan antrean durable, App Check, dan strict staging allowlist pada working tree saat ini. Angka test, daftar file, serta gap yang menyebut queue in-memory atau error startup App Check adalah baseline historis; gunakan pembaruan 23:56 WIB di atas untuk status terbaru.
+Catatan di bagian ini merekam temuan sebelum perubahan antrean durable, App Check, dan strict staging allowlist pada working tree saat ini. Angka test, daftar file, serta gap yang menyebut queue in-memory atau error startup App Check adalah baseline historis; gunakan pembaruan 00:00 WIB di atas untuk status terbaru.
 
 ### Keputusan dan cakupan
 
