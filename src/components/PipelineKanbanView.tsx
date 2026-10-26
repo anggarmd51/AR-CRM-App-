@@ -15,7 +15,7 @@ import {
   FileSpreadsheet,
 } from 'lucide-react';
 import { Lead, PipelineStage, PIPELINE_STAGES, STAGE_CONFIG } from '../types/crm.ts';
-import { formatCurrency, formatDateDisplay } from '../utils/crmCalculations.ts';
+import { formatCurrency, formatDateDisplay, formatNumber } from '../utils/crmCalculations.ts';
 
 interface PipelineKanbanViewProps {
   leads: Lead[];
@@ -160,7 +160,7 @@ export const PipelineKanbanView: React.FC<PipelineKanbanViewProps> = ({
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-bold text-[#1f1f1f] font-serif-heading">{stage}</span>
                       <span className="bg-[#f8f5ee] text-[#1f1f1f] text-[10px] font-bold px-2 py-0.5 rounded-[4px] border border-[#1f1f1f]">
-                        {stageLeads.length}
+                        {formatNumber(stageLeads.length)}
                       </span>
                     </div>
                   </div>

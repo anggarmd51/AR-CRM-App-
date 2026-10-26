@@ -1,4 +1,5 @@
 import { Lead } from '../types/crm.ts';
+import { toDateStringOnly } from './crmCalculations.ts';
 
 /**
  * Escapes a cell value for safe RFC-4180 CSV generation.
@@ -66,7 +67,7 @@ export function generateLeadsCsv(leads: Lead[]): string {
 export function downloadLeadsCsv(leads: Lead[], customFilename?: string): string {
   const csvContent = generateLeadsCsv(leads);
   const now = new Date();
-  const dateStr = now.toISOString().slice(0, 10);
+  const dateStr = toDateStringOnly(now) ?? '';
   const filename = customFilename || `AR_CRM_Rekapitulasi_Leads_${dateStr}.csv`;
 
   // Use UTF-8 Byte Order Mark (BOM) so Excel opens UTF-8 Indonesian accents cleanly

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { History, Plus, Search, Calendar, Building2 } from 'lucide-react';
 import { Activity, Lead } from '../types/crm.ts';
+import { formatDateTimeDisplay } from '../utils/crmCalculations.ts';
 
 interface ActivitiesListViewProps {
   activities: Activity[];
@@ -127,7 +128,7 @@ export const ActivitiesListView: React.FC<ActivitiesListViewProps> = ({
                 <div className="text-[10px] text-[#6b665c] flex items-center justify-between pt-1 border-t border-[#1f1f1f]/10">
                   <span className="flex items-center gap-1 font-medium">
                     <Calendar className="w-3 h-3 text-[#1f1f1f]/50" />
-                    {act.created_at ? new Date(act.created_at).toLocaleString() : 'Recent'}
+                    {formatDateTimeDisplay(act.created_at)}
                   </span>
                   <span className="font-mono text-[#1f1f1f] font-semibold">
                     {act._syncStatus === 'synced' ? 'Synced to Cloud' : 'Local Cache (Pending Sync)'}

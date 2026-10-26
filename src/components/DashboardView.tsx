@@ -23,6 +23,7 @@ import {
   filterFollowUps,
   formatCurrency,
   formatDateDisplay,
+  formatNumber,
 } from '../utils/crmCalculations.ts';
 
 interface DashboardViewProps {
@@ -98,7 +99,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               {formatCurrency(metrics.totalPipelineValue)}
             </div>
             <div className="text-[11px] text-[#6b665c] mt-0.5">
-              {metrics.totalLeads} accounts registered
+              {formatNumber(metrics.totalLeads)} accounts registered
             </div>
           </div>
 
@@ -112,7 +113,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               {formatCurrency(metrics.wonValue)}
             </div>
             <div className="text-[11px] text-[#6b665c] mt-0.5 font-medium">
-              Win Rate: {metrics.winRatePercentage}%
+              Win Rate: {formatNumber(metrics.winRatePercentage, { maximumFractionDigits: 1 })}%
             </div>
           </div>
 
@@ -156,7 +157,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </h2>
           </div>
           <span className="px-2.5 py-0.5 rounded-[4px] text-xs font-bold bg-[#f8f5ee] text-[#1f1f1f] border border-[#1f1f1f]">
-            {followUps.dueToday.length + followUps.overdue.length} Items Due
+            {formatNumber(followUps.dueToday.length + followUps.overdue.length)} Items Due
           </span>
         </div>
 
@@ -165,7 +166,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div className="bg-[#f8f5ee] border border-[#1f1f1f] border-l-4 border-l-[#ff4800] rounded-[16px] p-3.5 flex items-start gap-3">
             <AlertCircle className="w-5 h-5 text-[#ff4800] shrink-0 mt-0.5" />
             <div className="text-xs text-[#1f1f1f]">
-              <span className="font-bold">{followUps.overdue.length} overdue follow-up(s)</span> requiring immediate outreach. Contact these prospects to keep negotiations active.
+              <span className="font-bold">{formatNumber(followUps.overdue.length)} overdue follow-up(s)</span> requiring immediate outreach. Contact these prospects to keep negotiations active.
             </div>
           </div>
         )}
@@ -281,7 +282,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <h3 className="text-base font-bold text-[#1f1f1f] tracking-tight font-serif-heading">
             Pipeline Stage Distribution
           </h3>
-          <span className="text-xs text-[#6b665c] font-medium">{metrics.totalLeads} total accounts</span>
+          <span className="text-xs text-[#6b665c] font-medium">{formatNumber(metrics.totalLeads)} total accounts</span>
         </div>
 
         <div className="space-y-3">
@@ -296,8 +297,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     <span>{stage}</span>
                   </div>
                   <div className="flex items-center gap-2 text-[#6b665c]">
-                    <span className="font-bold text-[#1f1f1f]">{count}</span>
-                    <span className="text-[11px]">({pct.toFixed(0)}%)</span>
+                    <span className="font-bold text-[#1f1f1f]">{formatNumber(count)}</span>
+                    <span className="text-[11px]">({formatNumber(pct, { maximumFractionDigits: 0 })}%)</span>
                   </div>
                 </div>
                 <div className="w-full h-2 bg-[#eae4d5] border border-[#1f1f1f]/20 rounded-full overflow-hidden">

@@ -1,5 +1,6 @@
 import React from 'react';
 import { LayoutDashboard, Columns3, Compass, History } from 'lucide-react';
+import { formatNumber } from '../utils/crmCalculations.ts';
 
 export type NavTab = 'dashboard' | 'pipeline' | 'leads_finder' | 'activities' | 'android_code';
 
@@ -20,7 +21,7 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = ({
       id: 'dashboard' as NavTab,
       label: 'Dashboard',
       icon: LayoutDashboard,
-      badge: followUpDueCount > 0 ? followUpDueCount : null,
+      badge: followUpDueCount > 0 ? formatNumber(followUpDueCount) : null,
     },
     {
       id: 'pipeline' as NavTab,

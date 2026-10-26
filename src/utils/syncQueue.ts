@@ -1,4 +1,5 @@
 import { Lead, Activity, GlobalLead, QueuedMutation, PipelineStage, WonDealArchiveRecord } from '../types/crm.ts';
+import { toDateStringOnly } from './crmCalculations.ts';
 
 const STORAGE_KEY_LEADS = 'personal_crm_leads_v2';
 const STORAGE_KEY_ACTIVITIES = 'personal_crm_activities_v2';
@@ -294,7 +295,7 @@ export class CrmSyncEngine {
       deal_value: Number(lead.deal_value) || 0,
       industry: lead.industry,
       city: lead.city,
-      won_date: new Date().toISOString().slice(0, 10),
+      won_date: toDateStringOnly(new Date())!,
       archived_at: new Date().toISOString(),
     };
 

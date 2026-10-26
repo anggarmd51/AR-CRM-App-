@@ -1,4 +1,5 @@
 import { RefreshCw, Smartphone, Monitor, WifiOff, Code2, ShieldCheck, Shield, FileSpreadsheet } from 'lucide-react';
+import { formatNumber } from '../utils/crmCalculations.ts';
 
 interface TopAppBarProps {
   title: string;
@@ -76,7 +77,7 @@ export const TopAppBar: React.FC<TopAppBarProps> = ({
                 <span className="hidden sm:inline">Offline</span>
                 {pendingCount > 0 && (
                   <span className="bg-[#1f1f1f] text-[#fcfcfa] px-1.5 py-0.2 rounded-[4px] text-[10px] font-mono">
-                    {pendingCount}
+                    {formatNumber(pendingCount)}
                   </span>
                 )}
               </>
@@ -99,7 +100,7 @@ export const TopAppBar: React.FC<TopAppBarProps> = ({
               className={`w-3.5 h-3.5 text-[#ff4800] ${isSyncing ? 'animate-spin' : ''}`}
             />
             <span className="hidden md:inline">
-              {isSyncing ? 'Memuat...' : pendingCount > 0 ? `Belum tersinkron (${pendingCount})` : 'Firestore live'}
+              {isSyncing ? 'Memuat...' : pendingCount > 0 ? `Belum tersinkron (${formatNumber(pendingCount)})` : 'Firestore live'}
             </span>
           </button>
 

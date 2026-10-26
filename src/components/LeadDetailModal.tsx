@@ -10,7 +10,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { Lead, Activity, PipelineStage, PIPELINE_STAGES, STAGE_CONFIG } from '../types/crm.ts';
-import { formatCurrency, formatDateDisplay } from '../utils/crmCalculations.ts';
+import { formatCurrency, formatDateDisplay, formatNumber } from '../utils/crmCalculations.ts';
 
 interface LeadDetailModalProps {
   isOpen: boolean;
@@ -179,7 +179,7 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
             <div className="flex items-center justify-between">
               <span className="font-bold text-[#1f1f1f] text-xs flex items-center gap-1.5 font-serif-heading">
                 <Clock className="w-4 h-4 text-[#ff4800]" />
-                Activity Timeline ({leadActivities.length})
+                Activity Timeline ({formatNumber(leadActivities.length)})
               </span>
               <button
                 onClick={() => onOpenActivityLogger(lead)}

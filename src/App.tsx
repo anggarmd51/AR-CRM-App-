@@ -19,7 +19,7 @@ import { SecurityLockScreen } from './components/SecurityLockScreen.tsx';
 import { SecuritySettingsModal } from './components/SecuritySettingsModal.tsx';
 import { AndroidFrame } from './components/AndroidFrame.tsx';
 import { Lead, Activity, GlobalLead, PipelineStage } from './types/crm.ts';
-import { filterFollowUps } from './utils/crmCalculations.ts';
+import { filterFollowUps, formatNumber } from './utils/crmCalculations.ts';
 import { downloadLeadsCsv } from './utils/exportCsv.ts';
 import { SecurityVault } from './utils/securityLock.ts';
 import { CheckCircle2 } from 'lucide-react';
@@ -254,7 +254,7 @@ export default function App() {
       return;
     }
     const filename = downloadLeadsCsv(currentLeads);
-    showToast(`Laporan rekapitulasi ${currentLeads.length} prospek berhasil diunduh (${filename})!`);
+    showToast(`Laporan rekapitulasi ${formatNumber(currentLeads.length)} prospek berhasil diunduh (${filename})!`);
   }, [leads, showToast]);
 
   const followUpMetrics = filterFollowUps(leads);

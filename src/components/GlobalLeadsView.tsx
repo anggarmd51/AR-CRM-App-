@@ -14,7 +14,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { GlobalLead, Lead } from '../types/crm.ts';
-import { formatCurrency } from '../utils/crmCalculations.ts';
+import { formatCurrency, formatNumber } from '../utils/crmCalculations.ts';
 
 interface GlobalLeadsViewProps {
   personalLeads: Lead[];
@@ -99,7 +99,7 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({
           onClick={onNavigateToPipeline}
           className="self-start sm:self-auto text-xs font-semibold text-[#1f1f1f] hover:text-[#ff4800] flex items-center gap-1.5 px-3 py-1.5 bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] group transition-all"
         >
-          <span>Sales Pipeline ({personalLeads.length})</span>
+          <span>Sales Pipeline ({formatNumber(personalLeads.length)})</span>
           <ArrowRight className="w-3.5 h-3.5 text-[#ff4800] group-hover:translate-x-0.5 transition-transform" />
         </button>
       </div>
@@ -114,7 +114,7 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({
       {/* Source Selector & Secondary Filters Row */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 pt-1">
         <div className="text-xs font-semibold text-[#1f1f1f] bg-[#f8f5ee] border border-[#1f1f1f] px-3 py-2 rounded-[8px] self-start">
-          Record lokal: {globalLeads.length}
+          Record lokal: {formatNumber(globalLeads.length)}
         </div>
 
         {/* Secondary Filters: Industry & Deal Value */}
@@ -157,7 +157,7 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({
       {/* Results Count & Provenance Notice */}
       <div className="flex items-center justify-between text-xs text-[#6b665c] px-0.5">
         <span>
-          Menampilkan <strong className="text-[#1f1f1f]">{displayedLeads.length}</strong> record prospek lokal
+          Menampilkan <strong className="text-[#1f1f1f]">{formatNumber(displayedLeads.length)}</strong> record prospek lokal
         </span>
         <span className="text-[11px] flex items-center gap-1 font-medium text-[#9b2c2c]">
           <ShieldCheck className="w-3.5 h-3.5" />

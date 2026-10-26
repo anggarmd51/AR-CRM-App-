@@ -18,7 +18,12 @@ export const AndroidFrame: React.FC<AndroidFrameProps> = ({
     const updateTime = () => {
       const now = new Date();
       setTimeStr(
-        now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+        now.toLocaleTimeString('id-ID', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+          timeZone: 'Asia/Jakarta',
+        })
       );
     };
     updateTime();
