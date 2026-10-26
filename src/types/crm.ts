@@ -25,7 +25,7 @@ export interface Activity {
   notes: string;
   ai_summary?: string;
   created_at?: string;
-  _syncStatus?: 'synced' | 'pending_insert';
+  _syncStatus?: 'synced' | 'pending_insert' | 'pending_update' | 'error';
 }
 
 export interface GlobalLead {

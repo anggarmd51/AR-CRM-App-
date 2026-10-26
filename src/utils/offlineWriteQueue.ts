@@ -1,0 +1,614 @@
+import {
+  indexedDbOfflineOutboxStore,
+  allowlistedMutation,
+  type DurableMutation,
+  type DurableQueueInput,
+  type DurableQueueRecord,
+  type DurableQueueState,
+  type OfflineOutboxStore,
+  type QueueOwnerScope,
+  type RestoredQueueRecord,
+} from './offlineOutbox.ts';
+
+export type SyncOperationState = DurableQueueState;
+
+export interface SyncQueueOperation {
+  id: string;
+  label: string;
+  state: SyncOperationState;
+  attempts: number;
+  canRetry: boolean;
+  dependencyBlocked: boolean;
+  errorMessage?: string;
+}
+
+export interface SyncQueueSnapshot {
+  operations: SyncQueueOperation[];
+  pendingCount: number;
+  syncingCount: number;
+  failedCount: number;
+  acknowledgedCount: number;
+  isSyncing: boolean;
+  isRestoring: boolean;
+}
+
+interface ConnectivitySource {
+  isOnline(): boolean;
+  subscribe(listener: (isOnline: boolean) => void): () => void;
+}
+
+export type DurableOperationInput = DurableQueueInput;
+
+interface EnqueueInput<T> {
+  id: string;
+  label: string;
+  run: () => Promise<T>;
+  runDurable?: (record: RestoredQueueRecord) => Promise<T>;
+  runWhenOffline?: boolean;
+  durable?: DurableOperationInput;
+}
+
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve(value: T): void;
+  reject(error: unknown): void;
+  settled: boolean;
+}
+
+interface QueuedOperation<T = unknown> {
+  id: string;
+  label: string;
+  run: () => Promise<T>;
+  runDurable?: (record: RestoredQueueRecord) => Promise<T>;
+  runWhenOffline: boolean;
+  durable?: DurableOperationInput;
+  state: SyncOperationState;
+  attempts: number;
+  inFlight: boolean;
+  accepted: boolean;
+  persisted: boolean;
+  errorMessage?: string;
+  currentAttempt?: Promise<void>;
+  acceptedPromise: Promise<void>;
+  acknowledgement: Deferred<T>;
+  retryTimer?: ReturnType<typeof setTimeout>;
+}
+
+export interface QueueWriteReceipt<T> {
+  operationId: string;
+  /** Resolves only after the local outbox transaction has committed. */
+  accepted: Promise<void>;
+  /** Resolves on Firestore acknowledgement; transient/offline retries may keep it pending. */
+  acknowledged: Promise<T>;
+}
+
+export interface OfflineWriteQueueOptions {
+  retryBaseMs?: number;
+  retryMaxMs?: number;
+}
+
+const PERMANENT_FIRESTORE_ERRORS = new Set([
+  'permission-denied',
+  'invalid-argument',
+  'failed-precondition',
+  'unauthenticated',
+  'not-found',
+  'already-exists',
+  'out-of-range',
+]);
+
+function safeErrorMessage(error: unknown): string {
+  const rawCode = error && typeof error === 'object' && 'code' in error
+    ? String((error as { code?: unknown }).code ?? '')
+    : '';
+  const code = rawCode.slice(rawCode.lastIndexOf('/') + 1);
+  if (PERMANENT_FIRESTORE_ERRORS.has(code)) {
+    return 'Firestore menolak operasi (akses atau validasi). Periksa akun/data sebelum mencoba lagi.';
+  }
+  return 'Gangguan sementara. Operasi tetap tersimpan lokal dan akan dicoba lagi saat koneksi tersedia.';
+}
+
+const browserConnectivity: ConnectivitySource = {
+  isOnline() {
+    return typeof navigator === 'undefined' || typeof navigator.onLine !== 'boolean' || navigator.onLine;
+  },
+  subscribe(listener) {
+    if (typeof window === 'undefined') return () => undefined;
+    const onOnline = () => listener(true);
+    const onOffline = () => listener(false);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+    };
+  },
+};
+
+function createDeferred<T>(): Deferred<T> {
+  let resolvePromise!: (value: T) => void;
+  let rejectPromise!: (error: unknown) => void;
+  const promise = new Promise<T>((resolve, reject) => {
+    resolvePromise = resolve;
+    rejectPromise = reject;
+  });
+  // The UI primarily observes the queue snapshot; a caller may choose not to await this receipt.
+  void promise.catch(() => undefined);
+  return {
+    promise,
+    resolve(value) { if (!this.settled) { this.settled = true; resolvePromise(value); } },
+    reject(error) { if (!this.settled) { this.settled = true; rejectPromise(error); } },
+    settled: false,
+  };
+}
+
+function scopeMatches(record: QueueOwnerScope, scope: QueueOwnerScope): boolean {
+  return record.ownerId === scope.ownerId && record.workspaceId === scope.workspaceId;
+}
+
+function sortByCreation(left: QueuedOperation, right: QueuedOperation): number {
+  const leftTime = left.durable?.createdAt ?? 0;
+  const rightTime = right.durable?.createdAt ?? 0;
+  return leftTime - rightTime || left.id.localeCompare(right.id);
+}
+
+export class OfflineWriteQueue {
+  private readonly operations = new Map<string, QueuedOperation>();
+  private readonly listeners = new Set<(snapshot: SyncQueueSnapshot) => void>();
+  private readonly unsubscribeConnectivity: () => void;
+  private online: boolean;
+  private scope?: QueueOwnerScope;
+  private replay?: (record: RestoredQueueRecord) => Promise<unknown>;
+  private restoring = false;
+  private pumpPromise?: Promise<void>;
+  private activationVersion = 0;
+  private readonly retryBaseMs: number;
+  private readonly retryMaxMs: number;
+
+  constructor(
+    private readonly connectivity: ConnectivitySource = browserConnectivity,
+    private readonly store: OfflineOutboxStore = indexedDbOfflineOutboxStore,
+    options: OfflineWriteQueueOptions = {},
+  ) {
+    this.online = connectivity.isOnline();
+    this.retryBaseMs = options.retryBaseMs ?? 1_000;
+    this.retryMaxMs = options.retryMaxMs ?? 30_000;
+    this.unsubscribeConnectivity = connectivity.subscribe((isOnline) => this.handleConnectivityChange(isOnline));
+  }
+
+  getSnapshot(): SyncQueueSnapshot {
+    const operations = [...this.operations.values()]
+      .filter((operation) => operation.accepted)
+      .sort(sortByCreation)
+      .map((operation) => ({
+        id: operation.id,
+        label: operation.label,
+        state: operation.state,
+        attempts: operation.attempts,
+        canRetry: !operation.inFlight && !this.isDependencyBlocked(operation)
+          && (operation.state === 'pending' || operation.state === 'failed'),
+        dependencyBlocked: this.isDependencyBlocked(operation),
+        ...(operation.errorMessage ? { errorMessage: operation.errorMessage } : {}),
+      }));
+    const pendingCount = operations.filter((operation) => operation.state === 'pending').length;
+    const syncingCount = operations.filter((operation) => operation.state === 'syncing').length;
+    const failedCount = operations.filter((operation) => operation.state === 'failed').length;
+    const acknowledgedCount = operations.filter((operation) => operation.state === 'acknowledged').length;
+    return {
+      operations,
+      pendingCount,
+      syncingCount,
+      failedCount,
+      acknowledgedCount,
+      isSyncing: syncingCount > 0,
+      isRestoring: this.restoring,
+    };
+  }
+
+  subscribe(listener: (snapshot: SyncQueueSnapshot) => void): () => void {
+    this.listeners.add(listener);
+    listener(this.getSnapshot());
+    return () => this.listeners.delete(listener);
+  }
+
+  async activateScope(scope: QueueOwnerScope, replay: (record: RestoredQueueRecord) => Promise<unknown>): Promise<void> {
+    if (this.scope?.ownerId === scope.ownerId && this.scope.workspaceId === scope.workspaceId && this.replay) return;
+    this.deactivateScope();
+    const version = ++this.activationVersion;
+    const activeScope = { ownerId: scope.ownerId, workspaceId: scope.workspaceId };
+    this.scope = activeScope;
+    this.replay = replay;
+    this.restoring = true;
+    this.notify();
+
+    try {
+      const records = await this.store.list(activeScope);
+      if (version !== this.activationVersion) return;
+      for (const record of records) {
+        if (!scopeMatches(record, activeScope)) continue;
+        if (record.state === 'acknowledged') {
+          await this.store.remove(activeScope, record.id);
+          continue;
+        }
+        if (!record.payload) throw new Error('Pending outbox record has no recoverable payload.');
+        const restoredRecord: RestoredQueueRecord = {
+          ...record,
+          state: record.state === 'syncing' ? 'pending' : record.state,
+        };
+        const durable = {
+          id: record.id,
+          ownerId: record.ownerId,
+          workspaceId: record.workspaceId,
+          documentId: record.documentId,
+          label: record.label,
+          kind: record.kind,
+          payload: record.payload,
+          createdAt: record.createdAt,
+          ...(record.dependsOn ? { dependsOn: record.dependsOn } : {}),
+        } as DurableOperationInput;
+        const operation = this.createOperation({
+          id: record.id,
+          label: record.label,
+          durable,
+          run: () => replay(restoredRecord),
+          runDurable: replay,
+          runWhenOffline: true,
+          state: restoredRecord.state,
+          attempts: record.attempts,
+          accepted: true,
+          persisted: true,
+        });
+        operation.errorMessage = record.state === 'syncing' ? undefined : record.errorMessage;
+        this.operations.set(operation.id, operation);
+        if (record.state === 'syncing') {
+          await this.store.update(this.toRecord(operation));
+        }
+      }
+      if (version !== this.activationVersion) return;
+      this.restoring = false;
+      this.notify();
+      this.schedulePump();
+    } catch (error) {
+      if (version === this.activationVersion) {
+        this.restoring = false;
+        this.notify();
+      }
+      throw error;
+    }
+  }
+
+  deactivateScope(): void {
+    this.activationVersion += 1;
+    this.restoring = false;
+    this.scope = undefined;
+    this.replay = undefined;
+    for (const operation of this.operations.values()) {
+      if (operation.retryTimer) clearTimeout(operation.retryTimer);
+    }
+    this.operations.clear();
+    this.notify();
+  }
+
+  enqueue<T>(input: EnqueueInput<T>): QueueWriteReceipt<T> {
+    const existing = this.operations.get(input.id) as QueuedOperation<T> | undefined;
+    if (existing) {
+      return { operationId: existing.id, accepted: existing.acceptedPromise, acknowledged: existing.acknowledgement.promise };
+    }
+
+    const operation = this.createOperation({
+      ...input,
+      state: this.online ? 'pending' : 'pending',
+      attempts: 0,
+      accepted: false,
+      persisted: !input.durable,
+    });
+    this.operations.set(operation.id, operation);
+    operation.acceptedPromise = (async () => {
+      try {
+        if (operation.durable) {
+          if (!this.scope || !scopeMatches(operation.durable, this.scope)) {
+            throw new Error('Queue owner/workspace is not active.');
+          }
+          await this.store.insert(this.toRecord(operation));
+          operation.persisted = true;
+        }
+        operation.accepted = true;
+        this.notify();
+        this.schedulePump();
+      } catch (error) {
+        operation.accepted = true;
+        operation.persisted = false;
+        operation.state = 'failed';
+        operation.errorMessage = 'Tidak dapat menyimpan antrean lokal dengan aman; operasi belum dikirim ke Firestore.';
+        operation.acknowledgement.reject(error);
+        this.notify();
+        throw error;
+      }
+    })();
+    void operation.acceptedPromise.catch(() => undefined);
+    return { operationId: operation.id, accepted: operation.acceptedPromise, acknowledged: operation.acknowledgement.promise };
+  }
+
+  retry(id: string): Promise<void> {
+    const operation = this.operations.get(id);
+    if (!operation || operation.state === 'acknowledged') return Promise.resolve();
+    if (operation.currentAttempt) return operation.currentAttempt;
+    return this.retryOperation(operation);
+  }
+
+  retryFailed(): number {
+    const failed = [...this.operations.values()].filter((operation) => operation.accepted && operation.state === 'failed' && !operation.inFlight);
+    for (const operation of failed) void this.retry(operation.id).catch(() => undefined);
+    return failed.length;
+  }
+
+  getFailedMutation(id: string): DurableMutation | undefined {
+    const operation = this.operations.get(id);
+    if (!operation?.durable || operation.state !== 'failed') return undefined;
+    return allowlistedMutation({ kind: operation.durable.kind, payload: operation.durable.payload } as DurableMutation);
+  }
+
+  async correctFailedOperation(id: string, mutation: DurableMutation): Promise<void> {
+    const operation = this.operations.get(id);
+    if (!operation?.durable || operation.state !== 'failed') throw new Error('Only a failed durable operation can be corrected.');
+    const sanitized = allowlistedMutation(mutation);
+    if (sanitized.kind !== operation.durable.kind) throw new Error('A correction cannot change the operation type.');
+    if (sanitized.kind === 'update-lead-stage' && sanitized.payload.lead_id !== operation.durable.documentId) {
+      throw new Error('A correction cannot change the lead document ID.');
+    }
+
+    const previousRecord = operation.durable;
+    const previousError = operation.errorMessage;
+    operation.durable = { ...previousRecord, payload: sanitized.payload } as DurableOperationInput;
+    operation.state = 'pending';
+    operation.errorMessage = undefined;
+    try {
+      if (!this.scope || !scopeMatches(operation.durable, this.scope)) throw new Error('Queue owner/workspace is not active.');
+      await this.store.update(this.toRecord(operation));
+    } catch (error) {
+      operation.durable = previousRecord;
+      operation.state = 'failed';
+      operation.errorMessage = previousError ?? 'Koreksi belum tersimpan ke outbox lokal; operasi tidak dikirim.';
+      this.notify();
+      throw error;
+    }
+    this.notify();
+    this.schedulePump();
+  }
+
+  /** Returns the pending lead-create operation ID so dependent writes wait for its acknowledgement. */
+  dependencyForLead(documentId: string): string | undefined {
+    for (const operation of this.operations.values()) {
+      if (operation.durable?.kind === 'create-lead'
+        && operation.durable.documentId === documentId
+        && operation.state !== 'acknowledged') return operation.id;
+    }
+    return undefined;
+  }
+
+  getDocumentSyncStatus(documentId: string): 'synced' | 'pending_insert' | 'pending_update' | 'error' {
+    const matching = [...this.operations.values()]
+      .filter((operation) => operation.durable?.documentId === documentId)
+      .sort((left, right) => sortByCreation(right, left));
+    const latest = matching[0];
+    if (!latest || latest.state === 'acknowledged') return 'synced';
+    if (latest.state === 'failed') return 'error';
+    return latest.durable?.kind === 'create-lead' || latest.durable?.kind === 'create-activity'
+      ? 'pending_insert'
+      : 'pending_update';
+  }
+
+  dispose(): void {
+    this.unsubscribeConnectivity();
+    for (const operation of this.operations.values()) {
+      if (operation.retryTimer) clearTimeout(operation.retryTimer);
+    }
+    this.listeners.clear();
+  }
+
+  private createOperation<T>(input: {
+    id: string;
+    label: string;
+    run: () => Promise<T>;
+    runDurable?: (record: RestoredQueueRecord) => Promise<T>;
+    runWhenOffline?: boolean;
+    durable?: DurableOperationInput;
+    state: SyncOperationState;
+    attempts: number;
+    accepted: boolean;
+    persisted: boolean;
+  }): QueuedOperation<T> {
+    const acknowledgement = createDeferred<T>();
+    const operation = {
+      ...input,
+      runWhenOffline: input.runWhenOffline ?? false,
+      inFlight: false,
+      acceptedPromise: Promise.resolve(),
+      acknowledgement,
+    } satisfies QueuedOperation<T>;
+    return operation;
+  }
+
+  private toRecord(operation: QueuedOperation, state = operation.state, attempts = operation.attempts): DurableQueueRecord {
+    if (!operation.durable) throw new Error('Operation has no durable record.');
+    return {
+      ...operation.durable,
+      attempts,
+      state,
+      ...(operation.errorMessage ? { errorMessage: operation.errorMessage } : {}),
+    } as DurableQueueRecord;
+  }
+
+  private toRestoredRecord(operation: QueuedOperation): RestoredQueueRecord {
+    return this.toRecord(operation) as RestoredQueueRecord;
+  }
+
+  private async retryOperation(operation: QueuedOperation): Promise<void> {
+    await operation.acceptedPromise.catch(() => undefined);
+    if (operation.state === 'acknowledged') return;
+    if (this.isDependencyBlocked(operation)) return;
+    if (operation.retryTimer) {
+      clearTimeout(operation.retryTimer);
+      operation.retryTimer = undefined;
+    }
+    if (!operation.persisted && operation.durable) {
+      try {
+        if (!this.scope || !scopeMatches(operation.durable, this.scope)) throw new Error('Queue owner/workspace is not active.');
+        await this.store.insert(this.toRecord(operation, 'pending'));
+        operation.persisted = true;
+      } catch (error) {
+        operation.state = 'failed';
+        operation.errorMessage = 'Tidak dapat menyimpan antrean lokal dengan aman; operasi belum dikirim ke Firestore.';
+        this.notify();
+        throw error;
+      }
+    }
+    operation.state = 'pending';
+    operation.errorMessage = undefined;
+    this.notify();
+    return this.runOperation(operation);
+  }
+
+  private async runOperation(operation: QueuedOperation): Promise<void> {
+    if ((!this.online && !operation.runWhenOffline) || operation.inFlight || operation.state === 'acknowledged' || this.isDependencyBlocked(operation)) return;
+    operation.inFlight = true;
+    operation.state = this.online ? 'syncing' : 'pending';
+    operation.attempts += 1;
+    operation.errorMessage = undefined;
+    this.notify();
+
+    if (operation.durable && operation.persisted) {
+      try {
+        await this.store.update(this.toRecord(operation));
+      } catch (error) {
+        operation.inFlight = false;
+        operation.state = 'failed';
+        operation.errorMessage = 'Tidak dapat memperbarui status antrean lokal; operasi tidak dikirim.';
+        operation.acknowledgement.reject(error);
+        this.notify();
+        throw error;
+      }
+    }
+
+    const attempt = Promise.resolve().then(() => operation.durable && operation.runDurable
+      ? operation.runDurable(this.toRestoredRecord(operation))
+      : operation.run());
+    operation.currentAttempt = attempt.then(() => undefined);
+    void operation.currentAttempt.catch(() => undefined);
+    try {
+      const result = await attempt;
+      if (operation.durable && operation.persisted) {
+        try {
+          await this.store.acknowledge(operation.durable, operation.id);
+          await this.store.remove(operation.durable, operation.id);
+        } catch {
+          // Firestore has acknowledged the stable document/patch. A leftover outbox row is safe to reconcile on next boot.
+        }
+      }
+      operation.state = 'acknowledged';
+      operation.errorMessage = undefined;
+      operation.acknowledgement.resolve(result);
+      this.pruneAcknowledgements();
+    } catch (error) {
+      const rawCode = error && typeof error === 'object' && 'code' in error
+        ? String((error as { code?: unknown }).code ?? '')
+        : '';
+      const code = rawCode.slice(rawCode.lastIndexOf('/') + 1);
+      const permanent = PERMANENT_FIRESTORE_ERRORS.has(code);
+      operation.state = permanent ? 'failed' : 'pending';
+      operation.errorMessage = safeErrorMessage(error);
+      if (permanent) operation.acknowledgement.reject(error);
+      if (operation.durable && operation.persisted) {
+        try { await this.store.update(this.toRecord(operation)); } catch { /* outbox remains recoverable with the prior safe status */ }
+      }
+      if (!permanent) this.scheduleRetry(operation);
+      this.notify();
+      throw error;
+    } finally {
+      operation.inFlight = false;
+      operation.currentAttempt = undefined;
+      this.notify();
+    }
+  }
+
+  private schedulePump(): void {
+    if (this.restoring || this.pumpPromise) return;
+    this.pumpPromise = Promise.resolve().then(async () => {
+      while (!this.restoring) {
+        const operation = [...this.operations.values()]
+          .filter((candidate) => candidate.accepted && candidate.state === 'pending' && !candidate.inFlight && !candidate.retryTimer
+            && (this.online || candidate.runWhenOffline) && !this.isDependencyBlocked(candidate))
+          .sort(sortByCreation)[0];
+        if (!operation) break;
+        if (!this.online && operation.runWhenOffline) {
+          void this.runOperation(operation).catch(() => undefined);
+        } else {
+          try { await this.runOperation(operation); } catch { /* status and backoff are recorded by runOperation */ }
+        }
+      }
+    }).finally(() => {
+      this.pumpPromise = undefined;
+      const hasRunnable = [...this.operations.values()].some((operation) => operation.accepted && operation.state === 'pending' && !operation.inFlight && !operation.retryTimer
+        && (this.online || operation.runWhenOffline) && !this.isDependencyBlocked(operation));
+      if (hasRunnable) this.schedulePump();
+    });
+  }
+
+  private scheduleRetry(operation: QueuedOperation): void {
+    if (operation.retryTimer) return;
+    const exponent = Math.min(Math.max(operation.attempts - 1, 0), 10);
+    const delay = Math.min(this.retryBaseMs * 2 ** exponent, this.retryMaxMs);
+    operation.retryTimer = setTimeout(() => {
+      if (!this.online) return;
+      operation.retryTimer = undefined;
+      this.schedulePump();
+    }, delay);
+  }
+
+  private isDependencyBlocked(operation: QueuedOperation): boolean {
+    const dependencyId = operation.durable?.dependsOn;
+    if (!dependencyId) return false;
+    const dependency = this.operations.get(dependencyId);
+    return Boolean(dependency && dependency.state !== 'acknowledged');
+  }
+
+  private pruneAcknowledgements(): void {
+    const acknowledged = [...this.operations.values()]
+      .filter((operation) => operation.state === 'acknowledged')
+      .sort(sortByCreation);
+    for (const operation of acknowledged.slice(0, Math.max(0, acknowledged.length - 20))) {
+      this.operations.delete(operation.id);
+    }
+  }
+
+  private handleConnectivityChange(isOnline: boolean): void {
+    this.online = isOnline;
+    if (isOnline) {
+      for (const operation of this.operations.values()) {
+        if (operation.retryTimer) {
+          clearTimeout(operation.retryTimer);
+          operation.retryTimer = undefined;
+        }
+        if (operation.inFlight && operation.state === 'pending') operation.state = 'syncing';
+      }
+      this.notify();
+      this.schedulePump();
+    } else {
+      for (const operation of this.operations.values()) {
+        if (operation.retryTimer) {
+          clearTimeout(operation.retryTimer);
+          operation.retryTimer = undefined;
+        }
+        if (operation.state === 'syncing') operation.state = 'pending';
+      }
+      this.notify();
+    }
+  }
+
+  private notify(): void {
+    const snapshot = this.getSnapshot();
+    for (const listener of this.listeners) listener(snapshot);
+  }
+}
+
+export const firestoreWriteQueue = new OfflineWriteQueue();

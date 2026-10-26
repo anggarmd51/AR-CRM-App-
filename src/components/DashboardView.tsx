@@ -212,8 +212,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         </span>
                       )}
                       {lead._syncStatus && lead._syncStatus !== 'synced' && (
-                        <span className="text-[10px] bg-[#1f1f1f] text-[#fcfcfa] px-1.5 py-0.5 rounded-[4px] font-mono">
-                          Offline Sync Pending
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded-[4px] font-mono ${lead._syncStatus === 'error' ? 'bg-[#fff5f5] text-[#9b2c2c] border border-[#9b2c2c]/30' : 'bg-[#f8f5ee] text-[#6b3a00] border border-[#d8d1c4]'}`}>
+                          {lead._syncStatus === 'error' ? 'Sync Failed — Review Queue' : 'Awaiting Firestore Ack'}
                         </span>
                       )}
                     </div>

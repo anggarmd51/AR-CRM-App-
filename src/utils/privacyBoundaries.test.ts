@@ -28,7 +28,7 @@ test('activity repository writes an explicit notes-only whitelist', () => {
 test('owner bootstrap exposes UID/email only and keeps unconfigured CRM children closed', () => {
   assert.match(authGate, /isOwnerBootstrapEnabled\(import\.meta\.env\.DEV, window\.location\.hostname, window\.location\.protocol\)/);
   assert.match(authGate, /if \(!hasWorkspaceConfiguration\(\) && !isOwnerBootstrapEnabled/);
-  assert.match(authGate, /if \(!hasWorkspaceConfiguration\(\)\) \{\s*return <OwnerBootstrapMessage user=\{user\} \/>/);
+  assert.match(authGate, /if \(!hasWorkspaceConfiguration\(\)\) \{\s*return <OwnerBootstrapMessage user=\{user\} onSignOut=\{handleSignOut\} \/>/);
   assert.ok(authGate.indexOf('return <OwnerBootstrapMessage') < authGate.indexOf('{children}'));
   assert.match(authGate, /Firebase Auth UID/);
   assert.match(authGate, /user\.uid/);

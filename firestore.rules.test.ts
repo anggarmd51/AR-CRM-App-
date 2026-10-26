@@ -2,8 +2,9 @@ import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { initializeTestEnvironment, assertSucceeds, assertFails, type RulesTestEnvironment } from '@firebase/rules-unit-testing';
-import { collection, deleteDoc, doc, getDoc, getDocs, orderBy, query, setDoc, Timestamp, updateDoc, where } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDoc, getDocs, orderBy, query, serverTimestamp, setDoc, Timestamp, updateDoc, where } from 'firebase/firestore';
 import { FIREBASE_RULES_OWNER_UID, FIREBASE_RULES_WORKSPACE_ID } from './src/firebaseRulesBinding.ts';
+import { setDocWithServerReconciliation } from './src/utils/idempotentFirestoreCreate.ts';
 
 const projectId = 'demo-ar-crm-rules';
 const ownerUid = 'synthetic-designated-owner';
@@ -70,6 +71,10 @@ before(async () => {
     .replace(workspaceClause, `workspaceId == '${workspace}'`);
   env = await initializeTestEnvironment({ projectId, firestore: { rules: configuredRules } });
   lockedEnv = await initializeTestEnvironment({ projectId: `${projectId}-locked`, firestore: { rules: lockedRules } });
+  // This test owns only the synthetic demo project namespaces; clear them so
+  // repeated runs against an already-running local emulator stay deterministic.
+  await env.clearFirestore();
+  await lockedEnv.clearFirestore();
   await env.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();
     await setDoc(doc(db, 'workspaces', workspace), { ownerId: ownerUid, created_at: createdAt });
@@ -115,6 +120,23 @@ test('designated owner can read and create a valid lead and same-workspace activ
   await assertSucceeds(getDoc(doc(db, 'workspaces', workspace, 'leads', 'owned-lead')));
   await assertSucceeds(setDoc(doc(db, 'workspaces', workspace, 'leads', 'new-lead'), validLead()));
   await assertSucceeds(setDoc(doc(db, 'workspaces', workspace, 'activities', 'activity-1'), validActivity('new-lead')));
+});
+
+test('ambiguous create retries reconcile exact server documents without relaxing Rules', async () => {
+  const db = env.authenticatedContext(ownerUid).firestore();
+  const leadReference = doc(db, 'workspaces', workspace, 'leads', 'reconciled-create-lead');
+  const { created_at: _leadCreatedAt, updated_at: _leadUpdatedAt, ...expectedLead } = validLead();
+  const leadWrite = () => ({ ...expectedLead, created_at: serverTimestamp(), updated_at: serverTimestamp() });
+  await setDocWithServerReconciliation(leadReference, leadWrite(), expectedLead);
+  await setDocWithServerReconciliation(leadReference, leadWrite(), expectedLead);
+
+  const activityReference = doc(db, 'workspaces', workspace, 'activities', 'reconciled-create-activity');
+  const { created_at: _activityCreatedAt, ...expectedActivity } = validActivity('reconciled-create-lead');
+  const activityWrite = () => ({ ...expectedActivity, created_at: serverTimestamp() });
+  await setDocWithServerReconciliation(activityReference, activityWrite(), expectedActivity);
+  await setDocWithServerReconciliation(activityReference, activityWrite(), expectedActivity);
+  await assertSucceeds(getDoc(leadReference));
+  await assertSucceeds(getDoc(activityReference));
 });
 
 test('owner cannot access a workspace without matching root ownership and membership', async () => {

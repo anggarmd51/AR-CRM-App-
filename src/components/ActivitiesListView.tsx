@@ -130,8 +130,12 @@ export const ActivitiesListView: React.FC<ActivitiesListViewProps> = ({
                     <Calendar className="w-3 h-3 text-[#1f1f1f]/50" />
                     {formatDateTimeDisplay(act.created_at)}
                   </span>
-                  <span className="font-mono text-[#1f1f1f] font-semibold">
-                    {act._syncStatus === 'synced' ? 'Synced to Cloud' : 'Local Cache (Pending Sync)'}
+                  <span className={`font-mono font-semibold ${act._syncStatus === 'error' ? 'text-[#9b2c2c]' : act._syncStatus === 'synced' ? 'text-[#155e3c]' : 'text-[#a44a00]'}`}>
+                    {!act._syncStatus || act._syncStatus === 'synced'
+                      ? 'Diakui Firestore'
+                      : act._syncStatus === 'error'
+                        ? 'Gagal — periksa antrean'
+                        : 'Menunggu pengakuan Firestore'}
                   </span>
                 </div>
               </div>

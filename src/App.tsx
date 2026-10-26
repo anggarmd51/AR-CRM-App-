@@ -25,14 +25,16 @@ import { SecurityVault } from './utils/securityLock.ts';
 import { CheckCircle2 } from 'lucide-react';
 import { getFirebaseAuth } from './firebase.ts';
 import { createActivity, createLead, subscribeToActivities, subscribeToLeads, updateLeadStage } from './firebaseRepository.ts';
+import { firestoreWriteQueue, type SyncQueueSnapshot } from './utils/syncQueue.ts';
+import type { DurableMutation } from './utils/offlineOutbox.ts';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<NavTab>('dashboard');
   const [leads, setLeads] = useState<Lead[]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [globalLeads, setGlobalLeads] = useState<GlobalLead[]>([]);
-  const [pendingCount] = useState<number>(0);
-  const [isSyncing] = useState<boolean>(false);
+  const [syncQueueSnapshot, setSyncQueueSnapshot] = useState<SyncQueueSnapshot>(() => firestoreWriteQueue.getSnapshot());
+  const [isOnline, setIsOnline] = useState<boolean>(() => typeof navigator === 'undefined' || navigator.onLine);
   const [isSimulatedOffline] = useState<boolean>(false);
   const [isPhoneFrame, setIsPhoneFrame] = useState<boolean>(false);
 
@@ -180,19 +182,67 @@ export default function App() {
     return () => { stopLeads(); stopActivities(); };
   }, [showToast]);
 
+  useEffect(() => firestoreWriteQueue.subscribe(setSyncQueueSnapshot), []);
+
+  const acknowledgedCountRef = useRef(syncQueueSnapshot.acknowledgedCount);
+  useEffect(() => {
+    const newlyAcknowledged = syncQueueSnapshot.acknowledgedCount - acknowledgedCountRef.current;
+    acknowledgedCountRef.current = syncQueueSnapshot.acknowledgedCount;
+    if (newlyAcknowledged > 0) {
+      showToast(`${formatNumber(newlyAcknowledged)} operasi diakui Firestore.`);
+    }
+  }, [syncQueueSnapshot.acknowledgedCount, showToast]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  useEffect(() => {
+    setSelectedLead((current) => {
+      if (!current) return current;
+      return leads.find((lead) => lead.id === current.id) ?? current;
+    });
+  }, [leads]);
+
   // Actions
   const handleToggleSimulatedOffline = () => {
     showToast('Mode offline lokal dinonaktifkan: Firebase tetap menjadi sumber data CRM.');
   };
 
   const handleSyncNow = async () => {
-    showToast('Data CRM diperbarui real-time melalui Firebase; tidak ada antrian lokal untuk dikirim.');
+    const retryCount = firestoreWriteQueue.retryFailed();
+    if (!isOnline) {
+      showToast('Offline — Firestore akan melanjutkan operasi tertunda saat koneksi pulih.');
+    } else if (retryCount > 0) {
+      showToast(`Mencoba ulang ${formatNumber(retryCount)} operasi yang gagal.`);
+    } else if (syncQueueSnapshot.pendingCount + syncQueueSnapshot.syncingCount > 0) {
+      showToast('Firestore sedang memproses operasi antrean; lihat status di bar atas.');
+    } else {
+      showToast('Tidak ada operasi tertunda atau gagal.');
+    }
+  };
+
+  const handleRetrySyncOperation = (id: string) => {
+    void firestoreWriteQueue.retry(id).catch(() => undefined);
+  };
+
+  const handleCorrectSyncOperation = async (id: string, mutation: DurableMutation) => {
+    await firestoreWriteQueue.correctFailedOperation(id, mutation);
+    showToast('Koreksi tersimpan di antrean lokal dengan ID yang sama; menunggu pengakuan Firestore.');
   };
 
   // Add Lead
   const handleAddLead = async (leadData: Omit<Lead, 'id' | '_syncStatus' | 'created_at' | 'updated_at'>) => {
     await createLead(getFirebaseAuth().currentUser!.uid, leadData);
-    showToast(`Lead "${leadData.company_name}" disimpan di Firebase.`);
+    showToast(`Lead "${leadData.company_name}" tersimpan di antrean lokal; menunggu pengakuan Firestore.`);
   };
 
   // Update Lead Stage (with automatic archive logging for Closing Won)
@@ -207,7 +257,7 @@ export default function App() {
         pipeline_stage: newStage,
         ...(nextFollowupDate !== undefined ? { next_followup_date: nextFollowupDate } : {}),
       } : prev));
-      showToast(`Stage diubah ke ${newStage}.`);
+      showToast('Perubahan stage masuk antrean lokal; belum diakui Firestore.');
     }).catch((error: Error) => showToast(`Stage gagal diubah: ${error.message}`));
   };
 
@@ -219,7 +269,7 @@ export default function App() {
   }) => {
     try {
       await createActivity(getFirebaseAuth().currentUser!.uid, activityData);
-      showToast('Aktivitas disimpan di Firebase.');
+      showToast('Aktivitas tersimpan di antrean lokal; belum diakui Firestore.');
     } catch (error) {
       showToast(`Aktivitas gagal disimpan: ${(error as Error).message}`);
       throw error;
@@ -240,7 +290,7 @@ export default function App() {
         next_followup_date: '',
         lead_score: 'Unrated',
       });
-      showToast(`"${globalLead.company_name}" disimpan di Firebase.`);
+      showToast(`"${globalLead.company_name}" tersimpan di antrean lokal; menunggu pengakuan Firestore.`);
     } catch (error) {
       showToast(`Lead gagal diimpor: ${(error as Error).message}`);
     }
@@ -259,7 +309,8 @@ export default function App() {
 
   const followUpMetrics = filterFollowUps(leads);
   const dueCount = followUpMetrics.dueToday.length + followUpMetrics.overdue.length;
-  const isOnline = typeof navigator === 'undefined' || navigator.onLine;
+  const pendingCount = syncQueueSnapshot.pendingCount + syncQueueSnapshot.syncingCount;
+  const isSyncing = syncQueueSnapshot.isSyncing;
 
   const getTabTitle = () => {
     switch (currentTab) {
@@ -288,8 +339,14 @@ export default function App() {
           isSimulatedOffline={isSimulatedOffline}
           onToggleSimulatedOffline={handleToggleSimulatedOffline}
           pendingCount={pendingCount}
+          failedCount={syncQueueSnapshot.failedCount}
+          acknowledgedCount={syncQueueSnapshot.acknowledgedCount}
           isSyncing={isSyncing}
           onSyncNow={handleSyncNow}
+          syncOperations={syncQueueSnapshot.operations}
+          onRetrySyncOperation={handleRetrySyncOperation}
+          onLoadFailedMutation={(id) => firestoreWriteQueue.getFailedMutation(id)}
+          onCorrectFailedMutation={handleCorrectSyncOperation}
           isPhoneFrame={isPhoneFrame}
           onTogglePhoneFrame={() => setIsPhoneFrame(!isPhoneFrame)}
           isAndroidCodeActive={currentTab === 'android_code'}

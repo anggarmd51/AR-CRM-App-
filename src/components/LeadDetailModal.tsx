@@ -168,8 +168,12 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
             </div>
             <div className="flex items-center justify-between text-[#6b665c]">
               <span>Sync State:</span>
-              <span className="font-mono text-[10px] text-[#1f1f1f] font-bold">
-                {lead._syncStatus === 'synced' ? 'Cloud status unknown (local copy)' : 'Local only — not synced'}
+              <span className={`font-mono text-[10px] font-bold ${lead._syncStatus === 'error' ? 'text-[#9b2c2c]' : lead._syncStatus === 'synced' ? 'text-[#155e3c]' : 'text-[#a44a00]'}`}>
+                {!lead._syncStatus || lead._syncStatus === 'synced'
+                  ? 'Diakui Firestore'
+                  : lead._syncStatus === 'error'
+                    ? 'Gagal — periksa antrean'
+                    : 'Menunggu pengakuan Firestore'}
               </span>
             </div>
           </div>

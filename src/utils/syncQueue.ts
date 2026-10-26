@@ -434,3 +434,6 @@ export class CrmSyncEngine {
 }
 
 export const syncEngine = new CrmSyncEngine();
+
+export { OfflineWriteQueue, firestoreWriteQueue } from './offlineWriteQueue.ts';
+export type { QueueWriteReceipt, SyncOperationState, SyncQueueOperation, SyncQueueSnapshot } from './offlineWriteQueue.ts';
