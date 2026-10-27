@@ -46,7 +46,9 @@ export function calculatePipelineMetrics(leads: Lead[]): PipelineMetrics {
     }
 
     const value = Number(lead.deal_value) || 0;
-    totalPipelineValue += value;
+    if (stage !== 'Closing Lost') {
+      totalPipelineValue += value;
+    }
 
     if (stage === 'Closing Won') {
       wonValue += value;

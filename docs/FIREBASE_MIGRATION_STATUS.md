@@ -1,6 +1,6 @@
 # AR CRM — Status Integrasi Firebase
 
-Diperbarui pada 26 Oktober 2026 untuk branch `cue/firebase-stabilization`.
+Diperbarui pada 27 Oktober 2026, 02:01 WIB setelah verifikasi lokal dan triase dependency lanjutan di branch `cue/firebase-stabilization`.
 
 ## Ringkasan
 
@@ -8,13 +8,13 @@ Cabang ini mengintegrasikan Firebase Authentication dengan Google Sign-In dan Fi
 
 Konstanta owner/workspace client dicocokkan dengan Rules lewat unit test. Rules lokal kini membatasi akses ke workspace `ar-crm-owner`; tes emulator menolak workspace tambahan sekalipun root dan membership di fixture sintetis cocok. Perubahan Rules lokal belum dideploy oleh pekerjaan ini.
 
-Dalam mode development, aplikasi menghubungkan Auth dan Firestore ke emulator lokal secara default; mode live hanya mungkin lewat opt-out eksplisit `VITE_FIREBASE_USE_EMULATOR=false`. Build production tidak menggunakan emulator.
+Dalam mode development, aplikasi selalu menghubungkan Auth dan Firestore ke emulator lokal; tidak ada opt-out environment untuk mengarahkannya ke Firebase live. Build production tidak menggunakan emulator.
 
 ## Status Firebase dan autentikasi
 
-Project target adalah **AR CRM** (`ar-crm-73222`), dengan Firestore Standard di `asia-southeast1`, Web App AR CRM Web, dan Google provider. Berdasarkan konteks yang disampaikan pemilik, Rules production sudah dideploy dan dokumen workspace serta membership owner sudah dibuat dan diverifikasi sebelumnya. Pada pekerjaan ini tidak ada sesi admin Firebase yang dipakai untuk membaca ulang dokumen production; tidak ada record CRM yang dibaca.
+Project target adalah **AR CRM** (`ar-crm-73222`), dengan Firestore Standard di `asia-southeast1`, Web App AR CRM Web, dan Google provider. Berdasarkan verifikasi terdahulu, Rules production telah dideploy dan dokumen workspace serta membership owner sudah diprovisikan. Status cloud itu tidak dibaca ulang dalam pembaruan dokumentasi ini; tidak ada record CRM yang diakses.
 
-Konfigurasi `.env.local` lokal cocok dengan project dan binding owner/workspace Rules, berizin file `600`, dan tetap diabaikan Git. Nilai konfigurasi tidak dicantumkan di dokumen. Login Google live sebagai owner tidak dilakukan. Karena itu alur popup diperiksa melalui kode dan guard, tetapi belum ada verifikasi E2E login nyata. Authorized domain untuk `arcrmapp.vercel.app` belum diverifikasi dalam pekerjaan ini; tidak ada domain yang ditambahkan ke Firebase Auth.
+Pada pemeriksaan lokal terdahulu, konfigurasi `.env.local` cocok dengan project dan binding owner/workspace Rules, berizin file `600`, dan diabaikan Git. Nilai konfigurasi tidak dicantumkan. Pemilik sebelumnya melaporkan login Google live sebagai owner berhasil; masalah query index yang muncul setelah login telah ditangani dengan indeks Firestore. CRUD owner live belum selesai diverifikasi. Authorized domain `arcrmapp.vercel.app` sebelumnya dilaporkan sudah ditambahkan. Tak satu pun status cloud tersebut diperiksa ulang dalam pembaruan ini.
 
 Google Sign-In dapat membuat entri Firebase Auth saat login pertama, sedangkan Firestore Rules membatasi data CRM dan tidak mencegah pembuatan Auth user itu sendiri. Tidak ada alur registrasi workspace/member dari client.
 
@@ -31,19 +31,25 @@ Google Sign-In dapat membuat entri Firebase Auth saat login pertama, sedangkan F
 
 ## Status deployment
 
-Vercel project `arcrm-app` mempunyai deployment production terbaru dari branch `main`, commit `0f519e4552a07fc5fa5620c23b83a55f621d424c`. Branch `cue/firebase-stabilization` belum dipromosikan. Rilis production memerlukan perubahan masuk ke `main` atau promosi deployment yang setara; tindakan tersebut tidak dilakukan di sini. Jalur itu akan mengganti UI lama yang membaca sumber legacy. Karena data lama belum dipindahkan, pemilik perlu memilih menunda cutover sampai migrasi disetujui, atau menerima bahwa data lama tetap di sumber legacy dan tidak tampil pada aplikasi Firebase baru.
+Deployment production terakhir yang diketahui adalah Vercel project `arcrm-app`, dari branch `cue/firebase-stabilization`, commit `f010c46f6358fa57fe2b0957e8f049058acb0b7d`. Status deployment tersebut tidak diperiksa ulang pada pembaruan ini. HEAD checkout lokal saat pemeriksaan adalah `a6670b8`; working tree berisi perubahan lokal yang sudah ada dan perubahan dokumentasi task ini, tanpa membandingkan remote ref. Tidak ada perubahan tersebut yang dipromosikan atau di-deploy. Cutover penuh dan migrasi data operasional tetap terpisah. Data lama belum dimigrasikan dan tidak otomatis tampil pada aplikasi Firebase.
 
-Penyamaan environment variables Vercel dengan konfigurasi lokal tidak dapat diverifikasi pada pekerjaan ini. Production Rules yang aktif juga tidak dibaca ulang. Karena Rules lokal branch sekarang membatasi workspace secara eksplisit, kesamaan versi Rules production dengan branch harus dipastikan sebelum cutover. Jangan menambah `arcrmapp.vercel.app` atau domain lain ke Authorized Domains tanpa persetujuan pemilik jika domain itu belum diizinkan.
+Delapan `VITE_FIREBASE_*` awal sebelumnya dilaporkan tersedia di Vercel Production dan Preview, tetapi environment cloud tidak dibaca ulang. Guard lokal mensyaratkan `VITE_FIREBASE_TARGET=production` hanya pada Production dengan exact project ID production, serta target `staging` dan project ID berprefix `ar-crm-staging-` yang cocok persis dengan `VITE_FIREBASE_STAGING_PROJECT_ID_ALLOWLIST` pada Preview. Penambahan nilai ini ke Vercel belum dilakukan atau diverifikasi. Tanpa target eksplisit, hosted build akan ditolak oleh guard. Paritas SHA Rules production dengan file lokal pernah dikonfirmasi sebelumnya; tidak diperiksa ulang dalam pembaruan ini. Jangan mengubah Authorized Domains atau environment cloud tanpa persetujuan terpisah.
 
 ## Hasil verifikasi lokal
 
-- `npm test`: **32/32 lulus**, termasuk pemeriksaan kecocokan owner/workspace UI–Rules dan guard mode emulator.
-- `npm run test:firestore`: **10/10 lulus** di emulator, termasuk akses owner valid, penolakan non-owner/anonim, schema Leads/Activities, relasi activity, dan penolakan workspace lain.
-- `npm run lint` (`tsc --noEmit`): lulus.
-- `npm run build`: lulus. Peringatan yang tersisa: Vite config-loader memakai `__dirname` dan bundle JS melebihi batas chunk 500 kB.
-- `git diff --check`: lulus.
+- Pada 27 Oktober 2026, `npm test`: **74/74 lulus**; `npm run lint`: **lulus**; `npx tsc --noEmit`: **lulus**; dan `npm run build`: **lulus**.
+- Rules Emulator: **12/12 lulus** pada project demo sintetis, termasuk commit-then-retry reconciliation untuk lead dan activity. Suite dijalankan langsung ke emulator lokal yang sudah aktif di `127.0.0.1:8080`; proses emulator tidak dihentikan.
+- Build masih menampilkan warning Vite terkait `__dirname` dan chunk JavaScript **950,41 kB** (ambang warning 500 kB). `git diff --check` lulus setelah pembaruan dokumentasi.
 
-Tes ini tidak menggantikan Google Sign-In live atau verifikasi read-only dokumen production. Build memvalidasi aplikasi statis; tidak ada data production yang digunakan.
+Tes lokal tidak menggantikan pemeriksaan live. Verifikasi ini tidak membuka Firebase/Vercel cloud, tidak membaca `.env.local`, dan tidak menggunakan data production.
+
+## Perkembangan stabilisasi lokal
+
+- Guard `src/firebaseDeploymentGuard.ts` menolak hosted Preview tanpa target `staging`, exact allowlist, dan project ID berprefix `ar-crm-staging-`; development tetap menggunakan emulator; target `production` hanya diterima pada Vercel Production dengan exact project ID production.
+- App Check dengan reCAPTCHA Enterprise hanya diinisialisasi pada staging. Site key/provider/token preflight yang hilang atau gagal ditangkap sebagai startup error; Auth/Firestore ditahan. Belum ada project staging, provider/site key, environment Preview, atau status enforcement Console yang diverifikasi. Enforcement tetap menjadi pengaturan Firebase Console dan tidak diubah oleh kode.
+- Antrean create Lead, update stage, dan create Activity memakai IndexedDB outbox dengan payload AES-GCM allowlisted, partisi owner/workspace, pemulihan saat startup, retry transient saat reconnect, deduplikasi stable document ID, dependency lead→activity, UI server acknowledgement, serta koreksi manual untuk payload failed. Data pending tidak dihapus saat logout; UI memperingatkan dan antrean dipulihkan hanya untuk scope owner/workspace yang sama.
+- Ekspor Firestore → Sheets tersedia sebagai kode lokal saja. Belum ada spreadsheet pelaporan, service account/IAM, server environment variable, atau Cron yang dikonfigurasi; Sheets bukan backup.
+- Working tree berisi perubahan lokal yang belum di-stage/commit; tidak ada commit, push, merge, atau deploy pada pembaruan ini. `npm audit --json` melaporkan 10 entri paket rentan (5 moderate, 5 high, 0 critical), bukan 10 advisory unik. `npm audit --omit=dev --json` melaporkan empat entri paket production yang berasal dari satu advisory unik High (GHSA-m9gg-hp2v-232j, CVSS 7,4) dan satu Low (GHSA-f596-whhp-79r4, CVSS 3,7) melalui `@grpc/grpc-js@1.9.16`. Tidak ada upgrade dependency yang diterapkan; detail patch, paparan browser, dan blocker dicatat di [`PROJECT_STATE.md`](../PROJECT_STATE.md).
 
 ## Gate sebelum production
 

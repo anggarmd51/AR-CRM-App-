@@ -76,10 +76,10 @@ const mockLeads: Lead[] = [
   },
 ];
 
-test('calculatePipelineMetrics computes correct totals, stages and win rate', () => {
+test('calculatePipelineMetrics excludes Closing Lost value and preserves other stage totals', () => {
   const metrics = calculatePipelineMetrics(mockLeads);
   assert.equal(metrics.totalLeads, 5);
-  assert.equal(metrics.totalPipelineValue, 125000); // 10k + 20k + 30k + 50k + 15k
+  assert.equal(metrics.totalPipelineValue, 110000); // 10k + 20k + 30k + 50k; excludes lost 15k
   assert.equal(metrics.wonValue, 50000);
   assert.equal(metrics.activeValue, 60000); // 10k (Prospect) + 20k (Meeting) + 30k (Negotiation)
   // Weighted: 10000*0.2 + 20000*0.5 + 30000*0.8 = 2000 + 10000 + 24000 = 36000
