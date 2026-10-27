@@ -263,6 +263,31 @@ function leadRecord(id: string, overrides: Partial<DurableQueueInput> = {}): Dur
   } as DurableQueueInput;
 }
 
+test('offline outbox accepts only real YYYY-MM-DD calendar dates', () => {
+  const record = leadRecord('calendar-date-validation');
+  const createLeadMutation = (date: string): DurableMutation => ({
+    kind: 'create-lead',
+    payload: { ...(record.payload as Extract<DurableMutation, { kind: 'create-lead' }>['payload']), next_followup_date: date },
+  });
+  const updateStageMutation = (date: string): DurableMutation => ({
+    kind: 'update-lead-stage',
+    payload: { lead_id: 'stable-lead-id', pipeline_stage: 'Meeting', next_followup_date: date },
+  });
+
+  for (const date of ['', '2024-02-29', '2026-02-28', '2000-02-29']) {
+    const lead = allowlistedMutation(createLeadMutation(date));
+    const stage = allowlistedMutation(updateStageMutation(date));
+    if (lead.kind !== 'create-lead') assert.fail('Expected a sanitized create-lead mutation.');
+    if (stage.kind !== 'update-lead-stage') assert.fail('Expected a sanitized stage mutation.');
+    assert.equal(lead.payload.next_followup_date, date);
+    assert.equal(stage.payload.next_followup_date, date);
+  }
+  for (const date of ['2026-99-99', '2026-02-29', '2026-04-31', '2026-2-03', '0000-01-01', 'tomorrow']) {
+    assert.throws(() => allowlistedMutation(createLeadMutation(date)), /local validation/);
+    assert.throws(() => allowlistedMutation(updateStageMutation(date)), /local validation/);
+  }
+});
+
 test('offline write is persisted locally, then acknowledged after reconnect', async () => {
   const connectivity = new FakeConnectivity(false);
   const queue = new OfflineWriteQueue(connectivity);
@@ -308,6 +333,94 @@ test('offline-aware Firestore write stays pending until the server promise resol
     sdkWrite.resolve();
     await receipt.acknowledged;
     assert.equal(queue.getSnapshot().operations[0].state, 'acknowledged');
+  } finally { queue.dispose(); }
+});
+
+test('scope deactivation settles in-flight and dependency-blocked receipts without stale finalization', async () => {
+  const connectivity = new FakeConnectivity(false);
+  const store = new MemoryOutboxStore();
+  const queue = new OfflineWriteQueue(connectivity, store);
+  const sdkAttempt = createDeferred<void>();
+  const parent = leadRecord('scope-deactivation-parent');
+  const child = {
+    id: 'scope-deactivation-child',
+    label: 'Simpan aktivitas',
+    ownerId: ownerScope.ownerId,
+    workspaceId: ownerScope.workspaceId,
+    documentId: 'scope-deactivation-activity-document',
+    kind: 'create-activity',
+    payload: { lead_id: parent.documentId, activity_type: 'Call', notes: 'Deferred dependency test' },
+    createdAt: Date.now() + 1,
+    dependsOn: parent.id,
+  } as DurableQueueInput;
+  let parentCalls = 0;
+  let childCalls = 0;
+
+  try {
+    await queue.activateScope(ownerScope, async () => undefined);
+    const parentReceipt = queue.enqueue({
+      id: parent.id,
+      label: parent.label,
+      durable: parent,
+      runWhenOffline: true,
+      run: () => { parentCalls += 1; return sdkAttempt.promise; },
+    });
+    await parentReceipt.accepted;
+    await waitFor(() => parentCalls === 1);
+    const childReceipt = queue.enqueue({
+      id: child.id,
+      label: child.label,
+      durable: child,
+      runWhenOffline: true,
+      run: async () => { childCalls += 1; },
+    });
+    await childReceipt.accepted;
+    const activeAttempt = queue.retry(parent.id);
+
+    queue.deactivateScope();
+
+    await assert.rejects(parentReceipt.acknowledged, { name: 'QueueScopeDeactivatedError' });
+    await assert.rejects(childReceipt.acknowledged, { name: 'QueueScopeDeactivatedError' });
+    await activeAttempt;
+    assert.equal(queue.getSnapshot().operations.length, 0);
+    assert.equal(childCalls, 0, 'dependency-blocked child must not run after scope deactivation');
+
+    sdkAttempt.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const persisted = await store.list(ownerScope);
+    assert.equal(persisted.length, 2, 'unconfirmed writes remain recoverable in the outbox');
+    assert.equal(persisted.find((record) => record.id === parent.id)?.state, 'pending');
+  } finally { queue.dispose(); }
+});
+
+test('scope deactivation settles an accepted receipt waiting on local outbox persistence', async () => {
+  const store = new MemoryOutboxStore();
+  const insertGate = createDeferred<void>();
+  const originalInsert = store.insert.bind(store);
+  store.insert = async (record) => {
+    await insertGate.promise;
+    await originalInsert(record);
+  };
+  const queue = new OfflineWriteQueue(new FakeConnectivity(false), store);
+  const record = leadRecord('scope-deactivation-pending-insert');
+
+  try {
+    await queue.activateScope(ownerScope, async () => undefined);
+    const receipt = queue.enqueue({
+      id: record.id,
+      label: record.label,
+      durable: record,
+      runWhenOffline: true,
+      run: async () => undefined,
+    });
+
+    queue.deactivateScope();
+
+    await assert.rejects(receipt.accepted, { name: 'QueueScopeDeactivatedError' });
+    await assert.rejects(receipt.acknowledged, { name: 'QueueScopeDeactivatedError' });
+    insertGate.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal((await store.list(ownerScope)).length, 1, 'a late local commit remains recoverable but is not sent');
   } finally { queue.dispose(); }
 });
 

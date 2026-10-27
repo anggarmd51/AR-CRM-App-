@@ -203,6 +203,10 @@ test('lead and activity schemas reject tampered ownership, role, type, enum, GPS
   await assertFails(setDoc(doc(db, 'workspaces', workspace, 'leads', 'numeric-phone'), { ...validLead(), phone: 812345678 }));
   await assertFails(setDoc(doc(db, 'workspaces', workspace, 'leads', 'bad-value'), { ...validLead(), deal_value: 'large' }));
   await assertFails(setDoc(doc(db, 'workspaces', workspace, 'leads', 'bad-date'), { ...validLead(), next_followup_date: 'tomorrow' }));
+  await assertSucceeds(setDoc(doc(db, 'workspaces', workspace, 'leads', 'valid-leap-date'), { ...validLead(), next_followup_date: '2024-02-29' }));
+  for (const date of ['2026-99-99', '2026-02-29', '2026-04-31', '0000-01-01']) {
+    await assertFails(setDoc(doc(db, 'workspaces', workspace, 'leads', `impossible-date-${date}`), { ...validLead(), next_followup_date: date }));
+  }
   await assertFails(setDoc(doc(db, 'workspaces', workspace, 'leads', 'gps-injected'), { ...validLead(), location_gps: '0,0', latitude: 0, longitude: 0, coords: { lat: 0, lng: 0 } }));
   await assertFails(setDoc(doc(db, 'workspaces', workspace, 'leads', 'unknown-field'), { ...validLead(), unknown_field: 'denied' }));
 

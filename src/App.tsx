@@ -27,6 +27,9 @@ import { getFirebaseAuth } from './firebase.ts';
 import { createActivity, createLead, subscribeToActivities, subscribeToLeads, updateLeadStage } from './firebaseRepository.ts';
 import { firestoreWriteQueue, type SyncQueueSnapshot } from './utils/syncQueue.ts';
 import type { DurableMutation } from './utils/offlineOutbox.ts';
+import { createAppHistoryState, getClosedModalNames, readAppHistoryState, type AppHistoryState, type AppModalName } from './utils/appHistory.ts';
+
+const APP_TABS: readonly NavTab[] = ['dashboard', 'pipeline', 'leads_finder', 'activities', 'android_code'];
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<NavTab>('dashboard');
@@ -62,41 +65,53 @@ export default function App() {
   // Refs for robust popstate back gesture handling
   const currentTabRef = useRef(currentTab);
   currentTabRef.current = currentTab;
-  const selectedLeadRef = useRef(selectedLead);
-  selectedLeadRef.current = selectedLead;
-  const isQuickLeadOpenRef = useRef(isQuickLeadOpen);
-  isQuickLeadOpenRef.current = isQuickLeadOpen;
-  const isActivityLoggerOpenRef = useRef(isActivityLoggerOpen);
-  isActivityLoggerOpenRef.current = isActivityLoggerOpen;
-  const whatsAppLeadRef = useRef(whatsAppLead);
-  whatsAppLeadRef.current = whatsAppLead;
-  const isSecuritySettingsOpenRef = useRef(isSecuritySettingsOpen);
-  isSecuritySettingsOpenRef.current = isSecuritySettingsOpen;
+  const historyEntryRef = useRef<AppHistoryState<NavTab> | null>(null);
+  const modalBackPendingRef = useRef(false);
 
   // Track double tap back to exit on root dashboard
   const lastBackPressTimeRef = useRef<number>(0);
 
-  // Safe modal openers with history push for Android back gesture support
-  const openModalWithHistory = useCallback((openFn: () => void, modalName: string) => {
+  // Each app history entry captures both the selected tab and its modal stack.
+  const openModalWithHistory = useCallback((openFn: () => void, modalName: AppModalName) => {
     if (typeof window !== 'undefined') {
-      window.history.pushState({ modal: true, modalName }, '');
+      const current = readAppHistoryState(window.history.state, APP_TABS)
+        ?? historyEntryRef.current
+        ?? createAppHistoryState(currentTabRef.current);
+      const next = createAppHistoryState(current.tab, [...current.modalStack, modalName]);
+      window.history.pushState(next, '');
+      historyEntryRef.current = next;
+      modalBackPendingRef.current = false;
     }
     openFn();
   }, []);
 
-  // Safe modal closer that unwinds history state cleanly
-  const closeModalWithHistory = useCallback((closeFn: () => void) => {
-    closeFn();
-    if (typeof window !== 'undefined' && window.history.state?.modal) {
-      window.history.back();
+  // popstate is the single owner of modal close transitions; the click handler
+  // only consumes the top modal entry and never closes a parent directly.
+  const closeModalWithHistory = useCallback((modalName: AppModalName, closeFn: () => void) => {
+    if (typeof window === 'undefined') {
+      closeFn();
+      return;
     }
+    const current = readAppHistoryState(window.history.state, APP_TABS);
+    if (current?.modalStack.length) {
+      if (current.modalStack[current.modalStack.length - 1] !== modalName || modalBackPendingRef.current) return;
+      modalBackPendingRef.current = true;
+      window.history.back();
+      return;
+    }
+    closeFn();
   }, []);
 
   // Tab changer with history entry
   const changeTabWithHistory = useCallback((tab: NavTab) => {
     if (tab === currentTabRef.current) return;
     if (typeof window !== 'undefined') {
-      window.history.pushState({ tab }, '');
+      const current = readAppHistoryState(window.history.state, APP_TABS)
+        ?? historyEntryRef.current
+        ?? createAppHistoryState(currentTabRef.current);
+      const next = createAppHistoryState(tab, current.modalStack);
+      window.history.pushState(next, '');
+      historyEntryRef.current = next;
     }
     setCurrentTab(tab);
   }, []);
@@ -105,49 +120,65 @@ export default function App() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
-    // Establish root history state
-    if (!window.history.state) {
-      window.history.replaceState({ root: true, tab: 'dashboard' }, '');
-    }
+    // Establish a canonical current entry. A modal cannot be restored from a
+    // browser entry alone after a full reload, so keep its tab but clear layers.
+    const existingState = readAppHistoryState(window.history.state, APP_TABS);
+    const initialState = createAppHistoryState(existingState?.tab ?? currentTabRef.current);
+    window.history.replaceState(initialState, '');
+    historyEntryRef.current = initialState;
+    setCurrentTab(initialState.tab);
 
-    const handlePopState = () => {
-      // 1. LIFO: Close top-most / child modals first before parent LeadDetailModal
-      if (isActivityLoggerOpenRef.current) {
-        setIsActivityLoggerOpen(false);
-        setActivityLead(null);
+    const handlePopState = (event: PopStateEvent) => {
+      const next = readAppHistoryState(event.state, APP_TABS);
+      if (!next) {
+        modalBackPendingRef.current = false;
         return;
       }
-      if (whatsAppLeadRef.current) {
-        setWhatsAppLead(null);
-        return;
-      }
-      if (isSecuritySettingsOpenRef.current) {
-        setIsSecuritySettingsOpen(false);
-        return;
-      }
-      if (isQuickLeadOpenRef.current) {
-        setIsQuickLeadOpen(false);
-        return;
-      }
-      if (selectedLeadRef.current) {
-        setSelectedLead(null);
-        return;
+      const previous = historyEntryRef.current;
+      historyEntryRef.current = next;
+      modalBackPendingRef.current = false;
+      setCurrentTab(next.tab);
+
+      const closedModalNames = previous ? getClosedModalNames(previous, next) : [];
+      for (const modalName of closedModalNames) {
+        switch (modalName) {
+          case 'activityLogger':
+            setIsActivityLoggerOpen(false);
+            setActivityLead(null);
+            break;
+          case 'whatsapp':
+            setWhatsAppLead(null);
+            break;
+          case 'securitySettings':
+            setIsSecuritySettingsOpen(false);
+            break;
+          case 'quickLead':
+            setIsQuickLeadOpen(false);
+            break;
+          case 'leadDetail':
+            setSelectedLead(null);
+            break;
+        }
       }
 
-      // 2. If no modal is open but user is on a secondary tab, navigate back to Dashboard
-      if (currentTabRef.current !== 'dashboard') {
-        setCurrentTab('dashboard');
+      // A popped modal or a tab transition is already fully handled by this
+      // destination entry; neither should be interpreted as a second Back.
+      if (closedModalNames.length > 0 || (previous && previous.tab !== next.tab) || next.modalStack.length > 0) {
+        lastBackPressTimeRef.current = 0;
         return;
       }
 
       // 3. User is on Root Dashboard: double back confirmation to prevent accidental exit
+      if (next.tab !== 'dashboard') return;
       const now = Date.now();
       if (now - lastBackPressTimeRef.current < 2000) {
         // Allow app exit / default behavior
         return;
       } else {
         lastBackPressTimeRef.current = now;
-        window.history.pushState({ root: true, tab: 'dashboard' }, '');
+        const rootEntry = createAppHistoryState('dashboard');
+        window.history.pushState(rootEntry, '');
+        historyEntryRef.current = rootEntry;
         showToast('Tekan kembali sekali lagi untuk keluar dari aplikasi.');
       }
     };
@@ -436,14 +467,14 @@ export default function App() {
         {/* MODALS WITH MOBILE BACK GESTURE INTEGRATION */}
         <QuickLeadModal
           isOpen={isQuickLeadOpen}
-          onClose={() => closeModalWithHistory(() => setIsQuickLeadOpen(false))}
+          onClose={() => closeModalWithHistory('quickLead', () => setIsQuickLeadOpen(false))}
           onAddLead={handleAddLead}
         />
 
         <ActivityLoggerModal
           isOpen={isActivityLoggerOpen}
           onClose={() =>
-            closeModalWithHistory(() => {
+            closeModalWithHistory('activityLogger', () => {
               setIsActivityLoggerOpen(false);
               setActivityLead(null);
             })
@@ -455,7 +486,7 @@ export default function App() {
 
         <LeadDetailModal
           isOpen={!!selectedLead}
-          onClose={() => closeModalWithHistory(() => setSelectedLead(null))}
+          onClose={() => closeModalWithHistory('leadDetail', () => setSelectedLead(null))}
           lead={selectedLead}
           activities={activities}
           onUpdateStage={handleUpdateLeadStage}
@@ -471,15 +502,15 @@ export default function App() {
 
         <WhatsAppModal
           isOpen={!!whatsAppLead}
-          onClose={() => closeModalWithHistory(() => setWhatsAppLead(null))}
+          onClose={() => closeModalWithHistory('whatsapp', () => setWhatsAppLead(null))}
           lead={whatsAppLead}
         />
 
         <SecuritySettingsModal
           isOpen={isSecuritySettingsOpen}
-          onClose={() => closeModalWithHistory(() => setIsSecuritySettingsOpen(false))}
+          onClose={() => closeModalWithHistory('securitySettings', () => setIsSecuritySettingsOpen(false))}
           onLockNow={() => {
-            closeModalWithHistory(() => setIsSecuritySettingsOpen(false));
+            closeModalWithHistory('securitySettings', () => setIsSecuritySettingsOpen(false));
             SecurityVault.lockNow();
             setIsAppLocked(true);
           }}

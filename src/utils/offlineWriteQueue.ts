@@ -58,6 +58,8 @@ interface Deferred<T> {
 interface QueuedOperation<T = unknown> {
   id: string;
   label: string;
+  activationVersion: number;
+  deactivation: Deferred<void>;
   run: () => Promise<T>;
   runDurable?: (record: RestoredQueueRecord) => Promise<T>;
   runWhenOffline: boolean;
@@ -80,6 +82,13 @@ export interface QueueWriteReceipt<T> {
   accepted: Promise<void>;
   /** Resolves on Firestore acknowledgement; transient/offline retries may keep it pending. */
   acknowledged: Promise<T>;
+}
+
+export class QueueScopeDeactivatedError extends Error {
+  constructor() {
+    super('Offline write queue scope was deactivated before the operation completed.');
+    this.name = 'QueueScopeDeactivatedError';
+  }
 }
 
 export interface OfflineWriteQueueOptions {
@@ -225,9 +234,11 @@ export class OfflineWriteQueue {
       const records = await this.store.list(activeScope);
       if (version !== this.activationVersion) return;
       for (const record of records) {
+        if (version !== this.activationVersion) return;
         if (!scopeMatches(record, activeScope)) continue;
         if (record.state === 'acknowledged') {
           await this.store.remove(activeScope, record.id);
+          if (version !== this.activationVersion) return;
           continue;
         }
         if (!record.payload) throw new Error('Pending outbox record has no recoverable payload.');
@@ -257,11 +268,14 @@ export class OfflineWriteQueue {
           attempts: record.attempts,
           accepted: true,
           persisted: true,
+          activationVersion: version,
         });
+        if (version !== this.activationVersion) return;
         operation.errorMessage = record.state === 'syncing' ? undefined : record.errorMessage;
         this.operations.set(operation.id, operation);
         if (record.state === 'syncing') {
           await this.store.update(this.toRecord(operation));
+          if (version !== this.activationVersion) return;
         }
       }
       if (version !== this.activationVersion) return;
@@ -282,8 +296,11 @@ export class OfflineWriteQueue {
     this.restoring = false;
     this.scope = undefined;
     this.replay = undefined;
+    const deactivatedError = new QueueScopeDeactivatedError();
     for (const operation of this.operations.values()) {
       if (operation.retryTimer) clearTimeout(operation.retryTimer);
+      operation.deactivation.resolve();
+      operation.acknowledgement.reject(deactivatedError);
     }
     this.operations.clear();
     this.notify();
@@ -301,6 +318,7 @@ export class OfflineWriteQueue {
       attempts: 0,
       accepted: false,
       persisted: !input.durable,
+      activationVersion: this.activationVersion,
     });
     this.operations.set(operation.id, operation);
     operation.acceptedPromise = (async () => {
@@ -309,13 +327,15 @@ export class OfflineWriteQueue {
           if (!this.scope || !scopeMatches(operation.durable, this.scope)) {
             throw new Error('Queue owner/workspace is not active.');
           }
-          await this.store.insert(this.toRecord(operation));
+          await this.awaitWhileActive(operation, this.store.insert(this.toRecord(operation)));
           operation.persisted = true;
         }
+        if (!this.isOperationCurrent(operation)) throw new QueueScopeDeactivatedError();
         operation.accepted = true;
         this.notify();
         this.schedulePump();
       } catch (error) {
+        if (!this.isOperationCurrent(operation)) throw error;
         operation.accepted = true;
         operation.persisted = false;
         operation.state = 'failed';
@@ -364,8 +384,10 @@ export class OfflineWriteQueue {
     operation.errorMessage = undefined;
     try {
       if (!this.scope || !scopeMatches(operation.durable, this.scope)) throw new Error('Queue owner/workspace is not active.');
-      await this.store.update(this.toRecord(operation));
+      await this.awaitWhileActive(operation, this.store.update(this.toRecord(operation)));
+      if (!this.isOperationCurrent(operation)) throw new QueueScopeDeactivatedError();
     } catch (error) {
+      if (!this.isOperationCurrent(operation)) throw new QueueScopeDeactivatedError();
       operation.durable = previousRecord;
       operation.state = 'failed';
       operation.errorMessage = previousError ?? 'Koreksi belum tersimpan ke outbox lokal; operasi tidak dikirim.';
@@ -399,16 +421,15 @@ export class OfflineWriteQueue {
   }
 
   dispose(): void {
+    this.deactivateScope();
     this.unsubscribeConnectivity();
-    for (const operation of this.operations.values()) {
-      if (operation.retryTimer) clearTimeout(operation.retryTimer);
-    }
     this.listeners.clear();
   }
 
   private createOperation<T>(input: {
     id: string;
     label: string;
+    activationVersion: number;
     run: () => Promise<T>;
     runDurable?: (record: RestoredQueueRecord) => Promise<T>;
     runWhenOffline?: boolean;
@@ -422,6 +443,7 @@ export class OfflineWriteQueue {
     const operation = {
       ...input,
       runWhenOffline: input.runWhenOffline ?? false,
+      deactivation: createDeferred<void>(),
       inFlight: false,
       acceptedPromise: Promise.resolve(),
       acknowledgement,
@@ -445,6 +467,7 @@ export class OfflineWriteQueue {
 
   private async retryOperation(operation: QueuedOperation): Promise<void> {
     await operation.acceptedPromise.catch(() => undefined);
+    if (!this.isOperationCurrent(operation)) throw new QueueScopeDeactivatedError();
     if (operation.state === 'acknowledged') return;
     if (this.isDependencyBlocked(operation)) return;
     if (operation.retryTimer) {
@@ -454,9 +477,11 @@ export class OfflineWriteQueue {
     if (!operation.persisted && operation.durable) {
       try {
         if (!this.scope || !scopeMatches(operation.durable, this.scope)) throw new Error('Queue owner/workspace is not active.');
-        await this.store.insert(this.toRecord(operation, 'pending'));
+        await this.awaitWhileActive(operation, this.store.insert(this.toRecord(operation, 'pending')));
+        if (!this.isOperationCurrent(operation)) throw new QueueScopeDeactivatedError();
         operation.persisted = true;
       } catch (error) {
+        if (!this.isOperationCurrent(operation)) throw new QueueScopeDeactivatedError();
         operation.state = 'failed';
         operation.errorMessage = 'Tidak dapat menyimpan antrean lokal dengan aman; operasi belum dikirim ke Firestore.';
         this.notify();
@@ -469,8 +494,27 @@ export class OfflineWriteQueue {
     return this.runOperation(operation);
   }
 
-  private async runOperation(operation: QueuedOperation): Promise<void> {
-    if ((!this.online && !operation.runWhenOffline) || operation.inFlight || operation.state === 'acknowledged' || this.isDependencyBlocked(operation)) return;
+  private runOperation(operation: QueuedOperation): Promise<void> {
+    if (!this.isOperationCurrent(operation)
+      || (!this.online && !operation.runWhenOffline)
+      || operation.inFlight
+      || operation.state === 'acknowledged'
+      || this.isDependencyBlocked(operation)) return Promise.resolve();
+    if (operation.currentAttempt) return operation.currentAttempt;
+    const running = this.performOperation(operation);
+    operation.currentAttempt = running;
+    void running.finally(() => {
+      if (operation.currentAttempt === running) operation.currentAttempt = undefined;
+    }).catch(() => undefined);
+    return running;
+  }
+
+  private async performOperation(operation: QueuedOperation): Promise<void> {
+    if (!this.isOperationCurrent(operation)
+      || (!this.online && !operation.runWhenOffline)
+      || operation.inFlight
+      || operation.state === 'acknowledged'
+      || this.isDependencyBlocked(operation)) return;
     operation.inFlight = true;
     operation.state = this.online ? 'syncing' : 'pending';
     operation.attempts += 1;
@@ -479,37 +523,45 @@ export class OfflineWriteQueue {
 
     if (operation.durable && operation.persisted) {
       try {
-        await this.store.update(this.toRecord(operation));
+        await this.awaitWhileActive(operation, this.store.update(this.toRecord(operation)));
       } catch (error) {
-        operation.inFlight = false;
+        if (!this.isOperationCurrent(operation)) {
+          operation.inFlight = false;
+          return;
+        }
         operation.state = 'failed';
         operation.errorMessage = 'Tidak dapat memperbarui status antrean lokal; operasi tidak dikirim.';
         operation.acknowledgement.reject(error);
+        operation.inFlight = false;
         this.notify();
         throw error;
       }
     }
 
-    const attempt = Promise.resolve().then(() => operation.durable && operation.runDurable
-      ? operation.runDurable(this.toRestoredRecord(operation))
-      : operation.run());
-    operation.currentAttempt = attempt.then(() => undefined);
-    void operation.currentAttempt.catch(() => undefined);
+    if (!this.isOperationCurrent(operation)) return;
     try {
-      const result = await attempt;
+      const attempt = Promise.resolve().then(() => operation.durable && operation.runDurable
+        ? operation.runDurable(this.toRestoredRecord(operation))
+        : operation.run());
+      const result = await this.awaitWhileActive(operation, attempt);
+      if (!this.isOperationCurrent(operation)) return;
       if (operation.durable && operation.persisted) {
         try {
-          await this.store.acknowledge(operation.durable, operation.id);
-          await this.store.remove(operation.durable, operation.id);
+          await this.awaitWhileActive(operation, this.store.acknowledge(operation.durable, operation.id));
+          if (!this.isOperationCurrent(operation)) return;
+          await this.awaitWhileActive(operation, this.store.remove(operation.durable, operation.id));
         } catch {
+          if (!this.isOperationCurrent(operation)) return;
           // Firestore has acknowledged the stable document/patch. A leftover outbox row is safe to reconcile on next boot.
         }
       }
+      if (!this.isOperationCurrent(operation)) return;
       operation.state = 'acknowledged';
       operation.errorMessage = undefined;
       operation.acknowledgement.resolve(result);
       this.pruneAcknowledgements();
     } catch (error) {
+      if (!this.isOperationCurrent(operation)) return;
       const rawCode = error && typeof error === 'object' && 'code' in error
         ? String((error as { code?: unknown }).code ?? '')
         : '';
@@ -519,16 +571,40 @@ export class OfflineWriteQueue {
       operation.errorMessage = safeErrorMessage(error);
       if (permanent) operation.acknowledgement.reject(error);
       if (operation.durable && operation.persisted) {
-        try { await this.store.update(this.toRecord(operation)); } catch { /* outbox remains recoverable with the prior safe status */ }
+        try {
+          await this.awaitWhileActive(operation, this.store.update(this.toRecord(operation)));
+        } catch {
+          if (!this.isOperationCurrent(operation)) return;
+          // Outbox remains recoverable with the prior safe status.
+        }
       }
+      if (!this.isOperationCurrent(operation)) return;
       if (!permanent) this.scheduleRetry(operation);
       this.notify();
       throw error;
     } finally {
       operation.inFlight = false;
-      operation.currentAttempt = undefined;
       this.notify();
     }
+  }
+
+  private isOperationCurrent(operation: QueuedOperation): boolean {
+    return operation.activationVersion === this.activationVersion
+      && this.operations.get(operation.id) === operation
+      && (!operation.durable || Boolean(this.scope && scopeMatches(operation.durable, this.scope)));
+  }
+
+  private async awaitWhileActive<T>(operation: QueuedOperation, promise: Promise<T>): Promise<T> {
+    const outcome = await Promise.race([
+      promise.then(
+        (value) => ({ kind: 'resolved' as const, value }),
+        (error: unknown) => ({ kind: 'rejected' as const, error }),
+      ),
+      operation.deactivation.promise.then(() => ({ kind: 'deactivated' as const })),
+    ]);
+    if (outcome.kind === 'deactivated') throw new QueueScopeDeactivatedError();
+    if (outcome.kind === 'rejected') throw outcome.error;
+    return outcome.value;
   }
 
   private schedulePump(): void {
@@ -559,7 +635,7 @@ export class OfflineWriteQueue {
     const exponent = Math.min(Math.max(operation.attempts - 1, 0), 10);
     const delay = Math.min(this.retryBaseMs * 2 ** exponent, this.retryMaxMs);
     operation.retryTimer = setTimeout(() => {
-      if (!this.online) return;
+      if (!this.isOperationCurrent(operation) || !this.online) return;
       operation.retryTimer = undefined;
       this.schedulePump();
     }, delay);

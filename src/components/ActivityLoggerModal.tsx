@@ -27,13 +27,16 @@ export const ActivityLoggerModal: React.FC<ActivityLoggerModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    if (initialLead) setSelectedLeadId(initialLead.id);
-    else if (leads.length > 0 && !selectedLeadId) setSelectedLeadId(leads[0].id);
-  }, [initialLead, leads, selectedLeadId]);
-
-  useEffect(() => {
-    if (!isOpen) setNotes('');
-  }, [isOpen]);
+    if (!isOpen) {
+      setSelectedLeadId('');
+      setActivityType('Meeting Check-In');
+      setNotes('');
+      return;
+    }
+    setSelectedLeadId(initialLead?.id ?? '');
+    setActivityType('Meeting Check-In');
+    setNotes('');
+  }, [isOpen, initialLead?.id]);
 
   if (!isOpen) return null;
 

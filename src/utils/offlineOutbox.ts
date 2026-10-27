@@ -132,6 +132,23 @@ function assertText(value: unknown, maxLength: number, allowEmpty = true): strin
   return value;
 }
 
+function assertCalendarDate(value: unknown): string {
+  const date = assertText(value, 10);
+  if (date === '') return date;
+
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  if (!match) throw new Error('Offline operation data failed local validation.');
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const isLeapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, isLeapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  if (year < 1 || month < 1 || month > 12 || day < 1 || day > daysInMonth[month - 1]) {
+    throw new Error('Offline operation data failed local validation.');
+  }
+  return date;
+}
+
 function assertId(value: unknown): string {
   const id = assertText(value, 150, false);
   if (id.includes('/')) throw new Error('Offline operation identifier is invalid.');
@@ -160,7 +177,7 @@ export function allowlistedMutation(mutation: DurableMutation): DurableMutation 
           city: assertText(payload.city, 120),
           pipeline_stage: payload.pipeline_stage as PipelineStage,
           deal_value: payload.deal_value,
-          next_followup_date: assertText(payload.next_followup_date, 10),
+          next_followup_date: assertCalendarDate(payload.next_followup_date),
           lead_score: payload.lead_score as LeadScore,
         },
       };
@@ -176,7 +193,7 @@ export function allowlistedMutation(mutation: DurableMutation): DurableMutation 
           pipeline_stage: payload.pipeline_stage as PipelineStage,
           ...(payload.next_followup_date === undefined
             ? {}
-            : { next_followup_date: assertText(payload.next_followup_date, 10) }),
+            : { next_followup_date: assertCalendarDate(payload.next_followup_date) }),
         },
       };
     }
