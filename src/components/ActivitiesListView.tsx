@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { History, Plus, Search, Calendar, Building2 } from 'lucide-react';
+import { History, Plus, Search, Calendar, Building2, MapPin, Sparkles } from 'lucide-react';
 import { Activity, Lead } from '../types/crm.ts';
 import { formatDateTimeDisplay } from '../utils/crmCalculations.ts';
 
@@ -122,7 +122,24 @@ export const ActivitiesListView: React.FC<ActivitiesListViewProps> = ({
 
                 </div>
 
-                <p className="text-xs text-[#1f1f1f] leading-relaxed">{act.notes}</p>
+                <p className="text-xs text-[#1f1f1f] leading-relaxed whitespace-pre-wrap">{act.notes}</p>
+                {act.ai_summary && (
+                  <div className="rounded-[8px] border border-[#1f1f1f]/30 bg-[#fcfcfa] p-3 space-y-1">
+                    <div className="flex items-center gap-1.5 text-[10px] font-bold text-[#1f1f1f]"><Sparkles className="w-3 h-3 text-[#ff4800]" />Ringkasan {act.ai_summary_source === 'gemini' ? 'Gemini' : 'lokal'}</div>
+                    <p className="text-xs text-[#1f1f1f] leading-relaxed whitespace-pre-wrap">{act.ai_summary}</p>
+                  </div>
+                )}
+                {act.location_gps && (
+                  <a
+                    href={`https://maps.google.com/?q=${act.location_gps.latitude},${act.location_gps.longitude}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-[#155e3c] underline underline-offset-2"
+                  >
+                    <MapPin className="w-3 h-3" />
+                    Check-in GPS ({act.location_gps.latitude.toFixed(5)}, {act.location_gps.longitude.toFixed(5)}; ±{act.location_gps.accuracy_m} m)
+                  </a>
+                )}
 
 
                 <div className="text-[10px] text-[#6b665c] flex items-center justify-between pt-1 border-t border-[#1f1f1f]/10">

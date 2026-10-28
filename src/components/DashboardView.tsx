@@ -127,7 +127,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               {formatCurrency(metrics.activeValue)}
             </div>
             <div className="text-[11px] text-[#6b665c] mt-0.5">
-              In Prospect / Negot.
+              Prospect / Meeting / Negotiation
             </div>
           </div>
 
@@ -177,7 +177,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <CheckCircle2 className="w-8 h-8 text-[#ff4800] mx-auto mb-2" />
             <h4 className="text-sm font-bold text-[#1f1f1f] font-serif-heading">All caught up for today</h4>
             <p className="text-xs text-[#6b665c] mt-1 max-w-sm mx-auto">
-              No follow-ups due right now. Next scheduled client touchpoints will trigger automated reminders here.
+              No follow-ups are due right now. Follow-up dates recorded for a lead will appear here when they are due.
             </p>
           </div>
         ) : (

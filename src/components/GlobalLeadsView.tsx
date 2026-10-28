@@ -12,33 +12,55 @@ import {
   DollarSign,
   UserCheck,
   ShieldCheck,
+  Sparkles,
+  LoaderCircle,
+  ExternalLink,
 } from 'lucide-react';
 import { GlobalLead, Lead } from '../types/crm.ts';
 import { formatCurrency, formatNumber } from '../utils/crmCalculations.ts';
+import { getFirebaseAuth } from '../firebase.ts';
+import { normalizeImportedCompanyName } from '../utils/leadImportIdentity.ts';
+import {
+  normalizeLeadFinderSources,
+  parseLeadFinderSuggestions,
+  validateLeadFinderInput,
+  type LeadFinderSource,
+} from '../leadFinderAi.ts';
 
 interface GlobalLeadsViewProps {
   personalLeads: Lead[];
   globalLeads?: GlobalLead[];
-  onImportGlobalLead: (lead: GlobalLead) => void;
+  pendingImportedCompanyNames?: ReadonlySet<string>;
+  aiSearchEnabled?: boolean;
+  onImportGlobalLead: (lead: GlobalLead) => Promise<void>;
   onNavigateToPipeline: () => void;
 }
 
 export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({
   personalLeads,
   globalLeads = [],
+  pendingImportedCompanyNames = new Set(),
+  aiSearchEnabled = false,
   onImportGlobalLead,
   onNavigateToPipeline,
 }) => {
-  // No generated prospect data is used. This view only shows locally stored records.
-  
+
   // Secondary Filters
   const [selectedIndustry, setSelectedIndustry] = useState<string>('all');
   const [dealValueFilter, setDealValueFilter] = useState<'all' | '50m' | '100m'>('all');
-  const [importingId, setImportingId] = useState<string | null>(null);
+  const [importingCompanyNames, setImportingCompanyNames] = useState<Set<string>>(() => new Set());
+  const [importError, setImportError] = useState<string | null>(null);
+  const [industryQuery, setIndustryQuery] = useState('');
+  const [cityQuery, setCityQuery] = useState('');
+  const [customerProfileQuery, setCustomerProfileQuery] = useState('');
+  const [aiResults, setAiResults] = useState<GlobalLead[]>([]);
+  const [aiSources, setAiSources] = useState<LeadFinderSource[]>([]);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
 
   // Names of companies already in personal CRM pipeline
   const personalCompanyNames = new Set(
-    personalLeads.map((l) => l.company_name.toLowerCase().trim())
+    personalLeads.map((l) => normalizeImportedCompanyName(l.company_name))
   );
 
   const handleResetSearch = () => {
@@ -46,7 +68,85 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({
     setDealValueFilter('all');
   };
 
-  const currentDataset = globalLeads;
+  const currentDataset = [...globalLeads, ...aiResults];
+
+  const handleAiSearch = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!aiSearchEnabled || aiLoading) return;
+    const input = {
+      industry: industryQuery,
+      city: cityQuery,
+      ...(customerProfileQuery.trim() ? { customerProfile: customerProfileQuery } : {}),
+    };
+    const validation = validateLeadFinderInput(input);
+    if (!validation.ok) {
+      setAiError(validation.error);
+      return;
+    }
+
+    const user = getFirebaseAuth().currentUser;
+    if (!user) {
+      setAiError('Sesi login tidak tersedia. Masuk kembali lalu coba lagi.');
+      return;
+    }
+
+    setAiLoading(true);
+    setAiError(null);
+    try {
+      const idToken = await user.getIdToken();
+      const response = await fetch('/api/ai/lead-finder', {
+        method: 'POST',
+        credentials: 'same-origin',
+        cache: 'no-store',
+        referrerPolicy: 'no-referrer',
+        headers: {
+          authorization: `Bearer ${idToken}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(validation.value),
+      });
+      let payload: unknown;
+      try {
+        payload = await response.json();
+      } catch {
+        payload = undefined;
+      }
+      const data = payload && typeof payload === 'object' && !Array.isArray(payload)
+        ? payload as Record<string, unknown>
+        : {};
+      if (!response.ok) {
+        if (response.status === 429) throw new Error('Batas lima permintaan AI gabungan hari ini sudah tercapai. Coba lagi besok.');
+        if (response.status === 401 || response.status === 403) throw new Error('Sesi PIN akun perlu diverifikasi kembali. Masuk ulang lalu coba lagi.');
+        if (response.status === 404) throw new Error('Pencarian AI belum diaktifkan pada server ini.');
+        throw new Error(typeof data.error === 'string' ? data.error : 'Pencarian AI sementara tidak tersedia.');
+      }
+
+      const suggestions = parseLeadFinderSuggestions(JSON.stringify({ leads: data.leads }));
+      const sources = normalizeLeadFinderSources(data.sources);
+      if (suggestions.length === 0 || sources.length === 0) {
+        throw new Error('Gemini tidak mengembalikan saran dengan sumber web yang dapat diperiksa.');
+      }
+      setAiResults(suggestions.map((suggestion, index) => ({
+        id: `ai-${index}-${suggestion.company_name.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40)}`,
+        company_name: suggestion.company_name,
+        contact_person: '',
+        phone: '',
+        industry: suggestion.industry,
+        city: suggestion.city,
+        estimated_value: undefined,
+        ai_match_score: suggestion.fit_score,
+        is_ai_enriched: true,
+        insights: suggestion.reason,
+      })));
+      setAiSources(sources);
+      setSelectedIndustry('all');
+      setDealValueFilter('all');
+    } catch (error) {
+      setAiError(error instanceof Error ? error.message : 'Pencarian AI sementara tidak tersedia.');
+    } finally {
+      setAiLoading(false);
+    }
+  };
 
   // Extract unique industries for filter dropdown
   const industries = [
@@ -69,12 +169,21 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({
   });
 
   const handleImport = async (lead: GlobalLead) => {
-    const targetId = lead.id || lead.company_name;
-    setImportingId(targetId);
-    await onImportGlobalLead(lead);
-    setTimeout(() => {
-      setImportingId(null);
-    }, 600);
+    const companyKey = normalizeImportedCompanyName(lead.company_name);
+    if (personalCompanyNames.has(companyKey) || pendingImportedCompanyNames.has(companyKey) || importingCompanyNames.has(companyKey)) return;
+    setImportError(null);
+    setImportingCompanyNames((current) => new Set(current).add(companyKey));
+    try {
+      await onImportGlobalLead(lead);
+    } catch {
+      setImportError(`"${lead.company_name}" belum berhasil diimpor. Anda dapat mencoba lagi.`);
+    } finally {
+      setImportingCompanyNames((current) => {
+        const next = new Set(current);
+        next.delete(companyKey);
+        return next;
+      });
+    }
   };
 
   return (
@@ -87,11 +196,11 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({
               <Search className="w-4 h-4 text-[#ff4800]" />
             </span>
             <h2 className="text-xl font-bold text-[#1f1f1f] tracking-tight font-serif-heading">
-              Direktori Prospek
+              AI Lead Finder
             </h2>
           </div>
           <p className="text-xs text-[#6b665c] mt-0.5">
-            Prospek yang tersimpan lokal. Tidak ada pencarian eksternal atau verifikasi otomatis yang aktif.
+            Temukan kandidat perusahaan dari web publik; AI tidak mengirim data CRM Anda.
           </p>
         </div>
 
@@ -105,16 +214,46 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({
       </div>
 
       <div role="status" className="bg-[#fff5f0] border border-[#ff4800]/60 rounded-[12px] p-4 space-y-1">
-        <p className="text-xs font-bold text-[#1f1f1f]">Pencarian prospek eksternal dinonaktifkan</p>
+        <p className="text-xs font-bold text-[#1f1f1f]">Saran AI bukan data kontak terverifikasi</p>
         <p className="text-[11px] text-[#6b665c]">
-          Data katalog dan kontak sintetis telah dihapus. Daftar di bawah hanya menampilkan record yang sudah tersimpan di browser; sumber dan kebenarannya belum diverifikasi.
+          Batas lima permintaan AI per hari dipakai bersama Lead Finder dan ringkasan rapat. Gemini menerima hanya kategori, kota, dan profil bisnis yang Anda isi—bukan daftar Lead, catatan Activity, email, atau nomor telepon.
         </p>
       </div>
+
+      <section className="rounded-[16px] border border-[#1f1f1f] bg-[#f8f5ee] p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <Sparkles className="w-4 h-4 text-[#ff4800]" />
+          <h3 className="text-sm font-bold text-[#1f1f1f]">Cari perusahaan prospek</h3>
+        </div>
+        <form onSubmit={(event) => void handleAiSearch(event)} className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          <label className="text-[11px] font-semibold text-[#6b665c] space-y-1">
+            <span>Kategori usaha</span>
+            <input value={industryQuery} onChange={(event) => setIndustryQuery(event.target.value)} maxLength={120} placeholder="Contoh: kontraktor gedung" disabled={!aiSearchEnabled || aiLoading} className="w-full rounded-[8px] border border-[#1f1f1f] bg-[#fcfcfa] px-3 py-2 text-xs text-[#1f1f1f] disabled:opacity-60" />
+          </label>
+          <label className="text-[11px] font-semibold text-[#6b665c] space-y-1">
+            <span>Kota / area</span>
+            <input value={cityQuery} onChange={(event) => setCityQuery(event.target.value)} maxLength={120} placeholder="Contoh: Bandung" disabled={!aiSearchEnabled || aiLoading} className="w-full rounded-[8px] border border-[#1f1f1f] bg-[#fcfcfa] px-3 py-2 text-xs text-[#1f1f1f] disabled:opacity-60" />
+          </label>
+          <label className="text-[11px] font-semibold text-[#6b665c] space-y-1 sm:col-span-2">
+            <span>Profil bisnis yang cocok (opsional)</span>
+            <input value={customerProfileQuery} onChange={(event) => setCustomerProfileQuery(event.target.value)} maxLength={240} placeholder="Contoh: perusahaan menengah dengan proyek komersial" disabled={!aiSearchEnabled || aiLoading} className="w-full rounded-[8px] border border-[#1f1f1f] bg-[#fcfcfa] px-3 py-2 text-xs text-[#1f1f1f] disabled:opacity-60" />
+          </label>
+          <div className="sm:col-span-2 flex flex-col sm:flex-row sm:items-center gap-2">
+            <button type="submit" disabled={!aiSearchEnabled || aiLoading || !industryQuery.trim() || !cityQuery.trim()} className="inline-flex items-center justify-center gap-2 rounded-[8px] border border-[#1f1f1f] bg-[#ff4800] px-4 py-2 text-xs font-bold text-white hover:bg-[#e03f00] disabled:cursor-not-allowed disabled:opacity-50">
+              {aiLoading ? <LoaderCircle className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+              {aiLoading ? 'Mencari di web…' : 'Cari dengan Gemini'}
+            </button>
+            {!aiSearchEnabled && <span className="text-[11px] text-[#9b2c2c]">AI belum diaktifkan pada deployment ini.</span>}
+          </div>
+        </form>
+        {aiError && <p role="alert" className="text-xs text-[#9b2c2c]">{aiError}</p>}
+        {importError && <p role="alert" className="text-xs text-[#9b2c2c]">{importError}</p>}
+      </section>
 
       {/* Source Selector & Secondary Filters Row */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 pt-1">
         <div className="text-xs font-semibold text-[#1f1f1f] bg-[#f8f5ee] border border-[#1f1f1f] px-3 py-2 rounded-[8px] self-start">
-          Record lokal: {formatNumber(globalLeads.length)}
+          Saran AI: {formatNumber(aiResults.length)} · Record lain: {formatNumber(globalLeads.length)}
         </div>
 
         {/* Secondary Filters: Industry & Deal Value */}
@@ -168,10 +307,10 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({
       {/* Locally stored lead records */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
         {displayedLeads.map((lead) => {
-          const isAlreadyInPipeline = personalCompanyNames.has(
-            lead.company_name.toLowerCase().trim()
-          );
-          const isCurrentlyImporting = importingId === (lead.id || lead.company_name);
+          const companyKey = normalizeImportedCompanyName(lead.company_name);
+          const isAlreadyInPipeline = personalCompanyNames.has(companyKey) || lead.alreadyImported === true;
+          const isWaitingForFirestore = pendingImportedCompanyNames.has(companyKey);
+          const isCurrentlyImporting = importingCompanyNames.has(companyKey);
           const initials =
             lead.company_initials ||
             lead.company_name
@@ -218,9 +357,16 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({
                     </div>
                   </div>
 
-                  <span className="text-[10px] font-semibold bg-[#fcfcfa] border border-[#1f1f1f] px-2 py-0.5 rounded-[4px] shrink-0">
-                    Record lokal
-                  </span>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {lead.is_ai_enriched && typeof lead.ai_match_score === 'number' && (
+                      <span aria-label={`Skor kecocokan AI: ${Math.round(lead.ai_match_score)} dari 100`} className="text-[10px] font-bold text-[#155e3c] bg-[#edf7f1] border border-[#155e3c]/40 px-2 py-0.5 rounded-[4px]">
+                        Skor {formatNumber(lead.ai_match_score)} / 100
+                      </span>
+                    )}
+                    <span className="text-[10px] font-semibold bg-[#fcfcfa] border border-[#1f1f1f] px-2 py-0.5 rounded-[4px]">
+                      {lead.is_ai_enriched ? 'Saran AI' : 'Record lokal'}
+                    </span>
+                  </div>
                 </div>
 
                 {/* Contact fields; source is not independently verified. */}
@@ -229,7 +375,7 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({
                     <div className="flex items-center gap-1.5">
                       <UserCheck className="w-3.5 h-3.5 text-[#ff4800]" />
                       <span className="text-xs font-bold text-[#1f1f1f]">
-                        {lead.contact_person}
+                        {lead.contact_person || 'Kontak belum ditemukan'}
                       </span>
                     </div>
                     {lead.decision_maker_title && (
@@ -241,10 +387,12 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({
 
                   {/* Contact details */}
                   <div className="flex items-center gap-3 text-[11px] text-[#1f1f1f] flex-wrap pt-0.5 border-t border-[#1f1f1f]/10">
-                    <div className="flex items-center gap-1">
-                      <Phone className="w-3 h-3 text-[#155e3c]" />
-                      <span className="font-mono">{lead.phone}</span>
-                    </div>
+                    {lead.phone ? (
+                      <div className="flex items-center gap-1">
+                        <Phone className="w-3 h-3 text-[#155e3c]" />
+                        <span className="font-mono">{lead.phone}</span>
+                      </div>
+                    ) : <span className="text-[#6b665c]">Nomor telepon tidak dicantumkan</span>}
 
                     {lead.email && (
                       <div className="flex items-center gap-1">
@@ -296,20 +444,20 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({
               {/* Action Button: 8px radius with Sprout Orange */}
               <div className="pt-3 mt-3 border-t border-[#1f1f1f]/10 flex items-center justify-between">
                 <span className="text-[11px] text-[#6b665c] font-medium">
-                  {isAlreadyInPipeline ? 'Tersimpan di CRM Sales' : 'Siap dikonversi ke pipeline'}
+                  {isAlreadyInPipeline ? 'Tersimpan di CRM Sales' : isWaitingForFirestore ? 'Menunggu konfirmasi Firestore' : 'Siap dikonversi ke pipeline'}
                 </span>
 
-                {isAlreadyInPipeline ? (
+                {isAlreadyInPipeline || isWaitingForFirestore ? (
                   <button
                     disabled
                     className="flex items-center gap-1.5 bg-[#fcfcfa] border border-[#1f1f1f] text-[#1f1f1f] text-xs font-bold px-3 py-1.5 rounded-[8px] cursor-default opacity-90"
                   >
                     <CheckCircle2 className="w-3.5 h-3.5 text-[#ff4800]" />
-                    <span>In Pipeline</span>
+                    <span>{isAlreadyInPipeline ? 'In Pipeline' : 'Menunggu Firestore'}</span>
                   </button>
                 ) : (
                   <button
-                    onClick={() => handleImport(lead)}
+                    onClick={() => { void handleImport(lead); }}
                     disabled={isCurrentlyImporting}
                     className="flex items-center gap-1.5 bg-[#ff4800] hover:bg-[#e03f00] text-white text-xs font-bold px-4 py-2 rounded-[8px] border border-[#1f1f1f] transition-all active:scale-95 disabled:opacity-50"
                   >
@@ -323,6 +471,22 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({
         })}
       </div>
 
+      {aiSources.length > 0 && (
+        <section className="rounded-[12px] border border-[#1f1f1f]/30 bg-[#fcfcfa] p-4 space-y-2">
+          <h3 className="text-xs font-bold text-[#1f1f1f]">Sumber web dari Gemini</h3>
+          <ul className="space-y-1.5">
+            {aiSources.map((source) => (
+              <li key={source.url}>
+                <a href={source.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 break-all text-[11px] text-[#155e3c] underline underline-offset-2">
+                  {source.title}<ExternalLink className="h-3 w-3 shrink-0" />
+                </a>
+              </li>
+            ))}
+          </ul>
+          <p className="text-[10px] text-[#6b665c]">Periksa sumber sebelum menghubungi atau menyimpan perusahaan. Gemini tidak menyediakan kontak pribadi pada hasil ini.</p>
+        </section>
+      )}
+
       {/* Empty State */}
       {displayedLeads.length === 0 && (
         <div className="border border-[#1f1f1f] rounded-[16px] bg-[#f8f5ee] p-8 text-center space-y-3">
@@ -330,9 +494,9 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({
             <Search className="w-5 h-5" />
           </div>
           <div>
-            <h4 className="font-bold text-sm text-[#1f1f1f]">Belum ada record prospek lokal</h4>
+            <h4 className="font-bold text-sm text-[#1f1f1f]">Belum ada hasil prospek</h4>
             <p className="text-xs text-[#6b665c] max-w-sm mx-auto mt-1">
-              Pencarian eksternal dinonaktifkan sampai ada sumber prospek nyata dengan provenance yang dapat diperiksa.
+              Isi kategori usaha dan kota di atas. Kandidat AI hanya tampil jika ada sumber web untuk diperiksa.
             </p>
           </div>
           <button

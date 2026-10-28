@@ -18,31 +18,35 @@ import { WhatsAppModal } from './components/WhatsAppModal.tsx';
 import { SecurityLockScreen } from './components/SecurityLockScreen.tsx';
 import { SecuritySettingsModal } from './components/SecuritySettingsModal.tsx';
 import { AndroidFrame } from './components/AndroidFrame.tsx';
-import { Lead, Activity, GlobalLead, PipelineStage } from './types/crm.ts';
+import { Lead, Activity, GlobalLead, PipelineStage, ActivityGpsLocation, ActivitySummarySource } from './types/crm.ts';
 import { filterFollowUps, formatNumber } from './utils/crmCalculations.ts';
 import { downloadLeadsCsv } from './utils/exportCsv.ts';
 import { SecurityVault } from './utils/securityLock.ts';
 import { CheckCircle2 } from 'lucide-react';
-import { getFirebaseAuth } from './firebase.ts';
+import { firebaseTarget, getFirebaseAuth, workspaceId } from './firebase.ts';
+import { shouldUseLocalSecurityVault } from './localSecurityPolicy.ts';
 import { createActivity, createLead, subscribeToActivities, subscribeToLeads, updateLeadStage } from './firebaseRepository.ts';
-import { firestoreWriteQueue, type SyncQueueSnapshot } from './utils/syncQueue.ts';
-import type { DurableMutation } from './utils/offlineOutbox.ts';
+import { createImportedLeadDocumentId, normalizeImportedCompanyName } from './utils/leadImportIdentity.ts';
+import { OptimisticLeadStageOverlay, type LeadSnapshotState } from './utils/optimisticLeadStages.ts';
+import { firestoreWriteQueue, type SyncQueueSnapshot } from './utils/offlineWriteQueue.ts';
 import { createAppHistoryState, getClosedModalNames, readAppHistoryState, type AppHistoryState, type AppModalName } from './utils/appHistory.ts';
 
 const APP_TABS: readonly NavTab[] = ['dashboard', 'pipeline', 'leads_finder', 'activities', 'android_code'];
 
 export default function App() {
+  const useLocalSecurityVault = shouldUseLocalSecurityVault(firebaseTarget);
   const [currentTab, setCurrentTab] = useState<NavTab>('dashboard');
   const [leads, setLeads] = useState<Lead[]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [globalLeads, setGlobalLeads] = useState<GlobalLead[]>([]);
+  const [pendingGlobalLeadNames, setPendingGlobalLeadNames] = useState<Set<string>>(() => new Set());
   const [syncQueueSnapshot, setSyncQueueSnapshot] = useState<SyncQueueSnapshot>(() => firestoreWriteQueue.getSnapshot());
   const [isOnline, setIsOnline] = useState<boolean>(() => typeof navigator === 'undefined' || navigator.onLine);
   const [isSimulatedOffline] = useState<boolean>(false);
   const [isPhoneFrame, setIsPhoneFrame] = useState<boolean>(false);
 
   // Security Vault & Lock State
-  const [isAppLocked, setIsAppLocked] = useState<boolean>(() => SecurityVault.isCurrentlyLocked());
+  const [isAppLocked, setIsAppLocked] = useState<boolean>(() => useLocalSecurityVault && SecurityVault.isCurrentlyLocked());
   const [isSecuritySettingsOpen, setIsSecuritySettingsOpen] = useState(false);
 
   // Modals
@@ -67,6 +71,10 @@ export default function App() {
   currentTabRef.current = currentTab;
   const historyEntryRef = useRef<AppHistoryState<NavTab> | null>(null);
   const modalBackPendingRef = useRef(false);
+  const stageOverlayRef = useRef(new OptimisticLeadStageOverlay());
+  const latestFirestoreLeadsRef = useRef<Lead[]>([]);
+  const latestFirestoreSnapshotStateRef = useRef<LeadSnapshotState>({ fromCache: true, pendingWriteIds: new Set() });
+  const importedGlobalLeadNamesRef = useRef(new Set<string>());
 
   // Track double tap back to exit on root dashboard
   const lastBackPressTimeRef = useRef<number>(0);
@@ -187,7 +195,7 @@ export default function App() {
 
     // Auto-lock when resumed from background if timeout expired
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
+      if (useLocalSecurityVault && document.visibilityState === 'visible') {
         if (SecurityVault.isCurrentlyLocked()) {
           setIsAppLocked(true);
         }
@@ -199,7 +207,7 @@ export default function App() {
       window.removeEventListener('popstate', handlePopState);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [showToast]);
+  }, [showToast, useLocalSecurityVault]);
 
   // Firebase is the sole source of truth for authenticated CRM records. No
   // localStorage hydration or automatic migration is performed here.
@@ -208,7 +216,16 @@ export default function App() {
     if (!user) return;
     setGlobalLeads([]);
     const onError = (error: Error) => showToast(`Firebase gagal memuat data: ${error.message}`);
-    const stopLeads = subscribeToLeads(user.uid, setLeads, onError);
+    const stopLeads = subscribeToLeads(user.uid, (snapshotLeads, snapshotState) => {
+      latestFirestoreLeadsRef.current = snapshotLeads;
+      latestFirestoreSnapshotStateRef.current = snapshotState;
+      setLeads(stageOverlayRef.current.reconcile(snapshotLeads, snapshotState));
+      const confirmedNames = new Set(snapshotLeads.map((lead) => normalizeImportedCompanyName(lead.company_name)));
+      setPendingGlobalLeadNames((current) => {
+        const next = new Set([...current].filter((name) => !confirmedNames.has(name)));
+        return next.size === current.size ? current : next;
+      });
+    }, onError);
     const stopActivities = subscribeToActivities(user.uid, setActivities, onError);
     return () => { stopLeads(); stopActivities(); };
   }, [showToast]);
@@ -249,10 +266,26 @@ export default function App() {
   };
 
   const handleSyncNow = async () => {
-    const retryCount = firestoreWriteQueue.retryFailed();
     if (!isOnline) {
-      showToast('Offline — Firestore akan melanjutkan operasi tertunda saat koneksi pulih.');
-    } else if (retryCount > 0) {
+      showToast('Offline — mutasi tertunda tetap tersimpan dan tidak dikirim. Sambungkan kembali untuk memilih sinkronisasi manual.');
+      return;
+    }
+    if (syncQueueSnapshot.manualReplayCount > 0) {
+      const expectedCount = syncQueueSnapshot.manualReplayCount;
+      const confirmed = window.confirm(
+        `Sinkronkan ${formatNumber(expectedCount)} mutasi tertunda dari sesi sebelumnya sekarang? Mutasi akan dikirim ke Firestore; isi prospek dan aktivitas tidak ditampilkan.`,
+      );
+      if (!confirmed) return;
+      const startedCount = firestoreWriteQueue.startManualReplay();
+      if (startedCount > 0) {
+        showToast(`Sinkronisasi manual dimulai untuk ${formatNumber(startedCount)} mutasi tertunda.`);
+      } else {
+        showToast('Antrean berubah sebelum sinkronisasi dimulai; tidak ada mutasi yang dikirim.');
+      }
+      return;
+    }
+    const retryCount = firestoreWriteQueue.retryFailed();
+    if (retryCount > 0) {
       showToast(`Mencoba ulang ${formatNumber(retryCount)} operasi yang gagal.`);
     } else if (syncQueueSnapshot.pendingCount + syncQueueSnapshot.syncingCount > 0) {
       showToast('Firestore sedang memproses operasi antrean; lihat status di bar atas.');
@@ -265,31 +298,54 @@ export default function App() {
     void firestoreWriteQueue.retry(id).catch(() => undefined);
   };
 
-  const handleCorrectSyncOperation = async (id: string, mutation: DurableMutation) => {
-    await firestoreWriteQueue.correctFailedOperation(id, mutation);
-    showToast('Koreksi tersimpan di antrean lokal dengan ID yang sama; menunggu pengakuan Firestore.');
-  };
-
   // Add Lead
   const handleAddLead = async (leadData: Omit<Lead, 'id' | '_syncStatus' | 'created_at' | 'updated_at'>) => {
     await createLead(getFirebaseAuth().currentUser!.uid, leadData);
-    showToast(`Lead "${leadData.company_name}" tersimpan di antrean lokal; menunggu pengakuan Firestore.`);
+    showToast(`Lead "${leadData.company_name}" menunggu konfirmasi Firestore.`);
   };
 
-  // Update Lead Stage (with automatic archive logging for Closing Won)
+  // Update the UI immediately; only revert this operation if its own Firestore write fails.
   const handleUpdateLeadStage = (
     leadId: string,
     newStage: PipelineStage,
     nextFollowupDate?: string
   ) => {
-    void updateLeadStage(getFirebaseAuth().currentUser!.uid, leadId, newStage, nextFollowupDate).then(() => {
-      setSelectedLead((prev) => (prev?.id === leadId ? {
-        ...prev,
-        pipeline_stage: newStage,
-        ...(nextFollowupDate !== undefined ? { next_followup_date: nextFollowupDate } : {}),
-      } : prev));
-      showToast('Perubahan stage masuk antrean lokal; belum diakui Firestore.');
-    }).catch((error: Error) => showToast(`Stage gagal diubah: ${error.message}`));
+    const previousLead = leads.find((lead) => lead.id === leadId);
+    const ownerId = getFirebaseAuth().currentUser?.uid;
+    if (!previousLead || !ownerId) {
+      showToast('Stage tidak dapat diubah karena lead atau sesi owner tidak tersedia.');
+      return;
+    }
+    const token = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    stageOverlayRef.current.apply(leadId, token, newStage, nextFollowupDate);
+    const optimisticFields = {
+      pipeline_stage: newStage,
+      ...(nextFollowupDate !== undefined ? { next_followup_date: nextFollowupDate } : {}),
+      _syncStatus: 'pending_update' as const,
+    };
+    setLeads((current) => current.map((lead) => lead.id === leadId ? stageOverlayRef.current.overlayLead({ ...lead, ...optimisticFields }) : lead));
+    setSelectedLead((current) => current?.id === leadId ? stageOverlayRef.current.overlayLead({ ...current, ...optimisticFields }) : current);
+
+    void (async () => {
+      try {
+        const receipt = await updateLeadStage(ownerId, leadId, newStage, nextFollowupDate);
+        showToast(newStage === 'Closing Won'
+          ? 'Closing Won dan arsip transaksi menunggu konfirmasi Firestore.'
+          : 'Perubahan stage menunggu konfirmasi Firestore.');
+        await receipt.acknowledged;
+        stageOverlayRef.current.acknowledge(leadId, token);
+        setLeads(stageOverlayRef.current.reconcile(latestFirestoreLeadsRef.current, latestFirestoreSnapshotStateRef.current));
+      } catch (error) {
+        stageOverlayRef.current.rollback(leadId, token);
+        const restoredLeads = stageOverlayRef.current.reconcile(latestFirestoreLeadsRef.current, latestFirestoreSnapshotStateRef.current);
+        setLeads(restoredLeads);
+        setSelectedLead((current) => current?.id === leadId
+          ? restoredLeads.find((lead) => lead.id === leadId) ?? current
+          : current);
+        const message = error instanceof Error ? error.message : 'Firestore menolak perubahan.';
+        showToast(`Stage gagal diubah: ${message}`);
+      }
+    })();
   };
 
   // Add Activity / Check-In
@@ -297,10 +353,13 @@ export default function App() {
     lead_id: string;
     activity_type: string;
     notes: string;
+    ai_summary?: string;
+    ai_summary_source?: ActivitySummarySource;
+    location_gps?: ActivityGpsLocation;
   }) => {
     try {
       await createActivity(getFirebaseAuth().currentUser!.uid, activityData);
-      showToast('Aktivitas tersimpan di antrean lokal; belum diakui Firestore.');
+      showToast('Aktivitas menunggu konfirmasi Firestore.');
     } catch (error) {
       showToast(`Aktivitas gagal disimpan: ${(error as Error).message}`);
       throw error;
@@ -309,10 +368,20 @@ export default function App() {
 
   // Import Global Lead
   const handleImportGlobalLead = async (globalLead: GlobalLead) => {
+    const ownerId = getFirebaseAuth().currentUser?.uid;
+    const companyKey = normalizeImportedCompanyName(globalLead.company_name);
+    if (!ownerId) throw new Error('Sesi owner tidak tersedia.');
+    if (leads.some((lead) => normalizeImportedCompanyName(lead.company_name) === companyKey)
+      || importedGlobalLeadNamesRef.current.has(companyKey)) {
+      showToast(`"${globalLead.company_name}" sudah ada di CRM atau sedang diimpor.`);
+      return;
+    }
+    importedGlobalLeadNamesRef.current.add(companyKey);
     try {
-      await createLead(getFirebaseAuth().currentUser!.uid, {
+      const documentId = await createImportedLeadDocumentId(ownerId, workspaceId, globalLead.company_name);
+      const receipt = await createLead(ownerId, {
         company_name: globalLead.company_name,
-        contact_person: globalLead.contact_person,
+        contact_person: globalLead.contact_person.trim() || 'Belum ditemukan',
         phone: globalLead.phone,
         industry: globalLead.industry,
         city: globalLead.city,
@@ -320,10 +389,21 @@ export default function App() {
         deal_value: Number(globalLead.estimated_value) || 0,
         next_followup_date: '',
         lead_score: 'Unrated',
+      }, { documentId });
+      setPendingGlobalLeadNames((current) => new Set(current).add(companyKey));
+      void receipt.acknowledged.catch(() => {
+        importedGlobalLeadNamesRef.current.delete(companyKey);
+        setPendingGlobalLeadNames((current) => {
+          const next = new Set(current);
+          next.delete(companyKey);
+          return next;
+        });
       });
-      showToast(`"${globalLead.company_name}" tersimpan di antrean lokal; menunggu pengakuan Firestore.`);
+      showToast(`"${globalLead.company_name}" menunggu konfirmasi Firestore.`);
     } catch (error) {
+      importedGlobalLeadNamesRef.current.delete(companyKey);
       showToast(`Lead gagal diimpor: ${(error as Error).message}`);
+      throw error;
     }
   };
 
@@ -372,20 +452,19 @@ export default function App() {
           pendingCount={pendingCount}
           failedCount={syncQueueSnapshot.failedCount}
           acknowledgedCount={syncQueueSnapshot.acknowledgedCount}
+          manualReplayCount={syncQueueSnapshot.manualReplayCount}
           isSyncing={isSyncing}
           onSyncNow={handleSyncNow}
           syncOperations={syncQueueSnapshot.operations}
           onRetrySyncOperation={handleRetrySyncOperation}
-          onLoadFailedMutation={(id) => firestoreWriteQueue.getFailedMutation(id)}
-          onCorrectFailedMutation={handleCorrectSyncOperation}
           isPhoneFrame={isPhoneFrame}
           onTogglePhoneFrame={() => setIsPhoneFrame(!isPhoneFrame)}
           isAndroidCodeActive={currentTab === 'android_code'}
           onToggleAndroidCode={() =>
             changeTabWithHistory(currentTab === 'android_code' ? 'dashboard' : 'android_code')
           }
-          onOpenSecurity={() => openModalWithHistory(() => setIsSecuritySettingsOpen(true), 'securitySettings')}
-          isSecurityActive={SecurityVault.isSecurityEnabled()}
+          onOpenSecurity={useLocalSecurityVault ? () => openModalWithHistory(() => setIsSecuritySettingsOpen(true), 'securitySettings') : undefined}
+          isSecurityActive={useLocalSecurityVault && SecurityVault.isSecurityEnabled()}
           onExportCsv={handleExportCsv}
         />
 
@@ -429,6 +508,8 @@ export default function App() {
             <GlobalLeadsView
               personalLeads={leads}
               globalLeads={globalLeads}
+              pendingImportedCompanyNames={pendingGlobalLeadNames}
+              aiSearchEnabled={import.meta.env.VITE_AI_LEAD_FINDER_ENABLED === 'true'}
               onImportGlobalLead={handleImportGlobalLead}
               onNavigateToPipeline={() => changeTabWithHistory('pipeline')}
             />
@@ -481,6 +562,7 @@ export default function App() {
           }
           leads={leads}
           initialLead={activityLead}
+          aiSummarizerEnabled={import.meta.env.VITE_AI_MEETING_SUMMARIZER_ENABLED === 'true'}
           onSaveActivity={handleSaveActivity}
         />
 
@@ -506,18 +588,20 @@ export default function App() {
           lead={whatsAppLead}
         />
 
-        <SecuritySettingsModal
-          isOpen={isSecuritySettingsOpen}
-          onClose={() => closeModalWithHistory('securitySettings', () => setIsSecuritySettingsOpen(false))}
-          onLockNow={() => {
-            closeModalWithHistory('securitySettings', () => setIsSecuritySettingsOpen(false));
-            SecurityVault.lockNow();
-            setIsAppLocked(true);
-          }}
-        />
+        {useLocalSecurityVault && (
+          <SecuritySettingsModal
+            isOpen={isSecuritySettingsOpen}
+            onClose={() => closeModalWithHistory('securitySettings', () => setIsSecuritySettingsOpen(false))}
+            onLockNow={() => {
+              closeModalWithHistory('securitySettings', () => setIsSecuritySettingsOpen(false));
+              SecurityVault.lockNow();
+              setIsAppLocked(true);
+            }}
+          />
+        )}
 
         {/* Local Security Shield Fullscreen Lock Overlay */}
-        {isAppLocked && (
+        {useLocalSecurityVault && isAppLocked && (
           <SecurityLockScreen
             onUnlocked={() => {
               SecurityVault.recordUnlock();

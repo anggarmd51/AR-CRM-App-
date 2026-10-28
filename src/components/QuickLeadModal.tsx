@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { X, Plus, Calendar, Flame, Check } from 'lucide-react';
 import { Lead, PipelineStage, LeadScore, PIPELINE_STAGES } from '../types/crm.ts';
 
@@ -25,6 +25,20 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (isOpen) return;
+    setCompanyName('');
+    setContactPerson('');
+    setPhone('');
+    setIndustry('');
+    setCity('');
+    setPipelineStage('Prospect');
+    setDealValue(0);
+    setNextFollowupDate('');
+    setLeadScore('Unrated');
+    setSubmitError(null);
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -46,8 +60,10 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
         lead_score: leadScore,
       });
       onClose();
-    } catch {
-      setSubmitError('Lead gagal disimpan ke Firestore. Periksa koneksi atau izin, lalu coba lagi.');
+    } catch (error) {
+      setSubmitError(error instanceof Error
+        ? error.message
+        : 'Lead gagal disimpan. Periksa koneksi lalu coba lagi.');
     } finally {
       setIsSubmitting(false);
     }

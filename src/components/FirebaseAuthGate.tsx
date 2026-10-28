@@ -1,12 +1,47 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
-import { firebaseIsConfigured, getFirebaseAuth, getFirebaseStartupErrorMessage, getGoogleProvider, hasWorkspaceConfiguration, isDesignatedOwner, verifyFirebaseStartup } from '../firebase.ts';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import {
+  onIdTokenChanged,
+  reauthenticateWithPopup,
+  signInWithCustomToken,
+  signInWithPopup,
+  signOut,
+  type User,
+} from 'firebase/auth';
+import {
+  firebaseIsConfigured,
+  firebaseTarget,
+  getFirebaseAuth,
+  getFirebaseStartupErrorMessage,
+  getGoogleProvider,
+  hasWorkspaceConfiguration,
+  isDesignatedOwner,
+  verifyFirebaseStartup,
+} from '../firebase.ts';
 import { activateFirestoreWriteQueue, deactivateFirestoreWriteQueue } from '../firebaseRepository.ts';
-import { firestoreWriteQueue } from '../utils/syncQueue.ts';
+import { firestoreWriteQueue } from '../utils/offlineWriteQueue.ts';
 import { isOwnerBootstrapEnabled } from '../utils/ownerBootstrap.ts';
+import { requiresServerIssuedPinSession } from '../accountPinPolicy.ts';
+import { createAccountPinClient, type AccountPinClientStatus } from '../accountPinClient.ts';
+import { AccountPinGate } from './AccountPinGate.tsx';
+
+const accountPinClient = createAccountPinClient({
+  fetch: (...args) => fetch(...args),
+  getAuth: getFirebaseAuth,
+  getGoogleProvider,
+  reauthenticate: reauthenticateWithPopup,
+  signInWithCustomToken,
+});
 
 interface FirebaseAuthGateProps {
   children: ReactNode;
+}
+
+type AccountPinGateState = 'checking' | 'verified' | 'pin-required' | 'enrollment-available' | 'enrollment-blocked' | 'unavailable';
+
+function nextGateState(status: AccountPinClientStatus): AccountPinGateState {
+  if (status.sessionActive) return 'verified';
+  if (status.credentialRegistered) return 'pin-required';
+  return status.enrollmentEnabled ? 'enrollment-available' : 'enrollment-blocked';
 }
 
 export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
@@ -14,6 +49,12 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [startupError, setStartupError] = useState<string | null>(null);
+  const [accountPinGateState, setAccountPinGateState] = useState<AccountPinGateState>('checking');
+  const [accountPinStatus, setAccountPinStatus] = useState<AccountPinClientStatus | undefined>();
+  const [sessionExpiresAt, setSessionExpiresAt] = useState<string | undefined>();
+  const [sessionRevalidating, setSessionRevalidating] = useState(false);
+  const [sessionCheckTrigger, setSessionCheckTrigger] = useState(0);
+  const [pinRefreshTrigger, setPinRefreshTrigger] = useState(0);
 
   useEffect(() => {
     if (!firebaseIsConfigured) {
@@ -23,36 +64,78 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
     let active = true;
     let generation = 0;
     let unsubscribe: (() => void) | undefined;
+    const serverPinRequired = requiresServerIssuedPinSession(firebaseTarget);
 
     const start = async () => {
       try {
         await verifyFirebaseStartup();
         if (!active) return;
-        unsubscribe = onAuthStateChanged(getFirebaseAuth(), (nextUser) => {
+        unsubscribe = onIdTokenChanged(getFirebaseAuth(), (nextUser) => {
           const eventGeneration = ++generation;
           setReady(false);
           setStartupError(null);
+          setAccountPinStatus(undefined);
+          setSessionExpiresAt(undefined);
+          setSessionRevalidating(false);
+          if (serverPinRequired) {
+            setAccountPinGateState('checking');
+            deactivateFirestoreWriteQueue();
+          }
+
           void (async () => {
-            try {
-              if (nextUser && isDesignatedOwner(nextUser.uid) && hasWorkspaceConfiguration()) {
-                await activateFirestoreWriteQueue(nextUser.uid);
+            if (nextUser && isDesignatedOwner(nextUser.uid) && hasWorkspaceConfiguration()) {
+              if (serverPinRequired) {
+                try {
+                  const status = await accountPinClient.fetchStatus(nextUser);
+                  if (!active || eventGeneration !== generation) return;
+                  setAccountPinStatus(status);
+                  if (status.sessionActive) {
+                    try {
+                      await activateFirestoreWriteQueue(nextUser.uid);
+                    } catch {
+                      deactivateFirestoreWriteQueue();
+                      if (!active || eventGeneration !== generation) return;
+                      setUser(nextUser);
+                      setStartupError('Antrean lokal tertunda tidak dapat dipulihkan dengan aman. Operasi tidak dikirim dan akses CRM ditahan; jangan hapus data situs sebelum antrean diperiksa.');
+                      setReady(true);
+                      return;
+                    }
+                    setSessionExpiresAt(status.sessionExpiresAt);
+                    setAccountPinGateState('verified');
+                  } else {
+                    deactivateFirestoreWriteQueue();
+                    setAccountPinGateState(nextGateState(status));
+                  }
+                } catch {
+                  deactivateFirestoreWriteQueue();
+                  if (!active || eventGeneration !== generation) return;
+                  setAccountPinGateState('unavailable');
+                }
               } else {
-                deactivateFirestoreWriteQueue();
+                try {
+                  await activateFirestoreWriteQueue(nextUser.uid);
+                } catch {
+                  deactivateFirestoreWriteQueue();
+                  if (!active || eventGeneration !== generation) return;
+                  setUser(nextUser);
+                  setStartupError('Antrean lokal tertunda tidak dapat dipulihkan dengan aman. Operasi tidak dikirim dan akses CRM ditahan; jangan hapus data situs sebelum antrean diperiksa.');
+                  setReady(true);
+                  return;
+                }
               }
-              if (!active || eventGeneration !== generation) return;
-              setUser(nextUser);
-              setError(null);
-              setReady(true);
-            } catch {
+            } else {
               deactivateFirestoreWriteQueue();
-              if (!active || eventGeneration !== generation) return;
-              setUser(nextUser);
-              setStartupError('Antrean lokal tertunda tidak dapat dipulihkan dengan aman. Operasi tidak dikirim dan akses CRM ditahan; jangan hapus data situs sebelum antrean diperiksa.');
-              setReady(true);
+              if (serverPinRequired) setAccountPinGateState('checking');
             }
+
+            if (!active || eventGeneration !== generation) return;
+            setUser(nextUser);
+            setError(null);
+            setReady(true);
           })();
         }, () => {
           if (!active) return;
+          deactivateFirestoreWriteQueue();
           setError('Sesi Firebase tidak dapat diverifikasi. Silakan coba lagi.');
           setReady(true);
         });
@@ -71,7 +154,72 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
       unsubscribe?.();
       deactivateFirestoreWriteQueue();
     };
-  }, []);
+  }, [pinRefreshTrigger]);
+
+  useEffect(() => {
+    if (!requiresServerIssuedPinSession(firebaseTarget) || !user
+      || accountPinGateState !== 'verified' || !sessionExpiresAt) return;
+    let active = true;
+    let checking = false;
+
+    const revalidate = async () => {
+      if (checking) return;
+      checking = true;
+      setSessionRevalidating(true);
+      deactivateFirestoreWriteQueue();
+      try {
+        const status = await accountPinClient.fetchStatus(user);
+        if (!active) return;
+        setAccountPinStatus(status);
+        if (!status.sessionActive) {
+          setAccountPinGateState(nextGateState(status));
+          setSessionExpiresAt(undefined);
+          setSessionRevalidating(false);
+          return;
+        }
+        try {
+          await activateFirestoreWriteQueue(user.uid);
+        } catch {
+          if (!active) return;
+          deactivateFirestoreWriteQueue();
+          setStartupError('Antrean lokal tertunda tidak dapat dipulihkan dengan aman. Operasi tidak dikirim dan akses CRM ditahan; jangan hapus data situs sebelum antrean diperiksa.');
+          setSessionExpiresAt(undefined);
+          setSessionRevalidating(false);
+          return;
+        }
+        if (!active) {
+          deactivateFirestoreWriteQueue();
+          return;
+        }
+        setSessionExpiresAt(status.sessionExpiresAt);
+        setSessionRevalidating(false);
+        setSessionCheckTrigger((value) => value + 1);
+      } catch {
+        if (!active) return;
+        deactivateFirestoreWriteQueue();
+        setAccountPinGateState('unavailable');
+        setSessionExpiresAt(undefined);
+        setSessionRevalidating(false);
+      } finally {
+        checking = false;
+      }
+    };
+
+    const expiryMs = Date.parse(sessionExpiresAt);
+    const timerDelay = Number.isFinite(expiryMs) ? Math.max(0, expiryMs - Date.now()) : 0;
+    const timer = window.setTimeout(() => { void revalidate(); }, timerDelay);
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') void revalidate();
+    };
+    window.addEventListener('focus', handleVisibility);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+      window.removeEventListener('focus', handleVisibility);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [user, accountPinGateState, sessionExpiresAt, sessionCheckTrigger]);
 
   const handleSignIn = async () => {
     setError(null);
@@ -87,7 +235,7 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
     }
   };
 
-  const handleSignOut = async () => {
+  const handleSignOut = useCallback(async () => {
     const snapshot = firestoreWriteQueue.getSnapshot();
     const unsyncedCount = snapshot.pendingCount + snapshot.syncingCount + snapshot.failedCount;
     if (unsyncedCount > 0) {
@@ -97,7 +245,7 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
       if (!confirmed) return;
     }
     await signOut(getFirebaseAuth());
-  };
+  }, []);
 
   if (!firebaseIsConfigured) {
     return <AuthMessage title="Firebase belum dikonfigurasi" detail="Aplikasi berhenti dengan aman sampai konfigurasi Web App Firebase tersedia. Tidak ada fallback login lokal." />;
@@ -105,10 +253,10 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
   if (startupError) {
     return <AuthMessage title="Firebase belum siap" detail={startupError} />;
   }
-  if (!hasWorkspaceConfiguration() && !isOwnerBootstrapEnabled(import.meta.env.DEV, window.location.hostname, window.location.protocol)) {
+  if (!hasWorkspaceConfiguration() && !isOwnerBootstrapEnabled(import.meta.env.DEV, window.location.hostname, window.location.protocol, firebaseTarget)) {
     return <AuthMessage title="Bootstrap owner tidak tersedia di origin ini" detail="Bootstrap identitas hanya tersedia pada development loopback. Origin lain dan build production tidak menyediakan bootstrap owner. Tidak ada akses CRM atau registrasi workspace." />;
   }
-  if (!ready) return <AuthMessage title="Memverifikasi sesi" detail="Menunggu Firebase Authentication…" />;
+  if (!ready) return <AuthMessage title="Memverifikasi sesi" detail="Menunggu Firebase Authentication dan, untuk hosted, sesi PIN server…" />;
   if (!user) {
     return (
       <AuthMessage title="Masuk ke AR CRM" detail="Gunakan Google Sign-In. Sampai UID owner dan workspace dikonfigurasi, layar ini tidak membuka data CRM.">
@@ -122,6 +270,19 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
   }
   if (!isDesignatedOwner(user.uid)) {
     return <AuthMessage title="Akses belum diizinkan" detail="Akun Google ini bukan designated owner AR CRM. Administrator harus mengonfigurasi owner UID secara eksplisit; tidak ada first-user-wins atau fallback lokal."><SignOutButton onSignOut={handleSignOut} /></AuthMessage>;
+  }
+  if (requiresServerIssuedPinSession(firebaseTarget)
+    && (accountPinGateState !== 'verified' || sessionRevalidating)) {
+    return (
+      <AccountPinGate
+        user={user}
+        client={accountPinClient}
+        state={sessionRevalidating || accountPinGateState === 'verified' ? 'checking' : accountPinGateState}
+        status={accountPinStatus}
+        onRetry={() => setPinRefreshTrigger((value) => value + 1)}
+        onSignOut={handleSignOut}
+      />
+    );
   }
 
   return (

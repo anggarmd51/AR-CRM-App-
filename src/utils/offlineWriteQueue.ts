@@ -19,6 +19,7 @@ export interface SyncQueueOperation {
   attempts: number;
   canRetry: boolean;
   dependencyBlocked: boolean;
+  requiresManualReplay: boolean;
   errorMessage?: string;
 }
 
@@ -28,6 +29,7 @@ export interface SyncQueueSnapshot {
   syncingCount: number;
   failedCount: number;
   acknowledgedCount: number;
+  manualReplayCount: number;
   isSyncing: boolean;
   isRestoring: boolean;
 }
@@ -44,7 +46,6 @@ interface EnqueueInput<T> {
   label: string;
   run: () => Promise<T>;
   runDurable?: (record: RestoredQueueRecord) => Promise<T>;
-  runWhenOffline?: boolean;
   durable?: DurableOperationInput;
 }
 
@@ -62,13 +63,13 @@ interface QueuedOperation<T = unknown> {
   deactivation: Deferred<void>;
   run: () => Promise<T>;
   runDurable?: (record: RestoredQueueRecord) => Promise<T>;
-  runWhenOffline: boolean;
   durable?: DurableOperationInput;
   state: SyncOperationState;
   attempts: number;
   inFlight: boolean;
   accepted: boolean;
   persisted: boolean;
+  requiresManualReplay: boolean;
   errorMessage?: string;
   currentAttempt?: Promise<void>;
   acceptedPromise: Promise<void>;
@@ -88,6 +89,13 @@ export class QueueScopeDeactivatedError extends Error {
   constructor() {
     super('Offline write queue scope was deactivated before the operation completed.');
     this.name = 'QueueScopeDeactivatedError';
+  }
+}
+
+export class OfflineWriteBlockedError extends Error {
+  constructor() {
+    super('Perangkat sedang offline. Perubahan baru tidak disimpan. Sambungkan kembali lalu coba lagi; perubahan tertunda sebelumnya tetap aman dan menunggu koneksi.');
+    this.name = 'OfflineWriteBlockedError';
   }
 }
 
@@ -197,6 +205,7 @@ export class OfflineWriteQueue {
         canRetry: !operation.inFlight && !this.isDependencyBlocked(operation)
           && (operation.state === 'pending' || operation.state === 'failed'),
         dependencyBlocked: this.isDependencyBlocked(operation),
+        requiresManualReplay: operation.requiresManualReplay,
         ...(operation.errorMessage ? { errorMessage: operation.errorMessage } : {}),
       }));
     const pendingCount = operations.filter((operation) => operation.state === 'pending').length;
@@ -209,6 +218,7 @@ export class OfflineWriteQueue {
       syncingCount,
       failedCount,
       acknowledgedCount,
+      manualReplayCount: operations.filter((operation) => operation.requiresManualReplay).length,
       isSyncing: syncingCount > 0,
       isRestoring: this.restoring,
     };
@@ -263,11 +273,11 @@ export class OfflineWriteQueue {
           durable,
           run: () => replay(restoredRecord),
           runDurable: replay,
-          runWhenOffline: true,
           state: restoredRecord.state,
           attempts: record.attempts,
           accepted: true,
           persisted: true,
+          requiresManualReplay: true,
           activationVersion: version,
         });
         if (version !== this.activationVersion) return;
@@ -311,6 +321,7 @@ export class OfflineWriteQueue {
     if (existing) {
       return { operationId: existing.id, accepted: existing.acceptedPromise, acknowledged: existing.acknowledgement.promise };
     }
+    if (input.durable && !this.refreshConnectivity()) throw new OfflineWriteBlockedError();
 
     const operation = this.createOperation({
       ...input,
@@ -318,6 +329,7 @@ export class OfflineWriteQueue {
       attempts: 0,
       accepted: false,
       persisted: !input.durable,
+      requiresManualReplay: false,
       activationVersion: this.activationVersion,
     });
     this.operations.set(operation.id, operation);
@@ -352,8 +364,39 @@ export class OfflineWriteQueue {
   retry(id: string): Promise<void> {
     const operation = this.operations.get(id);
     if (!operation || operation.state === 'acknowledged') return Promise.resolve();
+    if (operation.requiresManualReplay) {
+      if (!this.refreshConnectivity()) throw new OfflineWriteBlockedError();
+      operation.requiresManualReplay = false;
+      this.notify();
+    }
     if (operation.currentAttempt) return operation.currentAttempt;
     return this.retryOperation(operation);
+  }
+
+  /** Explicitly releases restored operations for replay after an owner action. */
+  startManualReplay(): number {
+    if (!this.refreshConnectivity()) return 0;
+    const awaitingOwner = [...this.operations.values()].filter((operation) =>
+      operation.accepted
+      && operation.requiresManualReplay
+      && !operation.inFlight
+      && (operation.state === 'pending' || operation.state === 'failed'));
+    for (const operation of awaitingOwner) {
+      if (operation.retryTimer) {
+        clearTimeout(operation.retryTimer);
+        operation.retryTimer = undefined;
+      }
+      operation.requiresManualReplay = false;
+      if (operation.state === 'failed') {
+        operation.state = 'pending';
+        operation.errorMessage = undefined;
+      }
+    }
+    if (awaitingOwner.length > 0) {
+      this.notify();
+      this.schedulePump();
+    }
+    return awaitingOwner.length;
   }
 
   retryFailed(): number {
@@ -371,6 +414,7 @@ export class OfflineWriteQueue {
   async correctFailedOperation(id: string, mutation: DurableMutation): Promise<void> {
     const operation = this.operations.get(id);
     if (!operation?.durable || operation.state !== 'failed') throw new Error('Only a failed durable operation can be corrected.');
+    if (!this.refreshConnectivity()) throw new OfflineWriteBlockedError();
     const sanitized = allowlistedMutation(mutation);
     if (sanitized.kind !== operation.durable.kind) throw new Error('A correction cannot change the operation type.');
     if (sanitized.kind === 'update-lead-stage' && sanitized.payload.lead_id !== operation.durable.documentId) {
@@ -379,9 +423,11 @@ export class OfflineWriteQueue {
 
     const previousRecord = operation.durable;
     const previousError = operation.errorMessage;
+    const previousManualReplayRequired = operation.requiresManualReplay;
     operation.durable = { ...previousRecord, payload: sanitized.payload } as DurableOperationInput;
     operation.state = 'pending';
     operation.errorMessage = undefined;
+    operation.requiresManualReplay = false;
     try {
       if (!this.scope || !scopeMatches(operation.durable, this.scope)) throw new Error('Queue owner/workspace is not active.');
       await this.awaitWhileActive(operation, this.store.update(this.toRecord(operation)));
@@ -391,6 +437,7 @@ export class OfflineWriteQueue {
       operation.durable = previousRecord;
       operation.state = 'failed';
       operation.errorMessage = previousError ?? 'Koreksi belum tersimpan ke outbox lokal; operasi tidak dikirim.';
+      operation.requiresManualReplay = previousManualReplayRequired;
       this.notify();
       throw error;
     }
@@ -432,17 +479,16 @@ export class OfflineWriteQueue {
     activationVersion: number;
     run: () => Promise<T>;
     runDurable?: (record: RestoredQueueRecord) => Promise<T>;
-    runWhenOffline?: boolean;
     durable?: DurableOperationInput;
     state: SyncOperationState;
     attempts: number;
     accepted: boolean;
     persisted: boolean;
+    requiresManualReplay: boolean;
   }): QueuedOperation<T> {
     const acknowledgement = createDeferred<T>();
     const operation = {
       ...input,
-      runWhenOffline: input.runWhenOffline ?? false,
       deactivation: createDeferred<void>(),
       inFlight: false,
       acceptedPromise: Promise.resolve(),
@@ -468,6 +514,7 @@ export class OfflineWriteQueue {
   private async retryOperation(operation: QueuedOperation): Promise<void> {
     await operation.acceptedPromise.catch(() => undefined);
     if (!this.isOperationCurrent(operation)) throw new QueueScopeDeactivatedError();
+    if (operation.durable && !this.refreshConnectivity()) throw new OfflineWriteBlockedError();
     if (operation.state === 'acknowledged') return;
     if (this.isDependencyBlocked(operation)) return;
     if (operation.retryTimer) {
@@ -496,7 +543,7 @@ export class OfflineWriteQueue {
 
   private runOperation(operation: QueuedOperation): Promise<void> {
     if (!this.isOperationCurrent(operation)
-      || (!this.online && !operation.runWhenOffline)
+      || !this.refreshConnectivity()
       || operation.inFlight
       || operation.state === 'acknowledged'
       || this.isDependencyBlocked(operation)) return Promise.resolve();
@@ -511,12 +558,12 @@ export class OfflineWriteQueue {
 
   private async performOperation(operation: QueuedOperation): Promise<void> {
     if (!this.isOperationCurrent(operation)
-      || (!this.online && !operation.runWhenOffline)
+      || !this.refreshConnectivity()
       || operation.inFlight
       || operation.state === 'acknowledged'
       || this.isDependencyBlocked(operation)) return;
     operation.inFlight = true;
-    operation.state = this.online ? 'syncing' : 'pending';
+    operation.state = 'syncing';
     operation.attempts += 1;
     operation.errorMessage = undefined;
     this.notify();
@@ -612,20 +659,18 @@ export class OfflineWriteQueue {
     this.pumpPromise = Promise.resolve().then(async () => {
       while (!this.restoring) {
         const operation = [...this.operations.values()]
-          .filter((candidate) => candidate.accepted && candidate.state === 'pending' && !candidate.inFlight && !candidate.retryTimer
-            && (this.online || candidate.runWhenOffline) && !this.isDependencyBlocked(candidate))
+          .filter((candidate) => candidate.accepted && !candidate.requiresManualReplay
+            && candidate.state === 'pending' && !candidate.inFlight && !candidate.retryTimer
+            && this.online && !this.isDependencyBlocked(candidate))
           .sort(sortByCreation)[0];
         if (!operation) break;
-        if (!this.online && operation.runWhenOffline) {
-          void this.runOperation(operation).catch(() => undefined);
-        } else {
-          try { await this.runOperation(operation); } catch { /* status and backoff are recorded by runOperation */ }
-        }
+        try { await this.runOperation(operation); } catch { /* status and backoff are recorded by runOperation */ }
       }
     }).finally(() => {
       this.pumpPromise = undefined;
-      const hasRunnable = [...this.operations.values()].some((operation) => operation.accepted && operation.state === 'pending' && !operation.inFlight && !operation.retryTimer
-        && (this.online || operation.runWhenOffline) && !this.isDependencyBlocked(operation));
+      const hasRunnable = [...this.operations.values()].some((operation) => operation.accepted && !operation.requiresManualReplay
+        && operation.state === 'pending' && !operation.inFlight && !operation.retryTimer
+        && this.online && !this.isDependencyBlocked(operation));
       if (hasRunnable) this.schedulePump();
     });
   }
@@ -646,6 +691,12 @@ export class OfflineWriteQueue {
     if (!dependencyId) return false;
     const dependency = this.operations.get(dependencyId);
     return Boolean(dependency && dependency.state !== 'acknowledged');
+  }
+
+  private refreshConnectivity(): boolean {
+    const isOnline = this.connectivity.isOnline();
+    if (isOnline !== this.online) this.handleConnectivityChange(isOnline);
+    return isOnline;
   }
 
   private pruneAcknowledgements(): void {

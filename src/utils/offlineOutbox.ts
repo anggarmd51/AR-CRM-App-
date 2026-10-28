@@ -1,4 +1,4 @@
-import type { LeadScore, PipelineStage } from '../types/crm.ts';
+import type { ActivityGpsLocation, ActivitySummarySource, LeadScore, PipelineStage } from '../types/crm.ts';
 
 export type DurableMutation =
   | {
@@ -29,6 +29,9 @@ export type DurableMutation =
         lead_id: string;
         activity_type: string;
         notes: string;
+        ai_summary?: string;
+        ai_summary_source?: ActivitySummarySource;
+        location_gps?: ActivityGpsLocation;
       };
     };
 
@@ -155,6 +158,23 @@ function assertId(value: unknown): string {
   return id;
 }
 
+function assertActivityGps(value: unknown): ActivityGpsLocation {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Offline operation data failed local validation.');
+  }
+  const location = value as Record<string, unknown>;
+  const latitude = location.latitude;
+  const longitude = location.longitude;
+  const accuracy = location.accuracy_m;
+  if (Object.keys(location).length !== 3
+    || typeof latitude !== 'number' || !Number.isFinite(latitude) || latitude < -90 || latitude > 90
+    || typeof longitude !== 'number' || !Number.isFinite(longitude) || longitude < -180 || longitude > 180
+    || typeof accuracy !== 'number' || !Number.isFinite(accuracy) || accuracy < 0 || accuracy > 100_000) {
+    throw new Error('Offline operation data failed local validation.');
+  }
+  return { latitude, longitude, accuracy_m: accuracy };
+}
+
 /** Copy only fields required by the Firestore Rules; arbitrary properties are never persisted. */
 export function allowlistedMutation(mutation: DurableMutation): DurableMutation {
   const payload = mutation.payload as Record<string, unknown>;
@@ -197,15 +217,24 @@ export function allowlistedMutation(mutation: DurableMutation): DurableMutation 
         },
       };
     }
-    case 'create-activity':
+    case 'create-activity': {
+      const aiSummary = payload.ai_summary === undefined ? undefined : assertText(payload.ai_summary, 4_000, false);
+      const summarySource = payload.ai_summary_source;
+      if ((aiSummary === undefined) !== (summarySource === undefined)
+        || (summarySource !== undefined && summarySource !== 'gemini' && summarySource !== 'local')) {
+        throw new Error('Offline operation data failed local validation.');
+      }
       return {
         kind: mutation.kind,
         payload: {
           lead_id: assertId(payload.lead_id),
           activity_type: assertText(payload.activity_type, 80, false),
           notes: assertText(payload.notes, 12_000),
+          ...(aiSummary !== undefined ? { ai_summary: aiSummary, ai_summary_source: summarySource as ActivitySummarySource } : {}),
+          ...(payload.location_gps !== undefined ? { location_gps: assertActivityGps(payload.location_gps) } : {}),
         },
       };
+    }
     default:
       throw new Error('Offline operation type is not supported.');
   }
@@ -322,7 +351,7 @@ export class IndexedDbOfflineOutboxStore implements OfflineOutboxStore {
     if (!cryptoKey || !globalThis.crypto?.subtle) throw new Error('Secure browser cryptography is unavailable.');
     const allowlisted = allowlistedMutation({ kind: record.kind, payload: record.payload } as DurableMutation);
     const iv = globalThis.crypto.getRandomValues(new Uint8Array(12));
-    const additionalData = associatedDataFor(record);
+    const additionalData = associatedDataFor({ ...record, label: base.label });
     const ciphertext = await globalThis.crypto.subtle.encrypt(
       { name: 'AES-GCM', iv: asArrayBuffer(iv), additionalData: asArrayBuffer(additionalData) },
       cryptoKey,

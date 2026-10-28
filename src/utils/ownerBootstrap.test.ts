@@ -30,3 +30,15 @@ test('production builds never expose owner bootstrap, including on loopback', ()
     assert.equal(isOwnerBootstrapEnabled(false, hostname, 'https:'), false);
   }
 });
+
+test('staging identity bootstrap is allowed only on local loopback production previews', () => {
+  for (const hostname of ['localhost', '127.0.0.1', '::1', '[::1]']) {
+    assert.equal(isOwnerBootstrapEnabled(false, hostname, 'http:', 'staging'), true);
+    assert.equal(isOwnerBootstrapEnabled(false, hostname, 'https:', 'staging'), true);
+    assert.equal(isOwnerBootstrapEnabled(true, hostname, 'http:', 'staging'), false);
+    assert.equal(isOwnerBootstrapEnabled(false, hostname, 'https:', 'production'), false);
+  }
+  for (const hostname of ['example.com', 'arcrmapp.vercel.app', 'localhost.example.com']) {
+    assert.equal(isOwnerBootstrapEnabled(false, hostname, 'https:', 'staging'), false);
+  }
+});

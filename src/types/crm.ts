@@ -2,6 +2,14 @@ export type PipelineStage = 'Prospect' | 'Meeting' | 'Negotiation' | 'Closing Wo
 
 export type LeadScore = 'Hot' | 'Warm' | 'Cold' | 'Unrated';
 
+export interface ActivityGpsLocation {
+  latitude: number;
+  longitude: number;
+  accuracy_m: number;
+}
+
+export type ActivitySummarySource = 'gemini' | 'local';
+
 export interface Lead {
   id: string;
   company_name: string;
@@ -24,6 +32,8 @@ export interface Activity {
   activity_type: string;
   notes: string;
   ai_summary?: string;
+  ai_summary_source?: ActivitySummarySource;
+  location_gps?: ActivityGpsLocation;
   created_at?: string;
   _syncStatus?: 'synced' | 'pending_insert' | 'pending_update' | 'error';
 }
@@ -41,6 +51,7 @@ export interface GlobalLead {
   decision_maker_title?: string;
   email?: string;
   ai_match_score?: number;
+  ai_source_urls?: string[];
   intent_level?: 'High Intent' | 'In-Market' | 'Strong Fit' | 'Surge Intent';
   company_initials?: string;
   is_ai_enriched?: boolean;

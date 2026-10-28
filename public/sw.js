@@ -34,7 +34,7 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // Skip non-GET requests and API calls (let offline sync queue handle data mutations)
+  // Skip non-GET requests and API calls. CRM mutations require a live connection.
   if (event.request.method !== 'GET' || url.pathname.startsWith('/api/')) {
     return;
   }

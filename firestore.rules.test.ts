@@ -2,11 +2,26 @@ import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { initializeTestEnvironment, assertSucceeds, assertFails, type RulesTestEnvironment } from '@firebase/rules-unit-testing';
-import { collection, deleteDoc, doc, getDoc, getDocs, orderBy, query, serverTimestamp, setDoc, Timestamp, updateDoc, where } from 'firebase/firestore';
-import { FIREBASE_RULES_OWNER_UID, FIREBASE_RULES_WORKSPACE_ID } from './src/firebaseRulesBinding.ts';
+import { collection, deleteDoc, doc, getDoc, getDocs, orderBy, query, runTransaction, serverTimestamp, setDoc, Timestamp, updateDoc, where } from 'firebase/firestore';
+import {
+  FIREBASE_RULES_OWNER_UID,
+  FIREBASE_RULES_WORKSPACE_ID,
+  FIREBASE_STAGING_WORKSPACE_ID,
+} from './src/firebaseRulesBinding.ts';
 import { setDocWithServerReconciliation } from './src/utils/idempotentFirestoreCreate.ts';
 
-const projectId = 'demo-ar-crm-rules';
+const rulesTarget = process.env.FIRESTORE_RULES_TARGET === 'staging' ? 'staging' : 'production';
+const projectId = rulesTarget === 'staging' ? 'demo-ar-crm-staging-rules' : 'demo-ar-crm-rules';
+function readPrivateStagingOwnerUid(): string {
+  const envText = readFileSync(new URL('./.env.staging.local', import.meta.url), 'utf8');
+  const value = envText.split(/\r?\n/).find((line) => line.startsWith('VITE_FIREBASE_OWNER_UID='))
+    ?.slice('VITE_FIREBASE_OWNER_UID='.length).trim().replace(/^['"]|['"]$/g, '');
+  assert.ok(value && /^[A-Za-z0-9_-]{28}$/.test(value), 'staging owner UID is missing or invalid');
+  return value;
+}
+
+const expectedBoundOwner = rulesTarget === 'staging' ? readPrivateStagingOwnerUid() : FIREBASE_RULES_OWNER_UID;
+const expectedBoundWorkspace = rulesTarget === 'staging' ? FIREBASE_STAGING_WORKSPACE_ID : FIREBASE_RULES_WORKSPACE_ID;
 const ownerUid = 'synthetic-designated-owner';
 const otherUid = 'other-synthetic-user';
 const workspace = 'synthetic-workspace';
@@ -14,8 +29,13 @@ const otherWorkspace = 'other-workspace';
 const deniedWorkspace = 'unassigned-workspace';
 const wrongRoleWorkspace = 'wrong-role-workspace';
 const wrongRootWorkspace = 'wrong-root-workspace';
+const activePinSessionId = 'a'.repeat(43);
+const expiredPinSessionId = 'e'.repeat(43);
+const revokedPinSessionId = 'r'.repeat(43);
+const wrongOwnerPinSessionId = 'w'.repeat(43);
 let env: RulesTestEnvironment;
 let lockedEnv: RulesTestEnvironment;
+type RulesEmulatorFirestore = ReturnType<ReturnType<RulesTestEnvironment['unauthenticatedContext']>['firestore']>;
 
 const createdAt = Timestamp.fromDate(new Date('2026-01-01T00:00:00.000Z'));
 const updatedAt = Timestamp.fromDate(new Date('2026-01-02T00:00:00.000Z'));
@@ -49,8 +69,39 @@ function validActivity(leadId: string, ownerId = ownerUid) {
   };
 }
 
+function validWonArchive(leadId: string, ownerId = ownerUid) {
+  return {
+    lead_id: leadId,
+    company_name: 'Synthetic Co',
+    contact_person: 'Synthetic Contact',
+    phone: '+628123456789',
+    industry: 'Synthetic Industry',
+    city: 'Synthetic City',
+    deal_value: 0,
+    won_date: '2026-01-03',
+    archived_at: createdAt,
+    ownerId,
+    role: 'owner',
+  };
+}
+
+async function recordSyntheticFailedPinAttempt(db: RulesEmulatorFirestore, uid: string): Promise<number> {
+  return db.runTransaction(async (transaction) => {
+    const limitRef = db.doc(`accountPinRateLimits/${uid}`);
+    const snapshot = await transaction.get(limitRef);
+    const nextCount = Number(snapshot.get('failedAttempts') ?? 0) + 1;
+    transaction.set(limitRef, { failedAttempts: nextCount });
+    return nextCount;
+  });
+}
+
+function ownerWithActivePinSession() {
+  return env.authenticatedContext(ownerUid, { pinSessionId: activePinSessionId }).firestore();
+}
+
 before(async () => {
-  const sourceRules = readFileSync(new URL('./firestore.rules', import.meta.url), 'utf8');
+  const rulesFile = rulesTarget === 'staging' ? './firestore.staging.rules' : './firestore.rules';
+  const sourceRules = readFileSync(new URL(rulesFile, import.meta.url), 'utf8');
   // Replace only the single explicit owner/workspace bindings in emulator rules;
   // all fixtures and project IDs remain synthetic.
   const ownerMatches = [...sourceRules.matchAll(/request\.auth\.uid == '([^']+)'/g)];
@@ -59,8 +110,8 @@ before(async () => {
   assert.equal(workspaceMatches.length, 1, 'expected exactly one configured-workspace binding');
   const configuredOwner = ownerMatches[0][1];
   const configuredWorkspace = workspaceMatches[0][1];
-  assert.equal(configuredOwner, FIREBASE_RULES_OWNER_UID);
-  assert.equal(configuredWorkspace, FIREBASE_RULES_WORKSPACE_ID);
+  assert.ok(configuredOwner === expectedBoundOwner, 'Rules owner binding mismatch');
+  assert.ok(configuredWorkspace === expectedBoundWorkspace, 'Rules workspace binding mismatch');
   const ownerClause = `request.auth.uid == '${configuredOwner}'`;
   const workspaceClause = `workspaceId == '${configuredWorkspace}'`;
   const configuredRules = sourceRules
@@ -80,6 +131,26 @@ before(async () => {
     await setDoc(doc(db, 'workspaces', workspace), { ownerId: ownerUid, created_at: createdAt });
     await setDoc(doc(db, 'workspaces', workspace, 'members', ownerUid), { role: 'owner' });
     await setDoc(doc(db, 'workspaces', workspace, 'members', otherUid), { role: 'member' });
+    await setDoc(doc(db, 'accountPinSessions', activePinSessionId), {
+      ownerUid,
+      status: 'active',
+      expiresAt: Timestamp.fromDate(new Date('2099-01-01T00:00:00.000Z')),
+    });
+    await setDoc(doc(db, 'accountPinSessions', expiredPinSessionId), {
+      ownerUid,
+      status: 'active',
+      expiresAt: Timestamp.fromDate(new Date('2020-01-01T00:00:00.000Z')),
+    });
+    await setDoc(doc(db, 'accountPinSessions', revokedPinSessionId), {
+      ownerUid,
+      status: 'revoked',
+      expiresAt: Timestamp.fromDate(new Date('2099-01-01T00:00:00.000Z')),
+    });
+    await setDoc(doc(db, 'accountPinSessions', wrongOwnerPinSessionId), {
+      ownerUid: otherUid,
+      status: 'active',
+      expiresAt: Timestamp.fromDate(new Date('2099-01-01T00:00:00.000Z')),
+    });
 
     await setDoc(doc(db, 'workspaces', otherWorkspace), { ownerId: ownerUid, created_at: createdAt });
     await setDoc(doc(db, 'workspaces', otherWorkspace, 'members', ownerUid), { role: 'owner' });
@@ -115,15 +186,36 @@ test('unauthenticated and non-owner users cannot read or write owner data', asyn
   await assertFails(setDoc(doc(other, 'workspaces', workspace, 'leads', 'other-lead'), validLead(otherUid)));
 });
 
+test('owner access requires an active, unexpired, UID-bound server PIN session', async () => {
+  const ownerWithoutClaim = env.authenticatedContext(ownerUid).firestore();
+  const ownerWithMissingSession = env.authenticatedContext(ownerUid, { pinSessionId: 'm'.repeat(43) }).firestore();
+  const ownerWithExpiredSession = env.authenticatedContext(ownerUid, { pinSessionId: expiredPinSessionId }).firestore();
+  const ownerWithRevokedSession = env.authenticatedContext(ownerUid, { pinSessionId: revokedPinSessionId }).firestore();
+  const ownerWithForeignSession = env.authenticatedContext(ownerUid, { pinSessionId: wrongOwnerPinSessionId }).firestore();
+
+  for (const db of [ownerWithoutClaim, ownerWithMissingSession, ownerWithExpiredSession, ownerWithRevokedSession, ownerWithForeignSession]) {
+    await assertFails(getDoc(doc(db, 'workspaces', workspace, 'leads', 'owned-lead')));
+    await assertFails(setDoc(doc(db, 'workspaces', workspace, 'leads', 'pin-gated-write'), validLead()));
+  }
+
+  const activeOwner = ownerWithActivePinSession();
+  await assertFails(getDoc(doc(activeOwner, 'accountPinSessions', activePinSessionId)));
+  await assertFails(setDoc(doc(activeOwner, 'accountPinSessions', 'c'.repeat(43)), {
+    ownerUid,
+    status: 'active',
+    expiresAt: Timestamp.fromDate(new Date('2099-01-01T00:00:00.000Z')),
+  }));
+});
+
 test('designated owner can read and create a valid lead and same-workspace activity', async () => {
-  const db = env.authenticatedContext(ownerUid).firestore();
+  const db = ownerWithActivePinSession();
   await assertSucceeds(getDoc(doc(db, 'workspaces', workspace, 'leads', 'owned-lead')));
   await assertSucceeds(setDoc(doc(db, 'workspaces', workspace, 'leads', 'new-lead'), validLead()));
   await assertSucceeds(setDoc(doc(db, 'workspaces', workspace, 'activities', 'activity-1'), validActivity('new-lead')));
 });
 
 test('ambiguous create retries reconcile exact server documents without relaxing Rules', async () => {
-  const db = env.authenticatedContext(ownerUid).firestore();
+  const db = ownerWithActivePinSession();
   const leadReference = doc(db, 'workspaces', workspace, 'leads', 'reconciled-create-lead');
   const { created_at: _leadCreatedAt, updated_at: _leadUpdatedAt, ...expectedLead } = validLead();
   const leadWrite = () => ({ ...expectedLead, created_at: serverTimestamp(), updated_at: serverTimestamp() });
@@ -140,7 +232,7 @@ test('ambiguous create retries reconcile exact server documents without relaxing
 });
 
 test('owner cannot access a workspace without matching root ownership and membership', async () => {
-  const db = env.authenticatedContext(ownerUid).firestore();
+  const db = ownerWithActivePinSession();
   await assertFails(getDoc(doc(db, 'workspaces', otherWorkspace, 'leads', 'other-owned-lead')));
   await assertFails(getDoc(doc(db, 'workspaces', otherWorkspace, 'activities', 'other-activity')));
   await assertFails(setDoc(doc(db, 'workspaces', otherWorkspace, 'leads', 'blocked-extra-workspace'), validLead()));
@@ -152,7 +244,7 @@ test('owner cannot access a workspace without matching root ownership and member
 });
 
 test('ownerId-scoped application queries succeed but unfiltered collection reads fail', async () => {
-  const db = env.authenticatedContext(ownerUid).firestore();
+  const db = ownerWithActivePinSession();
   await assertSucceeds(getDocs(query(collection(db, 'workspaces', workspace, 'leads'), where('ownerId', '==', ownerUid), orderBy('created_at', 'desc'))));
   await assertSucceeds(getDocs(query(collection(db, 'workspaces', workspace, 'activities'), where('ownerId', '==', ownerUid), orderBy('created_at', 'desc'))));
   await assertFails(getDocs(collection(db, 'workspaces', workspace, 'leads')));
@@ -160,7 +252,7 @@ test('ownerId-scoped application queries succeed but unfiltered collection reads
 });
 
 test('clients cannot create or alter workspace ownership or membership/role records', async () => {
-  const db = env.authenticatedContext(ownerUid).firestore();
+  const db = ownerWithActivePinSession();
   await assertFails(setDoc(doc(db, 'workspaces', 'client-created'), { ownerId: ownerUid, created_at: createdAt }));
   await assertFails(updateDoc(doc(db, 'workspaces', workspace), { ownerId: otherUid }));
   await assertFails(setDoc(doc(db, 'workspaces', workspace, 'members', 'new-member'), { role: 'owner' }));
@@ -168,7 +260,7 @@ test('clients cannot create or alter workspace ownership or membership/role reco
 });
 
 test('owner identity and role cannot be changed on a lead', async () => {
-  const db = env.authenticatedContext(ownerUid).firestore();
+  const db = ownerWithActivePinSession();
   const lead = doc(db, 'workspaces', workspace, 'leads', 'owned-lead');
   await assertFails(updateDoc(lead, { ownerId: 'changed-owner' }));
   await assertFails(updateDoc(lead, { role: 'member' }));
@@ -178,7 +270,7 @@ test('owner identity and role cannot be changed on a lead', async () => {
 });
 
 test('activity parent lookup is workspace-scoped and requires a valid lead schema', async () => {
-  const db = env.authenticatedContext(ownerUid).firestore();
+  const db = ownerWithActivePinSession();
   await assertFails(setDoc(doc(db, 'workspaces', workspace, 'activities', 'missing-lead'), validActivity('does-not-exist')));
   // A lead ID that exists only in another workspace cannot satisfy this path lookup.
   await assertFails(setDoc(doc(db, 'workspaces', workspace, 'activities', 'cross-workspace'), validActivity('other-owned-lead')));
@@ -189,13 +281,13 @@ test('activity parent lookup is workspace-scoped and requires a valid lead schem
 });
 
 test('client deletions are denied even to the designated owner', async () => {
-  const db = env.authenticatedContext(ownerUid).firestore();
+  const db = ownerWithActivePinSession();
   await assertFails(deleteDoc(doc(db, 'workspaces', workspace, 'leads', 'owned-lead')));
   await assertFails(deleteDoc(doc(db, 'workspaces', workspace, 'activities', 'existing-activity')));
 });
 
-test('lead and activity schemas reject tampered ownership, role, type, enum, GPS, AI-summary and unknown fields', async () => {
-  const db = env.authenticatedContext(ownerUid).firestore();
+test('lead and activity schemas reject tampered ownership, role, type, malformed GPS, summary provenance and unknown fields', async () => {
+  const db = ownerWithActivePinSession();
   await assertFails(setDoc(doc(db, 'workspaces', workspace, 'leads', 'forged-owner'), validLead(otherUid)));
   await assertFails(setDoc(doc(db, 'workspaces', workspace, 'leads', 'forged-role'), { ...validLead(), role: 'admin' }));
   await assertFails(setDoc(doc(db, 'workspaces', workspace, 'leads', 'bad-stage'), { ...validLead(), pipeline_stage: 'Admin' }));
@@ -213,12 +305,46 @@ test('lead and activity schemas reject tampered ownership, role, type, enum, GPS
   await assertFails(setDoc(doc(db, 'workspaces', workspace, 'activities', 'forged-owner'), validActivity('owned-lead', otherUid)));
   await assertFails(setDoc(doc(db, 'workspaces', workspace, 'activities', 'forged-role'), { ...validActivity('owned-lead'), role: 'admin' }));
   await assertFails(setDoc(doc(db, 'workspaces', workspace, 'activities', 'gps-injected'), { ...validActivity('owned-lead'), location_gps: '0,0', latitude: 0, longitude: 0 }));
-  await assertFails(setDoc(doc(db, 'workspaces', workspace, 'activities', 'ai-summary'), { ...validActivity('owned-lead'), ai_summary: 'not part of current client-write schema' }));
+  await assertFails(setDoc(doc(db, 'workspaces', workspace, 'activities', 'bad-gps-range'), { ...validActivity('owned-lead'), location_gps: { latitude: 91, longitude: 0, accuracy_m: 10 } }));
+  await assertFails(setDoc(doc(db, 'workspaces', workspace, 'activities', 'summary-without-source'), { ...validActivity('owned-lead'), ai_summary: 'Ringkasan sintetis.' }));
+  await assertFails(setDoc(doc(db, 'workspaces', workspace, 'activities', 'bad-summary-source'), { ...validActivity('owned-lead'), ai_summary: 'Ringkasan sintetis.', ai_summary_source: 'unknown' }));
   await assertFails(setDoc(doc(db, 'workspaces', workspace, 'activities', 'unknown-field'), { ...validActivity('owned-lead'), unknown_field: 'denied' }));
 });
 
+test('activity accepts bounded summary provenance and explicitly captured GPS only', async () => {
+  const db = ownerWithActivePinSession();
+  await assertSucceeds(setDoc(doc(db, 'workspaces', workspace, 'activities', 'valid-summary-gps'), {
+    ...validActivity('owned-lead'),
+    ai_summary: 'Ringkasan sintetis yang ditinjau pemilik.',
+    ai_summary_source: 'local',
+    location_gps: { latitude: -6.2, longitude: 106.8, accuracy_m: 18 },
+  }));
+  await assertFails(setDoc(doc(db, 'workspaces', workspace, 'activities', 'long-summary'), {
+    ...validActivity('owned-lead'),
+    ai_summary: 'S'.repeat(4001),
+    ai_summary_source: 'gemini',
+  }));
+});
+
+test('won archive is owner-only, immutable, and created only with the lead closing-won transition', async () => {
+  const db = ownerWithActivePinSession();
+  const archive = doc(db, 'workspaces', workspace, 'wonDealArchives', 'owned-lead');
+  await assertFails(setDoc(archive, validWonArchive('owned-lead')));
+
+  const lead = doc(db, 'workspaces', workspace, 'leads', 'owned-lead');
+  await assertSucceeds(runTransaction(db, async (transaction) => {
+    const leadSnapshot = await transaction.get(lead);
+    assert.equal(leadSnapshot.exists(), true);
+    transaction.update(lead, { pipeline_stage: 'Closing Won', updated_at: updatedAt });
+    transaction.set(archive, { ...validWonArchive('owned-lead'), archived_at: serverTimestamp() });
+  }));
+  await assertSucceeds(getDoc(archive));
+  await assertFails(updateDoc(archive, { deal_value: 1 }));
+  await assertFails(deleteDoc(archive));
+});
+
 test('field length boundaries and update allowlists are enforced', async () => {
-  const db = env.authenticatedContext(ownerUid).firestore();
+  const db = ownerWithActivePinSession();
   const maxLengthLead = {
     ...validLead(),
     company_name: 'C'.repeat(200),
@@ -244,10 +370,33 @@ test('field length boundaries and update allowlists are enforced', async () => {
   await assertFails(updateDoc(doc(db, 'workspaces', workspace, 'leads', 'owned-lead'), { pipeline_stage: 'Meeting', unexpected: true }));
 });
 
+test('Firestore Emulator transactions preserve shared PIN-attempt increments across two clients', async () => {
+  await env.withSecurityRulesDisabled(async (firstContext) => {
+    const firstServerContextDb = firstContext.firestore();
+    await env.withSecurityRulesDisabled(async (secondContext) => {
+      const secondServerContextDb = secondContext.firestore();
+      const attempts = await Promise.all(Array.from({ length: 16 }, (_, index) =>
+        recordSyntheticFailedPinAttempt(index % 2 === 0 ? firstServerContextDb : secondServerContextDb, ownerUid),
+      ));
+      assert.deepEqual(attempts.slice().sort((left, right) => left - right), Array.from({ length: 16 }, (_, index) => index + 1));
+
+      const stored = await firstServerContextDb.doc(`accountPinRateLimits/${ownerUid}`).get();
+      assert.equal(stored.get('failedAttempts'), 16);
+    });
+  });
+});
+
 test('unknown collections and unconfigured rules remain denied', async () => {
-  const owner = env.authenticatedContext(ownerUid).firestore();
+  const owner = ownerWithActivePinSession();
   await assertFails(setDoc(doc(owner, 'unknown', 'synthetic'), { value: 'denied' }));
   await assertFails(getDoc(doc(owner, 'workspaces', workspace, 'unknown-subcollection', 'synthetic')));
+  await assertFails(getDoc(doc(owner, 'accountPinRateLimits', ownerUid)));
+  await assertFails(setDoc(doc(owner, 'accountPinRateLimits', ownerUid), { failedAttempts: 1 }));
+  await assertFails(getDoc(doc(owner, 'accountPinCredentials', ownerUid)));
+  await assertFails(setDoc(doc(owner, 'accountPinCredentials', ownerUid), {
+    ownerUid,
+    verifier: 'scrypt$16384$8$1$server-only',
+  }));
 
   const unconfigured = lockedEnv.authenticatedContext(ownerUid).firestore();
   await assertFails(getDoc(doc(unconfigured, 'workspaces', workspace)));

@@ -4,6 +4,7 @@ import {
   onSnapshot,
   orderBy,
   query,
+  runTransaction,
   serverTimestamp,
   updateDoc,
   where,
@@ -12,9 +13,10 @@ import {
 } from 'firebase/firestore';
 import { getFirebaseAuth, getFirebaseDb, workspaceId } from './firebase.ts';
 import type { Activity, Lead, PipelineStage } from './types/crm.ts';
-import { firestoreWriteQueue, type QueueWriteReceipt as QueueReceipt } from './utils/syncQueue.ts';
+import { firestoreWriteQueue, type QueueWriteReceipt as QueueReceipt } from './utils/offlineWriteQueue.ts';
 import type { DurableMutation, DurableQueueInput, DurableQueueRecord, RestoredQueueRecord } from './utils/offlineOutbox.ts';
 import { setDocWithServerReconciliation } from './utils/idempotentFirestoreCreate.ts';
+import type { LeadSnapshotState } from './utils/optimisticLeadStages.ts';
 
 export interface RepositoryWriteReceipt<T = void> {
   operationId: string;
@@ -43,6 +45,14 @@ function createOperationId(): string {
 
 function timestampToIso(value: DocumentData['created_at']): string | undefined {
   return value?.toDate?.()?.toISOString?.() ?? (typeof value === 'string' ? value : undefined);
+}
+
+function todayInJakarta(): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Jakarta', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date());
+  const part = (type: string) => parts.find((item) => item.type === type)?.value ?? '';
+  return `${part('year')}-${part('month')}-${part('day')}`;
 }
 
 function mapLead(id: string, data: DocumentData): Lead {
@@ -117,6 +127,40 @@ async function executeDurableMutation(restored: RestoredQueueRecord): Promise<vo
         throw Object.assign(new Error('Invalid lead-stage operation.'), { code: 'invalid-argument' });
       }
       const ref = doc(db, 'workspaces', record.workspaceId, 'leads', record.documentId);
+      if (record.payload.pipeline_stage === 'Closing Won') {
+        const archiveRef = doc(db, 'workspaces', record.workspaceId, 'wonDealArchives', record.documentId);
+        await runTransaction(db, async (transaction) => {
+          const leadSnapshot = await transaction.get(ref);
+          if (!leadSnapshot.exists()) {
+            throw Object.assign(new Error('Lead tidak ditemukan untuk perubahan stage.'), { code: 'not-found' });
+          }
+          const archiveSnapshot = await transaction.get(archiveRef);
+          const lead = leadSnapshot.data();
+          if (!archiveSnapshot.exists()) {
+            transaction.set(archiveRef, {
+              lead_id: record.documentId,
+              company_name: lead.company_name,
+              contact_person: lead.contact_person,
+              phone: lead.phone,
+              industry: lead.industry,
+              city: lead.city,
+              deal_value: lead.deal_value,
+              won_date: todayInJakarta(),
+              archived_at: serverTimestamp(),
+              ownerId: record.ownerId,
+              role: 'owner',
+            });
+          }
+          transaction.update(ref, {
+            pipeline_stage: record.payload.pipeline_stage,
+            ...(record.payload.next_followup_date !== undefined
+              ? { next_followup_date: record.payload.next_followup_date }
+              : {}),
+            updated_at: serverTimestamp(),
+          });
+        });
+        return;
+      }
       await updateDoc(ref, {
         pipeline_stage: record.payload.pipeline_stage,
         ...(record.payload.next_followup_date !== undefined
@@ -132,6 +176,9 @@ async function executeDurableMutation(restored: RestoredQueueRecord): Promise<vo
         lead_id: record.payload.lead_id,
         activity_type: record.payload.activity_type,
         notes: record.payload.notes,
+        ...(record.payload.ai_summary !== undefined ? { ai_summary: record.payload.ai_summary } : {}),
+        ...(record.payload.ai_summary_source !== undefined ? { ai_summary_source: record.payload.ai_summary_source } : {}),
+        ...(record.payload.location_gps !== undefined ? { location_gps: record.payload.location_gps } : {}),
         ownerId: record.ownerId,
         role: 'owner',
       };
@@ -153,7 +200,6 @@ function enqueueDurable(
     id: record.id,
     label: record.label,
     durable: record,
-    runWhenOffline: true,
     runDurable: executeDurableMutation,
     run: () => executeDurableMutation({ ...record, attempts: 0, state: 'pending' } as RestoredQueueRecord),
   });
@@ -172,13 +218,19 @@ export function deactivateFirestoreWriteQueue(): void {
   firestoreWriteQueue.deactivateScope();
 }
 
-export function subscribeToLeads(ownerId: string, onData: (leads: Lead[]) => void, onError: (error: Error) => void): Unsubscribe {
+export function subscribeToLeads(ownerId: string, onData: (leads: Lead[], state: LeadSnapshotState) => void, onError: (error: Error) => void): Unsubscribe {
   requireOwner(ownerId);
   const ref = collection(getFirebaseDb(), 'workspaces', requireWorkspace(), 'leads');
   return onSnapshot(
     query(ref, where('ownerId', '==', ownerId), orderBy('created_at', 'desc')),
     { includeMetadataChanges: true },
-    (snapshot) => onData(snapshot.docs.map((item) => mapLead(item.id, item.data()))),
+    (snapshot) => onData(
+      snapshot.docs.map((item) => mapLead(item.id, item.data())),
+      {
+        fromCache: snapshot.metadata.fromCache,
+        pendingWriteIds: new Set(snapshot.docs.filter((item) => item.metadata.hasPendingWrites).map((item) => item.id)),
+      },
+    ),
     onError,
   );
 }
@@ -194,9 +246,14 @@ export function subscribeToActivities(ownerId: string, onData: (activities: Acti
   );
 }
 
-export async function createLead(ownerId: string, lead: Omit<Lead, 'id' | '_syncStatus'>): Promise<RepositoryWriteReceipt<string>> {
+export async function createLead(
+  ownerId: string,
+  lead: Omit<Lead, 'id' | '_syncStatus'>,
+  options: { documentId?: string } = {},
+): Promise<RepositoryWriteReceipt<string>> {
   const db = getFirebaseDb();
-  const ref = doc(collection(db, 'workspaces', requireWorkspace(), 'leads'));
+  const leadCollection = collection(db, 'workspaces', requireWorkspace(), 'leads');
+  const ref = options.documentId ? doc(leadCollection, options.documentId) : doc(leadCollection);
   const operationId = `lead-create:${ref.id}`;
   const payload: DurableMutation = {
     kind: 'create-lead',
@@ -254,6 +311,9 @@ export async function createActivity(
       lead_id: activity.lead_id,
       activity_type: activity.activity_type,
       notes: activity.notes,
+      ...(activity.ai_summary !== undefined ? { ai_summary: activity.ai_summary } : {}),
+      ...(activity.ai_summary_source !== undefined ? { ai_summary_source: activity.ai_summary_source } : {}),
+      ...(activity.location_gps !== undefined ? { location_gps: activity.location_gps } : {}),
     },
   };
   const dependency = firestoreWriteQueue.dependencyForLead(activity.lead_id);

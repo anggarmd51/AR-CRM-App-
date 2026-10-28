@@ -1,18 +1,129 @@
 # PROJECT STATE & ARCHITECTURAL SPECIFICATION
 ## AR Personal CRM Enterprise (Solo Account Manager Edition)
 
-> **Document Version:** 2.2.1 (Dynamic PIN Length & Vault Synchronization Edition)  
-> **Status:** Pemeriksaan lokal lulus; project tetap belum siap dirilis/cutover. Audit menampilkan empat entri paket production terdampak, tetapi hanya satu advisory unik berseverity High (CVSS 7,4) dan satu Low (CVSS 3,7), keduanya melalui `@grpc/grpc-js@1.9.16`. Temuan High belum diperbaiki dan tetap menjadi gate rilis, selain staging, Vercel, App Check Console, backup/restore, migrasi, dan verifikasi live.
-> **URL production terakhir tercatat (status live saat ini belum diperiksa):** [https://arcrmapp.vercel.app/](https://arcrmapp.vercel.app/)
+> **Document Version:** 2.4.0 (local Firebase stabilization candidate)
+> **Status:** Perubahan lokal pada branch `cue/firebase-stabilization` (HEAD `8498878`) kini menahan replay otomatis semua mutasi outbox yang dipulihkan sampai owner memilih sinkronisasi manual. Antrean tetap terenkripsi dan jumlah/status yang tampil tidak membawa payload. Belum aman dirilis: verifikasi akses PIN Production, deployment/rollback, dan tindakan sinkronisasi owner masih menjadi blocker.
+> **Production terakhir diperiksa baca-saja melalui metadata Vercel (28 Okt 2026):** project `arcrm-app`, alias [https://arcrmapp.vercel.app/](https://arcrmapp.vercel.app/) READY pada commit `f010c46f6358fa57fe2b0957e8f049058acb0b7d`, branch `cue/firebase-stabilization`; ditandai Vercel sebagai rollback candidate. Metadata deployment terkonfirmasi, tetapi prosedur dan keberhasilan rollback belum diuji. Perubahan lokal belum ter-deploy.
+> **Preview staging:** [https://arcrm-4sv1mj6xw-anggaramadhan538-8607.vercel.app](https://arcrm-4sv1mj6xw-anggaramadhan538-8607.vercel.app) — SSO `all_except_custom_domains` tetap enabled; belum dilakukan login/e2e browser pada kandidat kode ini.
 > **Author & Architect:** Lead Full-Stack Software Architect & UI/UX State Specialist  
-> **Last Updated:** 27 Oktober 2026, 11:09 WIB
-> **Target Platform:** Offline-First Progressive Web App (PWA) & Native Android (Jetpack Compose / Room DB)
+> **Last Updated:** 28 Oktober 2026, 17:07 WIB
+> **Target Platform:** Responsive Progressive Web App (PWA) untuk browser laptop dan ponsel; tidak ada native Android app pada source ini.
+> **Catatan sumber kebenaran:** bagian “Status operasional terbaru” di bawah menjadi ringkasan saat ini. Bagian bertanggal setelahnya adalah snapshot historis pada waktu masing-masing dan tidak boleh mengalahkan bukti yang lebih baru. Branch `cue/firebase-stabilization` memakai Firebase Auth/Firestore untuk Leads/Activities dan tidak mengimpor data lama otomatis. Data operasional belum dimigrasikan; jangan memakai spreadsheet lama yang dikosongkan sebagai sumber.
 
-> **Catatan sumber kebenaran:** bagian arsitektur v2.2.1 di bawah adalah dokumentasi historis. Pembaruan implementasi setelah baseline audit di bawah adalah status terbaru checkout lokal; bagian audit 20:59 WIB diberi label historis dan memuat temuan sebelum hardening ini. Branch `cue/firebase-stabilization` memakai Firebase Auth/Firestore untuk Leads/Activities dan tidak mengimpor data lama secara otomatis. Catatan cloud dan artefak release adalah last-known evidence, bukan verifikasi live baru. Data operasional belum dimigrasikan; jangan memakai spreadsheet lama yang dikosongkan sebagai sumber.
+## Status operasional terbaru — 28 Oktober 2026, 17:07 WIB
 
-## Perbaikan deep audit dan verifikasi terbaru — 27 Oktober 2026, 11:09 WIB
+### Perubahan lokal dan verifikasi
 
-**Status lokal:** commit `ac90bd60d71b0dff1f7ef4e4b5730d9aac0fa7ac` (`fix(crm): resolve modal history sync, calendar date validation, activity lead reset, and outbox scope lifecycle`) adalah commit perbaikan deep audit terbaru di branch `cue/firebase-stabilization`. Perubahan ini memperbaiki sinkronisasi riwayat modal, validasi tanggal kalender, reset lead pada aktivitas, dan siklus hidup scope outbox.
+- Sesudah autentikasi/sesi PIN yang valid, outbox untuk owner/workspace yang sama dipulihkan untuk ditampilkan tetapi tidak direplay otomatis—termasuk setelah koneksi pulih. Owner dapat memilih “Sinkronkan mutasi tersimpan” lalu mengonfirmasi jumlahnya, atau mengirim satu operasi secara eksplisit. Mutasi baru tetap mengikuti alur sinkronisasi biasa.
+- Panel antrean hanya menampilkan jumlah, kategori, status, dan pesan error generik; snapshot tidak membawa payload Lead/Activity dan editor koreksi yang memaparkan payload telah dilepas dari UI. Payload outbox tidak dihapus atau diubah oleh restore maupun kegagalan; record baru dibersihkan setelah acknowledgement Firestore. Tes sintetis juga memverifikasi fail-closed saat payload tidak dapat dipulihkan.
+- Verifikasi lokal 28 Okt: `npm test` **152 lulus, 0 gagal, 1 skip** (153 tes); tes outbox terfokus **29/29**; `npm run lint`; `npx --no-install tsc --noEmit`; `npm run build`; `git diff --check` dan `git diff --cached --check` lulus. Build selesai dengan warning bundle JavaScript **984.63 kB** (gzip **288.23 kB**), di atas ambang Vite 500 kB.
+- HEAD tetap `8498878` pada branch `cue/firebase-stabilization`; tidak ada perubahan staged. Semua pekerjaan masih lokal/uncommitted. Tidak ada commit, push, deployment, perubahan Rules/data Production, atau perubahan cloud pada langkah ini.
+
+### Gerbang rilis dan hal yang belum diketahui
+
+- Pemeriksaan metadata Vercel baca-saja terbaru menemukan project `arcrm-app` dan Production deployment READY pada alias `arcrmapp.vercel.app`, commit `f010c46f6358fa57fe2b0957e8f049058acb0b7d`, branch `cue/firebase-stabilization`; Vercel menandainya rollback candidate. Fakta ini mengonfirmasi metadata deployment, bukan bahwa prosedur rollback sudah diuji. Preview SSO `all_except_custom_domains` tetap enabled.
+- Environment Vercel Production untuk enrollment PIN satu kali telah disimpan khusus Production. Pengaturan itu baru berlaku setelah deployment baru; enrollment belum diaktifkan saat runtime atau digunakan. Owner sebelumnya menyetujui enrollment satu kali, tetapi izin itu bukan persetujuan untuk deployment. Firestore Rules Production tetap mensyaratkan sesi PIN valid; akses owner dan cara mencegah lockout harus diverifikasi sebelum rilis. Jangan mengubah Rules atau data Production.
+- Jumlah/status outbox di profil browser owner **tidak diketahui** karena `DESKTOP-0NPV94C` offline. Perangkat tidak diakses, isi antrean tidak diperiksa, dan storage tidak dibersihkan. Setelah owner dapat membuka aplikasi, tinjau jumlah/status aman di UI sebelum memutuskan replay manual.
+- Blocker rilis: alur konfigurasi dan akses PIN Production harus diverifikasi tanpa lockout; prosedur deployment dan rollback belum diuji; jumlah antrean owner belum diketahui; kandidat lokal belum dirilis. Jangan stage, commit, push, deploy, mengubah environment/cloud, atau menulis data Production sebelum gate dan persetujuan terpisah terpenuhi.
+- Pada putaran ini tidak dijalankan emulator Rules, hosted browser/e2e, replay pada outbox milik owner, panggilan Gemini, maupun smoke test Production.
+- Lihat [dokumen AI](docs/AI_LEAD_FINDER_READINESS.md) dan [kesiapan PIN lintas perangkat](docs/ACCOUNT_PIN_CROSS_DEVICE_READINESS.md) untuk konteks sebelumnya dan gerbang terkait.
+
+## Snapshot operasional sebelumnya — 28 Oktober 2026, 10:23 WIB
+
+### Hasil kandidat lokal dan gerbang rilis
+
+- Lead Finder dan Meeting Summarizer memakai server-side `gemini-3.8-flash`; consent notes tetap eksplisit, fallback summarizer ekstraktif lokal, dan kuota lima request/hari kini dibagi bersama. Tidak ada panggilan live Gemini atau data CRM nyata yang digunakan.
+- Fix lokal mencakup ID impor perusahaan deterministik per owner/workspace, rekonsiliasi stage yang mempertahankan intent ketika snapshot cache/pending tertinggal, metadata snapshot dipertahankan saat ack/rollback, dan konfigurasi emulator staging terpisah. UID staging tetap di `.env.staging.local`; Rules staging dibangkitkan sementara, diuji, lalu dihapus/diabaikan Git.
+- Security patch mem-pin `@grpc/grpc-js` ke `1.14.6`; `npm audit --omit=dev` melaporkan 0 advisory runtime. Audit penuh melaporkan 0 High dan 5 Moderate pada development/tooling dependency paths. Perbaikan otomatis yang disarankan npm untuk tooling meminta downgrade major Firebase CLI; downgrade itu tidak diterapkan tanpa review, jadi advisories Moderate dicatat sebagai residual dev risk. Kedua jalur Firebase/Admin memakai versi patched.
+- Verifikasi lokal terakhir: `npm test` 135 lulus, 0 gagal, 1 skip (test private staging binding dijalankan pada emulator staging); `npm run test:firestore` 17/17; `npm run test:firestore:staging` 20/20; `npm run lint`; build Production dan Preview sanitasi; `git diff --check` — semuanya lulus.
+- Build masih menghasilkan bundle JS sekitar 987 kB (gzip sekitar 289 kB), melewati peringatan Vite 500 kB. Scan output browser tidak menemukan marker Gemini API key, Firebase Admin service account, PIN pepper, atau private key. Belum ada manual/e2e browser test pada kandidat terbaru.
+- Audit baca-saja Vercel terbaru mengonfirmasi `GEMINI_API_KEY` hanya untuk Preview branch `cue/firebase-stabilization`; `VITE_FIREBASE_TARGET=production` tidak terdaftar; variabel server `ACCOUNT_PIN_*`/`FIREBASE_ADMIN_*` Production juga tidak terdaftar. Nilai Firebase client env yang tersimpan tidak didekripsi atau divalidasi, dan tidak ada environment yang diubah.
+- Kode hosted memakai PIN session server-issued sebelum Firestore; Rules mewajibkan sesi aktif, sedangkan endpoint PIN yang ditinjau hanya mengizinkan Preview. Dengan environment Production saat ini, rilis berisiko mengunci pemilik keluar. **Jangan commit/push/deploy** sampai target Firebase Production, service account/PIN Production, endpoint production-safe, dan uji autentikasi/rollback dikonfigurasi serta diverifikasi.
+- Production saat ini tetap pada deployment lama `f010c46f6358fa57fe2b0957e8f049058acb0b7d` (READY; kandidat rollback). Perubahan lokal belum di-commit/push. Tidak ada perubahan Vercel/Firebase Production, data nyata, ataupun alias deployment.
+- Lihat [dokumen AI](docs/AI_LEAD_FINDER_READINESS.md) dan [kesiapan PIN lintas perangkat](docs/ACCOUNT_PIN_CROSS_DEVICE_READINESS.md) untuk detail bukti dan gerbang rilis.
+
+## Snapshot operasional sebelumnya — 28 Oktober 2026, 03:56 WIB
+
+### Deployment dan lingkungan
+
+- **Production:** Vercel melaporkan deployment `arcrmapp.vercel.app` berstatus READY dari commit `f010c46` pada branch `cue/firebase-stabilization`. Status READY hanya menegaskan deployment selesai; bukan bukti seluruh alur CRUD production berfungsi. Setelah perbaikan indeks, autentikasi serta baca/tulis Lead dan Activity di production belum diverifikasi tuntas.
+- **Preview staging:** satu deployment dari build lokal terpisah berstatus READY pada URL di atas. Deployment memiliki metadata branch `cue/firebase-stabilization`, tetapi tidak memiliki SHA commit source. SSO tetap aktif. Setelah hostname Preview ditambahkan hanya ke daftar domain key App Check dan Authorized domains Auth pada project staging, layar aplikasi berhasil mencapai Google Sign-In. Login dan CRUD pada hosted Preview belum dijalankan; tidak ada data CRM yang ditulis.
+- **Isolasi:** sebelas override Firebase di Vercel dibatasi ke Preview branch `cue/firebase-stabilization`; Production dan environment umum tidak diubah. Firebase staging memakai project, workspace, UID owner, Rules, serta indeks tersendiri di paket Spark/Singapore. Verifikasi domain App Check tetap aktif. Tidak ada perubahan Rules atau konfigurasi production pada tahap Preview.
+
+### Kode, tes, dan kondisi Git
+
+- **Fitur inti:** Firebase Auth + Firestore aktif untuk Leads/Activities. Rules bersifat fail-closed dan membatasi aplikasi ke satu owner/workspace; aplikasi cocok untuk penggunaan solo, bukan CRM tim multi-user. Delete dokumen ditolak Rules.
+- **Offline:** antrean mutasi IndexedDB terenkripsi mendukung pemulihan setelah reload, dependency Lead→Activity, retry, acknowledgement server, dan pencegahan duplikasi. Pengujian staging dengan `disableNetwork()` Firestore, reload antrean, reconnect, replay, serta cleanup fixture lulus. Ini belum setara dengan uji kehilangan seluruh jaringan pada browser/perangkat nyata.
+- **Verifikasi suite sebelumnya (27 Okt):** 83/83 unit test, 12/12 Rules Emulator, lint, TypeScript, build staging, dan `git diff --check` lulus. Warning Vite `__dirname` dan JavaScript bundle sekitar 954 kB (ambang peringatan 500 kB) masih ada. Advisory High pada jalur Firebase/gRPC belum dibereskan.
+- **Uji PIN lokal (28 Okt, 03:55 WIB):** `npm test` 108/108, `npm run lint`, `npm run test:firestore` 15/15, `npm run build`, dan `git diff --check` lulus. Emulator menguji limiter lintas dua koneksi Admin serta race enrollment create-only; Rules juga menolak klien membaca/membuat credential docs. Build browser tidak memuat Firebase Admin, service-account JSON, pepper, atau verifier. Ini bukti lokal/mock/Emulator, bukan bukti hosted.
+- **Alur PIN lokal:** endpoint `status`, `verify`, dan `enroll` default-off; UI PIN, Google re-auth enrollment pertama, custom-token exchange, pemeriksaan claim/session, serta aktivasi queue hanya setelah status server lolos sudah disambungkan. Credential verifier berada pada Firestore Admin-only dan create-only; tidak ada reset. `SecurityVault` PIN perangkat hanya dijalankan pada target local; PIN/storage lama dan antrean IndexedDB tidak dibersihkan. Hosted tetap fail-closed karena belum ada konfigurasi/deployment.
+- **Branch lokal:** `cue/firebase-stabilization` berada di HEAD `8498878`; 22 file terlacak berubah dan 14 file baru belum dilacak, seluruhnya belum di-commit. Tidak ada push/merge ke `main`. Production tidak menjalankan perubahan lokal tersebut.
+
+### Pekerjaan yang masih menghalangi kesiapan produksi penuh
+
+1. Uji Google Sign-In dan CRUD Leads/Activities pada hosted Preview staging, tanpa memindahkan data nyata; rapikan fixture sintetis setelah tes.
+2. PIN akun hosted staging masih terhambat: runtime Vercel Preview harus Node >=22; server-only service account, pepper, project/owner binding dan flag endpoint belum disetujui/diubah. Deploy route belum dilakukan. Tidak ada reset PIN; enrollment flag hanya boleh dinyalakan untuk pendaftaran pertama dan dimatikan setelahnya. Jangan aktifkan Blaze/layanan berbayar atau buka gerbang UI/Rules sebelum uji hosted sintetis lulus.
+3. Selesaikan uji autentikasi dan CRUD owner di production secara terbatas dengan Lead nyata yang memang ingin disimpan. Jangan memakai data contoh karena delete ditolak Rules.
+4. Siapkan backup dan prosedur restore yang benar-benar diuji sebelum mengandalkan Firestore production sebagai satu-satunya catatan sales. Saat ini backup/restore belum terverifikasi.
+5. Audit dan selesaikan advisory dependency High; tinjau juga warning ukuran bundle dan konfigurasi Vite.
+6. Verifikasi App Check khusus production; keberhasilan App Check staging tidak membuktikan konfigurasi production.
+7. Ekspor Firestore → Google Sheets masih implementasi lokal, belum terkonfigurasi atau aktif. Belum ada spreadsheet pelaporan terpisah, service account dengan izin minimum, environment server, atau jadwal. Jangan memakai spreadsheet lama yang dikosongkan.
+8. Setelah gate di atas selesai, lakukan review rilis dan minta persetujuan terpisah untuk commit/push/deploy. Jangan merge ke `main` atau cutover otomatis.
+
+**Kesimpulan kesiapan:** boleh dipakai untuk pengujian staging terbatas setelah login diuji; belum layak menjadi satu-satunya CRM operasional production atau disebut “100% siap produksi”.
+
+## Owner provisioning dan smoke test staging — 27 Oktober 2026, sekitar 13:52 WIB
+
+> Snapshot pada 13:52 WIB ini mendahului persetujuan dan deployment Preview. Status Preview yang lebih baru tercatat di bagian “Status operasional terbaru” di atas.
+
+- **Target tunggal:** `ar-crm-staging-angga-20261027`, workspace `ar-crm-staging-owner`. Metadata akhir database tetap `asia-southeast1`, `FIRESTORE_NATIVE`, `STANDARD`, `freeTier=true`, PITR disabled. Tidak mengaktifkan billing/Blaze.
+- **Rules:** file staging privat di luar repo menyalin struktur/validasi Rules dan mengganti hanya binding ke identitas staging yang berbeda dari production. Smoke emulator staging lulus untuk owner, penolakan non-owner/delete, create/readback Lead–Activity, replay dan cleanup. Rules dirilis hanya dengan `--project ar-crm-staging-angga-20261027`; target diverifikasi sebelum/sesudah. `firestore.rules`, `firebase.json`, dan `firestore.indexes.json` repo tidak berubah.
+- **Provisioning administratif:** commit atomik create-only membuat tepat root workspace (`ownerId`) dan membership owner (`role=owner`), tanpa record CRM sebelumnya. Keduanya dibaca kembali dan tetap utuh setelah cleanup. UID tidak dicatat di source/docs; identitas dan Rules staging tetap privat.
+- **Client/build:** guard staging menggunakan workspace tetap dan UID non-production, sedangkan Rules privat menegakkan UID staging persis. `.env.staging.local` dibuat, ignored Git, mode `0600`; tidak membaca/menyentuh `.env.local`. Build hanya pada salinan privat yang mengecualikan seluruh `.env*`/`.npmrc` sumber, lalu memasukkan env staging eksplisit dan membersihkan environment proses dengan `env -i`. Build lulus; warning ukuran JavaScript chunk di atas ambang 500 kB tetap ada.
+- **Cloud staging/browser loopback:** App Check preflight dan Google Auth owner berhasil membuka CRM kosong melalui server yang hanya listen `127.0.0.1:4174`. Satu Lead dan satu Activity online sintetis dibuat lewat UI; persisted readback dan relasi parent terverifikasi.
+- **Indeks:** query awal gagal `FAILED_PRECONDITION`; dua indeks `ownerId ASC + created_at DESC` dirilis hanya ke staging dan sudah READY. Respons list ternyata memuat indeks Leads dan Activities sekaligus, bukan duplikasi; guard cleanup indeks berhenti sebelum DELETE. Tidak ada indeks yang dihapus. Query ekuivalen aplikasi kemudian HTTP 200 dan UI membaca fixture.
+- **Offline terbatas:** harness privat di salinan build memakai repository asli, Auth/App Check dan Rules normal, dengan `disableNetwork()` Firestore SDK. Lead+Activity kedua diterima lokal tanpa acknowledgement; admin memastikan keduanya belum ada di server sebelum maupun sesudah reload. Dua operasi durable dipulihkan (`pending=1`, `syncing=1`, `failed=0`), lalu reconnect mempersist keduanya. Readback awal harness terlalu dini ditolak Rules pada dokumen yang belum ada; sinkronisasi harness diperbaiki untuk menunggu queue, tanpa create ulang. Server-only readback dan replay ID sama kemudian lulus; timestamp immutable tidak berubah, queue berakhir `pending=0`, `syncing=0`, `failed=0`. Ini bukan pemutusan seluruh jaringan browser/perangkat dan bukan hosted Preview.
+- **Cleanup selesai:** setiap marker online/offline terverifikasi tepat satu (total dua Lead + dua Activity). Admin commit menghapus hanya empat ID fixture dengan marker/owner/parent dan precondition `updateTime` yang cocok. Keempat GET kemudian 404, koleksi Leads/Activities staging kosong, root/member owner tetap ada.
+- **Suite lokal sesi ini:** `npm test` 83/83, `npm run lint`, `npx --no-install tsc --noEmit`, Rules Emulator 12/12 pada project `demo-ar-crm-rules`, dan `git diff --check` lulus. Tidak ada upgrade dependency; advisory High yang tercatat belum diselesaikan.
+- **Batas:** HEAD tetap `8498878`, semua perubahan lokal uncommitted. Tidak ada push, merge, deployment Vercel/production, data nyata, migrasi, atau perubahan `main`. Hosted Preview/environment/domain Preview masih memerlukan persetujuan eksplisit. Full-browser offline, live non-owner denial, backup/restore, App Check production, production CRUD, dan cutover belum diverifikasi/disetujui; jangan menyebut production ready.
+
+## Snapshot historis provisioning dan identitas staging — 27 Oktober 2026, 13:04–13:22 WIB
+
+Pemilik menyetujui project terpisah pada Spark dengan Firestore Singapore `asia-southeast1`, tanpa Blaze. Izin tidak mencakup deployment Vercel Preview.
+
+- **Project berhasil dibuat:** [`ar-crm-staging-angga-20261027`](https://console.firebase.google.com/project/ar-crm-staging-angga-20261027/overview), display name `AR CRM Staging`.
+- **Cloud Firestore API aktif** dan database `(default)` berhasil dibuat. Metadata server mengonfirmasi `locationId=asia-southeast1`, `FIRESTORE_NATIVE`, `databaseEdition=STANDARD`, `freeTier=true`, dan PITR nonaktif. CLI mengonfirmasi database baru memakai closed rules yang memblokir traffic pihak ketiga. Tidak ada Rules/indexes repository yang dideploy atau dokumen workspace/member/CRM yang ditulis.
+- **Web App berhasil didaftarkan:** `AR CRM Staging Web`, App ID `1:622108535247:web:b94a1d19f319ec7f200aba`. SDK config staging berhasil diambil secara read-only ke file temporer privat; nilai config/key tidak dicetak atau dimasukkan ke dokumentasi. Validasi mencakup project/App ID/authDomain/storage bucket/sender yang cocok dengan staging.
+- **Paket terverifikasi di Firebase Console:** `Spark`, `No-cost ($0/month)`. Tidak mengaktifkan free trial, billing, Blaze, PITR, atau fitur backup berbayar.
+- **Authentication terverifikasi:** Authentication sudah diinisialisasi; provider Google berstatus **Enabled** dengan public name `AR CRM Staging`. Authorized Domains yang terbaca dan terverifikasi: `localhost`, `ar-crm-staging-angga-20261027.firebaseapp.com`, dan `ar-crm-staging-angga-20261027.web.app`. Belum ada custom DNS hostname atau hosted deployment.
+- **App Check terverifikasi:** App Check sudah diinisialisasi; API `recaptchaenterprise` aktif tanpa billing. Key `AR CRM Staging Local UID` terdaftar sebagai Web score-based, domain `localhost` saja, domain verification **ENABLED**; AMP, challenges, fixed testing, dan WAF **OFF**. Key yang sama terdaftar pada `AR CRM Staging Web`; UI menampilkan status **Fraud Defense — Registered**. Public key tidak dicatat di dokumentasi.
+- **Login owner terverifikasi pada 13:21 WIB:** setelah tindakan owner di browser, halaman loopback menampilkan **Login uji owner berhasil**. UID Firebase Auth staging diperoleh, diverifikasi berbeda dari binding repo yang sudah ada, dan disimpan privat di luar repo; nilai UID/email/token tidak dicatat di sini. Layar hanya menampilkan identitas, tidak mengikat owner otomatis, tidak membuka CRM, dan tidak mengaktifkan antrean Firestore.
+- **Belum dilakukan:** provisioning workspace/member staging, Rules/client binding staging tersendiri, Vercel Preview variables/deployment, atau smoke test Lead/Activity/offline. APIs UI menunjukkan Cloud Firestore dan Authentication **Unenforced**; tidak ada enforcement toggle yang diubah. Binding production tidak boleh disalin sebagai identitas staging; closed Rules cloud tetap dipertahankan.
+- **Build identity-only staging:** temporary copy yang mengecualikan seluruh `.env*`/`.npmrc` dari sumber dan menghapus `VITE_*`/`VERCEL_ENV` warisan berhasil dibuild dengan `vite build --mode staging` (exit 0; `dist/index.html` tersedia). Preflight token App Check dan login Google staging berhasil melalui server loopback-only; owner/workspace env tetap kosong.
+- Tidak mengakses atau mengubah production/`main`, tidak membuka atau menampilkan isi `.env.local`/credential, tidak menggunakan data production/Sheets, dan tidak melakukan push, merge, deployment Vercel, atau migrasi.
+
+## Snapshot historis hardening staging — 27 Oktober 2026, 12:42 WIB (sebelum verifikasi dan login di atas)
+
+- Firebase CLI read-only `apps:list WEB` pada project staging mengonfirmasi Web App `AR CRM Staging Web` dan App ID yang tercatat. Pengambilan SDK config tidak selesai dalam batas waktu; tidak ada nilai SDK yang disalin ke file lokal. `.env.staging.example` kini memuat project ID/App ID staging yang diketahui dan placeholder untuk konfigurasi Web SDK serta site key App Check. Tidak dibuat `.env.staging.local`.
+- Google Sign-In, Authorized Domains (`localhost`), dan App Check staging kini terverifikasi sesuai bukti Console terbaru. Enforcement Cloud Firestore dan Authentication tetap **Unenforced**; tidak ada toggle enforcement yang diubah.
+- Perubahan kode lokal menyiapkan layar identitas-only untuk non-development staging preview pada host loopback. Development tetap emulator-only, host publik/Preview ditolak, App Check tetap wajib, dan staging selalu menolak konfigurasi owner/workspace maupun UID production. Layar bootstrap tidak mengaktifkan queue atau akses Firestore.
+- UID owner staging belum ada; karena itu tidak ada workspace/member, Rules staging, indeks, atau data yang dibuat/deploy. `firestore.rules` production binding tidak diubah atau dideploy. `.env.local` tidak dibaca; `.env.staging.local` belum dibuat.
+- Langkah berikutnya: pemilik melakukan login Google melalui server loopback-only untuk memperoleh UID staging. Setelah UID ada, siapkan workspace/member dan Rules/client binding terpisah sebelum membuat data atau melakukan deploy. Vercel Preview tetap menunggu persetujuan eksplisit.
+
+**Batas inspeksi environment:** audit tambahan sempat menjalankan `npm run build`. Konfigurasi Vite tidak menonaktifkan pemuatan file env otomatis, sehingga proses build mungkin memuat `.env.local` walaupun isinya tidak dibuka atau ditampilkan. Jangan mengklaim file env tidak dibaca proses sama sekali. Hasil build itu tidak dideploy, dan build tidak dijalankan ulang setelah batas ini diketahui.
+
+## Verifikasi lokal lanjutan — 27 Oktober 2026, 12:17 WIB (sebelum staging dibuat)
+
+**Checkout saat verifikasi:** branch `cue/firebase-stabilization`, HEAD `849887855a9fbe8ee6b514dbee6a0795496b3648` (`feat(export): add gated Firestore-to-Sheets export and migration readiness docs`); working tree bersih sebelum pembaruan catatan ini.
+
+- **Verifikasi yang dijalankan ulang:** `npm test` **81 lulus, 0 gagal**; `npm run lint` **lulus**; Firestore Rules Emulator **12 lulus, 0 gagal** pada emulator lokal yang sudah aktif melalui `FIRESTORE_EMULATOR_HOST=127.0.0.1:8080`; `git diff --check` **lulus**. Emulator tidak dihentikan atau dimulai ulang. Audit tambahan melaporkan build lulus dengan warning; batas pemuatan env otomatis dijelaskan di atas.
+- Tes antrean mengonfirmasi operasi durable dapat dipulihkan oleh instance antrean baru untuk owner/workspace yang sama, payload terenkripsi di IndexedDB, aktivitas menunggu Lead, dan acknowledgement hanya setelah write Firestore selesai. Ini bukti unit/emulator, bukan uji browser end-to-end.
+- **Snapshot sebelum provisioning:** pada 12:17 WIB belum ada project Firebase staging, site key App Check, test owner/workspace, atau environment Vercel Preview. Login nyata, penyimpanan Lead/Activity di Firebase staging, dan recovery offline di browser Preview belum terverifikasi. Isi `.env.local`/credential tidak dibuka atau ditampilkan; batas build otomatis dijelaskan di atas.
+- Tidak ada push, merge, deployment, perubahan `main`, atau migrasi data.
+
+## Perbaikan deep audit sebelumnya — 27 Oktober 2026, 11:09 WIB
+
+**Snapshot saat itu:** commit `ac90bd60d71b0dff1f7ef4e4b5730d9aac0fa7ac` (`fix(crm): resolve modal history sync, calendar date validation, activity lead reset, and outbox scope lifecycle`) adalah perbaikan deep audit terbaru sebelum penambahan fitur export pada HEAD saat ini. Perubahan tersebut memperbaiki sinkronisasi riwayat modal, validasi tanggal kalender, reset lead pada aktivitas, dan siklus hidup scope outbox.
 
 - **Verifikasi post-commit lokal:** `npm test` **81 lulus, 0 gagal**; Firestore Rules Emulator **12 lulus, 0 gagal**; `npm run lint` **lulus**; `npx --no-install tsc --noEmit` **lulus**; `npm run build` **lulus**; `git diff --check` **lulus**. Rules Emulator dijalankan terhadap emulator lokal yang sudah aktif; tidak menghentikan atau memulai ulang emulator.
 - **Peringatan build yang tersisa:** warning Vite terkait `__dirname` dan ukuran chunk JavaScript sekitar **954,18 kB**, melewati ambang warning **500 kB**. Build tetap lulus.
@@ -120,7 +231,7 @@ Artefak lokal [`ar-crm-release-evidence.md`](../ar-crm-release-evidence.md) menc
 1. [Visi & Problem Statement](#1-visi--problem-statement)
 2. [Arsitektur Sistem & Tech Stack](#2-arsitektur-sistem--tech-stack)
 3. [Desain Sistem & Identitas Brand (AR CRM)](#3-desain-sistem--identitas-brand-ar-crm)
-4. [Modul & Fitur Utama yang Telah Diimplementasikan](#4-modul--fitur-utama-yang-telah-diimplementasikan)
+4. [Modul & Fitur pada Source Branch (Hosted Belum Diverifikasi)](#4-modul--fitur-pada-source-branch-hosted-belum-diverifikasi)
 5. [Skema Database & Spesifikasi REST API](#5-skema-database--spesifikasi-rest-api)
 6. [Arsitektur Native Android (Kotlin & Jetpack Compose)](#6-arsitektur-native-android-kotlin--jetpack-compose)
 7. [Hasil Code Review, Security Hardening & Refactoring (v2.2.0)](#7-hasil-code-review-security-hardening--refactoring-v220)
@@ -133,7 +244,7 @@ Artefak lokal [`ar-crm-release-evidence.md`](../ar-crm-release-evidence.md) menc
 ## 1. VISI & PROBLEM STATEMENT
 
 ### 1.1 Visi Produk
-**AR Personal CRM Enterprise** adalah sales command center pribadi berkinerja tinggi yang dirancang khusus untuk seorang **Account Manager (AM)** atau Sales Professional B2B independen. Sistem ini menghadirkan kemampuan setara CRM korporat bernilai ribuan dolar, namun dengan **biaya operasional Rp0 (100% gratis selamanya)**, berjalan secara **offline-first**, dan tidak bergantung pada lisensi perangkat lunak per pengguna (*per-seat licensing*).
+**AR Personal CRM** adalah PWA responsif untuk sales B2B yang menggunakan Firebase Auth dan Cloud Firestore sebagai sumber data cloud. Antrean IndexedDB terenkripsi dipakai untuk mutasi yang belum tersinkron, bukan sebagai salinan offline penuh. Biaya layanan dapat bergantung pada penggunaan; tidak ada jaminan biaya selalu Rp0. Kesiapan deployment lintas perangkat harus dibedakan dari kesiapan source lokal, sesuai status operasional terbaru di bagian atas dokumen ini.
 
 ### 1.2 Problem Statement
 Di lapangan, Account Manager B2B menghadapi tantangan operasional krusial:
@@ -145,76 +256,34 @@ Di lapangan, Account Manager B2B menghadapi tantangan operasional krusial:
 6. **Kerahasiaan Data Klien & Portabilitas Laporan:** AM membutuhkan cara cepat untuk mengekspor rekapitulasi prospek ke spreadsheet Excel/CSV tanpa bergantung pada koneksi internet, serta perlindungan PIN/biometrik saat perangkat dipinjamkan.
 
 ### 1.3 Solusi AR CRM
-- **Offline-First dengan Optimistic UI:** Data disimpan secara instan di perangkat lokal (*zero-latency write*) dan secara otomatis disinkronkan ke database cloud saat koneksi internet pulih.
-- **Biaya Operasional Rp0 (Serverless):** Memanfaatkan kombinasi Google Apps Script (GAS) Web App dan Google Sheets sebagai database cloud tanpa biaya server bulanan.
-- **AI-Powered Field Assistant:** Peringkasan otomatis catatan rapat lapangan dan ekstraksi *Action Items* menggunakan Gemini API (`gemini-3.8-flash`) dengan mekanisme *intelligent rule-based fallback* dan timeout guard `AbortController`.
+- **Cloud-first dengan antrean tulis aman:** Firestore menjadi sumber utama; antrean IndexedDB terenkripsi menyimpan hanya mutasi pending dan menyinkronkannya ketika koneksi tersedia. Aplikasi tidak menjanjikan pembacaan/penulisan CRM penuh secara offline.
+- **Biaya bergantung konfigurasi dan pemakaian:** Project staging pernah diverifikasi pada Firebase Spark, tetapi itu tidak menjamin biaya Production maupun penggunaan Gemini Search grounding selalu Rp0.
+- **AI dengan batas privasi:** Meeting Summarizer menggunakan Gemini hanya setelah persetujuan eksplisit dan punya fallback lokal ekstraktif. Lead Finder tidak mengarang prospek jika endpoint/sumber gagal.
 - **Integrated Direct Outreach:** Integrasi satu ketukan untuk panggilan telepon dan perutean WhatsApp (`wa.me`) dengan validasi nomor internasional dan template pesan profesional.
 - **Mobile Back Gesture Management (LIFO Order):** Penanganan `popstate` dan `history.pushState` bertingkat (*Last-In, First-Out*) yang menutup sub-modal aktif terlebih dahulu sebelum modal induk atau navigasi tab.
-- **Local Security Vault (WebAuthn & Rate-Limiting Lockout):** Otentikasi biometrik riil berbasis WebAuthn (`navigator.credentials.get`), hashing PIN SHA-256 tersalt, dan proteksi *brute-force rate-limiting lockout* (5 percobaan gagal $\rightarrow$ cooldown 30 detik).
+- **PIN yang dibatasi target:** PIN perangkat lama hanya untuk mode lokal; mode hosted memakai sesi PIN akun server-side dan Firestore Rules. Hosted enrollment/recovery belum diuji atau diaktifkan.
 - **Sanitized CSV Export Engine:** Ekspor instan data prospek ke format RFC-4180 CSV yang terproteksi penuh dari serangan *CSV Formula Injection* (`=`, `+`, `-`, `@`, `\t`, `\r`).
-- **Complete PWA Service Worker:** Registrasi Service Worker mandiri (`sw.js`) dengan strategi cache cerdas *NetworkFirst* untuk dokumen HTML dan *CacheFirst* untuk aset statis.
-- **Zero-Mock Production State:** Seluruh data mock/dummy bawaan telah dibersihkan secara tuntas. Aplikasi beroperasi murni pada data nyata dari Google Sheets dan input pengguna.
+- **PWA dan sanitasi ekspor:** Service Worker meng-cache aset web; cache aset bukan backup atau mode CRM offline penuh. CSV yang diekspor disanitasi terhadap formula injection.
+- **Status data:** UI source terbaru memakai Firestore; development wajib memakai emulator. Production masih menjalankan deployment lama yang terverifikasi sebelumnya dan belum diuji dengan kode lokal ini.
 
 ---
 
 ## 2. ARSITEKTUR SISTEM & TECH STACK
 
-Arsitektur AR CRM dibangun dengan prinsip pemisahan tanggung jawab (*Separation of Concerns*), ketahanan terhadap kegagalan jaringan, dan portabilitas tinggi.
+Arsitektur pada branch saat ini memisahkan PWA, identitas, penyimpanan cloud, dan endpoint AI. Diagram ini menerangkan source yang ada, bukan bukti bahwa endpoint/deployment hosted terbaru sudah aktif.
 
 ```
-+-----------------------------------------------------------------------------------+
-|                            AR CRM CLIENT LAYER                                    |
-|                                                                                   |
-|   +------------------------------------+    +---------------------------------+   |
-|   |   Progressive Web App (React 19)   |    |  Native Android (Kotlin/Room)   |   |
-|   |   - Tailwind CSS v4 (AR Editorial) |    |  - Jetpack Compose Material 3   |   |
-|   |   - Vite SPA Engine                |    |  - Retrofit 2 + Gson            |   |
-|   |   - Popstate LIFO Back Shield      |    |  - WorkManager SyncWorker       |   |
-|   |   - WebAuthn + Salted PIN Vault    |    |  - FusedLocationProviderClient  |   |
-|   |   - Sanitized CSV Export Engine    |    |  - OnBackPressedDispatcher      |   |
-|   |   - Dynamic FK Sync Queue Engine   |    |  - Type-safe Remote DTO Mappers |   |
-|   |   - Auto-Purge Mock Sanitizer      |    |                                 |   |
-|   |   - Service Worker Offline Caching |    |                                 |   |
-|   +-----------------+------------------+    +----------------+----------------+   |
-+---------------------|----------------------------------------|--------------------+
-                      |                                        |
-                      | HTTP / REST (JSON)                     | HTTP / REST (JSON)
-                      v                                        v
-+-----------------------------------------------------------------------------------+
-|                        AR CRM BACKEND & MIDDLEWARE LAYER                          |
-|                                                                                   |
-|   +---------------------------------------------------------------------------+   |
-|   | Production Edge Gateway (Vercel) / Express Proxy Server (server.ts)       |   |
-|   | - /api/gas-proxy: Menangani CORS bypass & HTTP 302 Redirect Follow        |   |
-|   |   dengan 12s AbortController timeout guard                                |   |
-|   | - Configurable GAS_API_URL via process.env.GAS_API_URL                    |   |
-|   | - /api/ai/summarize-notes: Google GenAI SDK (gemini-3.8-flash)             |   |
-|   |   dengan AbortController 4s timeout & intelligent fallback               |   |
-|   +-------------------------------------+-------------------------------------+   |
-+-----------------------------------------|-----------------------------------------+
-                                          |
-                                          | Google Apps Script Web App Deployment
-                                          v
-+-----------------------------------------------------------------------------------+
-|                       AR CLOUD SYNC & DATABASE ENGINE                             |
-|                                                                                   |
-|   +---------------------------------------------------------------------------+   |
-|   | Google Apps Script Web App (Code.gs v2.2.0)                               |   |
-|   | - Action Router: getLeads, addLead, updateLeadStage, addActivity, dll.    |   |
-|   | - Auto-Archive Router: archiveClosingWon, getArchiveLogs                  |   |
-|   | - Global Leads Router: getGlobalLeads, importGlobalLead                   |   |
-|   | - Atomic ID Generator: LEAD-xxx, ACT-xxx, ARCHIVE-xxx                      |   |
-|   +-------------------------------------+-------------------------------------+   |
-|                                         | SpreadsheetApp API                      |
-|                                         v                                         |
-|   +---------------------------------------------------------------------------+   |
-|   | Google Sheets Database ("Personal CRM Data")                              |   |
-|   | - Sheet [Leads]: Master data prospek & tahapan pipeline                   |   |
-|   | - Sheet [Activities]: Log check-in GPS, catatan, dan ringkasan AI         |   |
-|   | - Sheet [Global_Leads]: Direktori target prospek korporat B2B             |   |
-|   | - Sheet [Archive_Logs]: Arsip permanen closing won & rekap performa       |   |
-|   +---------------------------------------------------------------------------+   |
-+-----------------------------------------------------------------------------------+
+PWA React/Vite (browser laptop & ponsel)
+  ├─ Google Sign-In + target-specific App Check
+  ├─ Firestore realtime: workspace Leads, Activities, wonDealArchives
+  ├─ Firestore Rules: owner/workspace dan sesi PIN untuk jalur hosted
+  ├─ Encrypted IndexedDB: hanya operasi tulis pending, per owner/workspace
+  └─ Vercel serverless AI (default-off; secret server-only)
+       ├─ /api/ai/lead-finder → Gemini Search grounding + citations
+       └─ /api/ai/summarize-notes → opt-in notes + PIN/session/quota
+
+Laporan Google Sheets, bila diaktifkan, adalah ekspor terpisah—bukan sumber CRM.
+Local development wajib menggunakan Firebase Auth/Firestore Emulator.
 ```
 
 ---
@@ -229,34 +298,34 @@ Arsitektur AR CRM dibangun dengan prinsip pemisahan tanggung jawab (*Separation 
 
 ---
 
-## 4. MODUL & FITUR UTAMA YANG TELAH DIIMPLEMENTASIKAN
+## 4. MODUL & FITUR PADA SOURCE BRANCH (HOSTED BELUM DIVERIFIKASI)
 
 ### 4.1 Dashboard & Financial Forecast
-- **KPI Real-Time:** Total Pipeline Value, Deals Closed Won, Active Pipeline Deals, dan Weighted Forecast (probabilitas tertimbang berdasarkan bobot stage: Prospect 20%, Meeting 40%, Negotiation 70%, Closing Won 100%, Closing Lost 0%).
-- **Follow-Up Categorization:** Klasifikasi otomatis prospek berstatus `Overdue`, `Today`, `This Week`, dan `Upcoming`.
-- **Top Deals & Industry Distribution:** Ringkasan kesepakatan bernilai tertinggi dan sebaran industri prospek.
+- **KPI dan forecast:** Total Pipeline, Won, Active, weighted forecast, win rate, dan jumlah per stage dari data Leads pada UI. Bobot forecast: Prospect 20%, Meeting 50%, Negotiation 80%, Closing Won 100%, Closing Lost 0%.
+- **Follow-up:** Kategori `overdue`, `due today`, `upcoming`, dan `no date`; lead Closing Won/Lost dikecualikan. Dashboard menampilkan overdue dan due hari ini; tidak ada push reminder otomatis yang diklaim.
+- **Aktivitas terbaru:** Dashboard menampilkan Activity terbaru dan tombol untuk mencatat aktivitas.
 
 ### 4.2 Sales Pipeline (Kanban & List View)
 - **5 Tahapan Standar Penjualan:** Prospect $\rightarrow$ Meeting $\rightarrow$ Negotiation $\rightarrow$ Closing Won $\rightarrow$ Closing Lost.
-- **Drag & Drop / Quick Advance:** Perubahan tahapan pipeline dengan pembaruan tanggal follow-up otomatis dan penulisan antrean mutasi instan (*optimistic write*).
-- **Auto-Archive Closing Won:** Deal yang berpindah ke Closing Won otomatis diarsipkan ke sheet `Archive_Logs` dan disimpan di arsip lokal.
+- **Kanban/List lima tahap:** Perubahan memakai quick-advance dan pemilih tahap; UI optimistik dengan rollback khusus jika mutasi ditolak. Tanggal follow-up tetap opsional.
+- **Auto-Archive Closing Won:** Perubahan stage dan pembuatan `wonDealArchives/{leadId}` terjadi dalam transaksi Firestore; aturan membuat arsip immutable. Belum ada browser hosted test atau layar khusus untuk menelusuri daftar arsip.
 
 ### 4.3 AI Lead Finder & Enrichment
-- **Pencarian Relevan B2B:** Mesin pencarian cerdas berbasis token industri, skoring relevansi geografis (Medan, Jakarta, Cikarang, Surabaya), dan sintesis data prospek korporat dinamis.
-- **AI Match Score:** Skoring kecocokan prospek (Hot/Warm) dengan informasi pengambil keputusan (*decision makers*).
-- **1-Click Import:** Konversi instan prospek global menjadi prospek aktif di sheet `Leads`.
+- **Pencarian publik:** Kriteria kategori, kota, dan profil opsional; paling banyak lima kandidat berbasis Gemini/Search grounding dengan `fit_score` tervalidasi 0–100 dan citation HTTPS.
+- **Provenance:** Saran ditandai belum diverifikasi dan tidak mencantumkan kontak pribadi. Jika sumber/API tidak tersedia, UI tidak membuat prospek pengganti atau data palsu.
+- **Import ke Pipeline:** Tombol satu klik menyimpan kandidat ke Firestore tanpa mengarang kontak, nilai deal, tanggal follow-up, atau score manual.
 
 ### 4.4 Field Activities, GPS Check-In & AI Summarizer
-- **GPS Check-In:** Pengambilan koordinat lintang/bujur presisi via browser Geolocation API / FusedLocationProviderClient.
-- **AI Meeting Summarizer:** Peringkasan transkrip rapat lapangan menggunakan Gemini API (`gemini-3.8-flash`) dengan batas waktu protektif 4 detik melalui `AbortController` dan *Intelligent Local Fallback* jika koneksi terputus.
+- **GPS Check-In:** Koordinat opsional diminta sekali setelah pengguna menekan tombol dan memberi izin; tidak ada background tracking.
+- **AI Meeting Summarizer:** Gemini (`gemini-3.8-flash`) menerima catatan hanya setelah persetujuan eksplisit, melalui endpoint server default-off dengan PIN/session/kuota dan batas input/output. Kegagalan memberi fallback lokal ekstraktif; hasil dapat diedit sebelum disimpan.
 
 ### 4.5 WhatsApp Quick Reach
 - **Normalisasi Nomor Telepon:** Format nomor telepon otomatis ke standar internasional (+62/E.164).
 - **Template Pesan Profesional:** Pilihan template salam formal B2B, penjadwalan demo produk, pengiriman proposal penawaran, dan ucapan apresiasi pasca rapat.
 
 ### 4.6 Offline Sync Engine & Local Security Vault
-- **Dynamic Foreign Key Resolution:** Mutasi lokal yang menggunakan ID sementara (`TEMP-LEAD-xxx`) secara otomatis diperbarui dengan ID server riil (`LEAD-xxx`) saat proses sinkronisasi berhasil.
-- **Local Security Lockout:** Proteksi keamanan PIN SHA-256 tersalt dan autentikasi biometrik WebAuthn sesungguhnya dengan mekanisme lockout 30 detik setelah 5 kali salah input.
+- **Encrypted outbox:** Operasi tulis pending dienkripsi dan dipulihkan hanya untuk owner/workspace yang sama; tes lokal tidak membuktikan sinkronisasi hosted terbaru.
+- **PIN:** Mode hosted menunggu sesi PIN akun server-side yang sah; credential/limiter/session dilindungi Rules. PIN lokal lama hanya untuk mode emulator/local.
 
 ---
 

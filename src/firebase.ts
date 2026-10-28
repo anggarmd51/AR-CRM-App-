@@ -2,7 +2,7 @@ import { getApp, getApps, initializeApp, type FirebaseApp } from 'firebase/app';
 import { getToken, initializeAppCheck, ReCaptchaEnterpriseProvider, type AppCheck } from 'firebase/app-check';
 import { connectAuthEmulator, getAuth, GoogleAuthProvider, type Auth } from 'firebase/auth';
 import { connectFirestoreEmulator, getFirestore, type Firestore } from 'firebase/firestore';
-import { firebaseOwnerBindingMatchesRules } from './firebaseRulesBinding.ts';
+import { firebaseOwnerBindingMatchesRules, firebaseStagingOwnerBindingMatchesRules } from './firebaseRulesBinding.ts';
 import { shouldUseFirebaseEmulators } from './firebaseEmulatorMode.ts';
 import { initializeStagingAppCheck } from './firebaseAppCheckPolicy.ts';
 import { resolveFirebaseTarget, type FirebaseTarget } from './firebaseDeploymentGuard.ts';
@@ -141,9 +141,15 @@ export const workspaceId = import.meta.env.VITE_FIREBASE_WORKSPACE_ID?.trim() ||
 export const designatedOwnerUid = import.meta.env.VITE_FIREBASE_OWNER_UID?.trim() || '';
 
 export function hasWorkspaceConfiguration(): boolean {
+  if (firebaseTarget === 'staging') {
+    return firebaseIsConfigured && firebaseStagingOwnerBindingMatchesRules(designatedOwnerUid, workspaceId);
+  }
   return firebaseIsConfigured && firebaseOwnerBindingMatchesRules(designatedOwnerUid, workspaceId);
 }
 
 export function isDesignatedOwner(uid: string | undefined): boolean {
+  if (firebaseTarget === 'staging') {
+    return Boolean(uid && firebaseStagingOwnerBindingMatchesRules(designatedOwnerUid, workspaceId) && uid === designatedOwnerUid);
+  }
   return Boolean(uid && firebaseOwnerBindingMatchesRules(designatedOwnerUid, workspaceId) && uid === designatedOwnerUid);
 }

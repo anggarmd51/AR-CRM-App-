@@ -11,11 +11,29 @@ service cloud.firestore {
       return workspaceId == 'ar-crm-owner';
     }
 
+    function activeAccountPinSessionDocument(sessionId) {
+      let sessionPath = /databases/$(database)/documents/accountPinSessions/$(sessionId);
+      return exists(sessionPath)
+        && get(sessionPath).data.ownerUid == request.auth.uid
+        && get(sessionPath).data.status == 'active'
+        && get(sessionPath).data.expiresAt is timestamp
+        && get(sessionPath).data.expiresAt > request.time;
+    }
+
+    function accountPinSessionVerified() {
+      let sessionId = request.auth.token.get('pinSessionId', '');
+      return request.auth != null
+        && sessionId is string
+        && sessionId.matches('^[A-Za-z0-9_-]{32,128}$')
+        && activeAccountPinSessionDocument(sessionId);
+    }
+
     function ownerMembership(workspaceId) {
       let workspacePath = /databases/$(database)/documents/workspaces/$(workspaceId);
       let memberPath = /databases/$(database)/documents/workspaces/$(workspaceId)/members/$(request.auth.uid);
       return configuredWorkspace(workspaceId)
         && designatedOwner()
+        && accountPinSessionVerified()
         && exists(workspacePath)
         && get(workspacePath).data.ownerId == request.auth.uid
         && exists(memberPath)
@@ -73,19 +91,60 @@ service cloud.firestore {
         && data.updated_at is timestamp;
     }
 
+    function validActivityGps(value) {
+      return value is map
+        && value.keys().hasAll(['latitude', 'longitude', 'accuracy_m'])
+        && value.keys().hasOnly(['latitude', 'longitude', 'accuracy_m'])
+        && (value.latitude is int || value.latitude is float)
+        && value.latitude >= -90 && value.latitude <= 90
+        && (value.longitude is int || value.longitude is float)
+        && value.longitude >= -180 && value.longitude <= 180
+        && (value.accuracy_m is int || value.accuracy_m is float)
+        && value.accuracy_m >= 0 && value.accuracy_m <= 100000;
+    }
+
     function validActivityFields(data) {
       return data.keys().hasAll([
           'lead_id', 'activity_type', 'notes', 'ownerId', 'role', 'created_at'
         ])
         && data.keys().hasOnly([
-          'lead_id', 'activity_type', 'notes', 'ownerId', 'role', 'created_at'
+          'lead_id', 'activity_type', 'notes', 'ownerId', 'role', 'created_at',
+          'ai_summary', 'ai_summary_source', 'location_gps'
         ])
         && data.lead_id is string && data.lead_id.size() > 0 && data.lead_id.size() <= 150
         && data.activity_type is string && data.activity_type.size() > 0 && data.activity_type.size() <= 80
         && data.notes is string && data.notes.size() <= 12000
+        && (data.keys().hasAny(['ai_summary']) == data.keys().hasAny(['ai_summary_source']))
+        && (!data.keys().hasAny(['ai_summary']) || (
+          data.ai_summary is string && data.ai_summary.size() > 0 && data.ai_summary.size() <= 4000
+          && data.ai_summary_source in ['gemini', 'local']
+        ))
+        && (!data.keys().hasAny(['location_gps']) || validActivityGps(data.location_gps))
         && data.ownerId is string && data.ownerId == request.auth.uid
         && data.role == 'owner'
         && data.created_at is timestamp;
+    }
+
+    function validWonArchiveFields(data, leadId) {
+      return data.keys().hasAll([
+          'lead_id', 'company_name', 'contact_person', 'phone', 'industry', 'city',
+          'deal_value', 'won_date', 'archived_at', 'ownerId', 'role'
+        ])
+        && data.keys().hasOnly([
+          'lead_id', 'company_name', 'contact_person', 'phone', 'industry', 'city',
+          'deal_value', 'won_date', 'archived_at', 'ownerId', 'role'
+        ])
+        && data.lead_id == leadId
+        && data.company_name is string && data.company_name.size() > 0 && data.company_name.size() <= 200
+        && data.contact_person is string && data.contact_person.size() > 0 && data.contact_person.size() <= 200
+        && data.phone is string && data.phone.size() <= 200
+        && data.industry is string && data.industry.size() <= 120
+        && data.city is string && data.city.size() <= 120
+        && (data.deal_value is int || data.deal_value is float) && data.deal_value >= 0
+        && validFollowupDate(data.won_date) && data.won_date != ''
+        && data.archived_at is timestamp
+        && data.ownerId is string && data.ownerId == request.auth.uid
+        && data.role == 'owner';
     }
 
     function immutableLeadIdentity(existing, incoming) {
@@ -132,6 +191,24 @@ service cloud.firestore {
           && validLeadFields(get(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(request.resource.data.lead_id)).data);
         allow update: if false;
         allow delete: if false;
+      }
+
+      match /wonDealArchives/{leadId} {
+        allow get, list: if ownerMembership(workspaceId)
+          && resource.data.ownerId == request.auth.uid;
+        allow create: if ownerMembership(workspaceId)
+          && validWonArchiveFields(request.resource.data, leadId)
+          && existsAfter(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(leadId))
+          && getAfter(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(leadId)).data.ownerId == request.auth.uid
+          && getAfter(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(leadId)).data.role == 'owner'
+          && getAfter(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(leadId)).data.pipeline_stage == 'Closing Won'
+          && request.resource.data.company_name == getAfter(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(leadId)).data.company_name
+          && request.resource.data.contact_person == getAfter(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(leadId)).data.contact_person
+          && request.resource.data.phone == getAfter(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(leadId)).data.phone
+          && request.resource.data.industry == getAfter(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(leadId)).data.industry
+          && request.resource.data.city == getAfter(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(leadId)).data.city
+          && request.resource.data.deal_value == getAfter(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(leadId)).data.deal_value;
+        allow update, delete: if false;
       }
     }
 

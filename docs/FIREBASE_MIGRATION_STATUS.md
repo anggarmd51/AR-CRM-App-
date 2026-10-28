@@ -1,60 +1,97 @@
 # AR CRM — Status Integrasi Firebase
 
-Diperbarui pada 27 Oktober 2026, 02:01 WIB setelah verifikasi lokal dan triase dependency lanjutan di branch `cue/firebase-stabilization`.
+Diperbarui pada 28 Oktober 2026, 07:53 WIB. Branch lokal `cue/firebase-stabilization`, HEAD `8498878`; seluruh perubahan sesi ini belum di-commit. Tidak membandingkan remote ref.
 
 ## Ringkasan
 
-Cabang ini mengintegrasikan Firebase Authentication dengan Google Sign-In dan Firestore untuk operasi Leads/Activities. Aplikasi hanya membuka CRM jika konfigurasi client cocok dengan binding owner dan workspace pada `firestore.rules`; Rules memvalidasi schema, membership, kepemilikan, dan relasi activity ke lead dalam workspace yang sama. Implementasi sengaja tidak membaca atau mengimpor data lama dari `localStorage`, Sheets, atau GAS.
+Owner/workspace staging dan Rules terpisah sudah diprovisikan. App Check/Auth loopback, create/readback Lead–Activity sintetis, serta Firestore SDK offline → reload durable → reconnect → replay idempotent berhasil diuji. Seluruh empat dokumen CRM sintetis sudah dihapus melalui admin; root workspace dan membership owner tetap ada. **Ini belum berarti production ready dan bukan hosted Vercel Preview.**
 
-Konstanta owner/workspace client dicocokkan dengan Rules lewat unit test. Rules lokal kini membatasi akses ke workspace `ar-crm-owner`; tes emulator menolak workspace tambahan sekalipun root dan membership di fixture sintetis cocok. Perubahan Rules lokal belum dideploy oleh pekerjaan ini.
+Cabang ini menggunakan Google Sign-In dan Firestore untuk Leads/Activities, tanpa impor otomatis dari `localStorage`, Sheets, atau GAS. Development tetap emulator-only. Hosted Preview wajib memakai target `staging`, project ID terpisah berpola `ar-crm-staging-` dan exact allowlist; Production hanya menerima project production yang ditetapkan. Guard client bukan pengganti Rules.
 
-Dalam mode development, aplikasi selalu menghubungkan Auth dan Firestore ke emulator lokal; tidak ada opt-out environment untuk mengarahkannya ke Firebase live. Build production tidak menggunakan emulator.
+## Pembaruan kandidat lokal — 28 Oktober 2026
 
-## Status Firebase dan autentikasi
+- Activity kini menyimpan `ai_summary` dengan sumber `gemini`/`local` dan GPS opsional. UI meminta persetujuan sebelum mengirim catatan ke Gemini; fallback lokal hanya mengambil teks yang sudah ada. GPS hanya diminta sekali lewat tombol, bukan background tracking.
+- Rules membatasi pasangan summary/source, rentang koordinat, dan fields tambahan. Perpindahan Closing Won memakai transaction Firestore untuk mengubah stage dan membuat arsip `wonDealArchives/{leadId}` yang immutable; Rules mengizinkan create hanya jika lead yang sama berstatus Closing Won dalam `getAfter()`.
+- UI Pipeline optimistik dan mengembalikan stage hanya bila operasi terkait ditolak. Uji hosted untuk alur tersebut belum dilakukan.
+- Unit/mock tests: 128 lulus; Rules/Admin Emulator: 17 lulus; TypeScript, build sanitasi, dan `git diff --check` lulus. Build mencatat satu bundle JavaScript 983.92 kB (Vite warning di atas 500 kB); bundle tidak memuat marker SDK/key Gemini server.
+- Vercel Production tidak mencatat `VITE_FIREBASE_TARGET=production`, dan Gemini key Production belum terkonfirmasi. Source baru tetap fail-closed; tidak ada perubahan environment, data, Rules, deployment, alias, push, atau commit Production.
+- Tidak ada uji browser hosted atau panggilan live Gemini. Build/local emulator bukan bukti bahwa deployment hosted terbaru berfungsi.
 
-Project target adalah **AR CRM** (`ar-crm-73222`), dengan Firestore Standard di `asia-southeast1`, Web App AR CRM Web, dan Google provider. Berdasarkan verifikasi terdahulu, Rules production telah dideploy dan dokumen workspace serta membership owner sudah diprovisikan. Status cloud itu tidak dibaca ulang dalam pembaruan dokumentasi ini; tidak ada record CRM yang diakses.
+## Staging yang terverifikasi
 
-Pada pemeriksaan lokal terdahulu, konfigurasi `.env.local` cocok dengan project dan binding owner/workspace Rules, berizin file `600`, dan diabaikan Git. Nilai konfigurasi tidak dicantumkan. Pemilik sebelumnya melaporkan login Google live sebagai owner berhasil; masalah query index yang muncul setelah login telah ditangani dengan indeks Firestore. CRUD owner live belum selesai diverifikasi. Authorized domain `arcrmapp.vercel.app` sebelumnya dilaporkan sudah ditambahkan. Tak satu pun status cloud tersebut diperiksa ulang dalam pembaruan ini.
+- Project: [`ar-crm-staging-angga-20261027`](https://console.firebase.google.com/project/ar-crm-staging-angga-20261027/overview), `AR CRM Staging`. Paket Spark/no-cost telah diverifikasi pada provisioning; tidak mengaktifkan billing, Blaze, atau free trial.
+- Database akhir: `(default)`, `asia-southeast1`, `FIRESTORE_NATIVE`, `STANDARD`, `freeTier=true`, PITR disabled.
+- Web App: `AR CRM Staging Web`, App ID `1:622108535247:web:b94a1d19f319ec7f200aba`. SDK config/site key tidak dicetak atau ditulis dalam dokumen ini.
+- Google provider **Enabled**; authorized domains tetap `localhost`, `ar-crm-staging-angga-20261027.firebaseapp.com`, dan `ar-crm-staging-angga-20261027.web.app`. Tidak ada custom domain atau hosted deployment.
+- App Check reCAPTCHA Enterprise terdaftar pada Web App staging; key score-based dibatasi ke `localhost`, domain verification enabled. Enforcement Firestore/Auth tetap **Unenforced**; tidak ada toggle enforcement yang diubah. Token preflight nyata berhasil sebelum Auth/Firestore digunakan.
+- Identitas owner staging diperoleh melalui OAuth owner sebelumnya dan berbeda dari production. UID tetap privat; tidak disimpan di source/docs. Rules staging privat mengikat hanya UID itu dan workspace `ar-crm-staging-owner`.
 
-Google Sign-In dapat membuat entri Firebase Auth saat login pertama, sedangkan Firestore Rules membatasi data CRM dan tidak mencegah pembuatan Auth user itu sendiri. Tidak ada alur registrasi workspace/member dari client.
+## Rules, provisioning, dan indeks
 
-## Data dan batas keselamatan
+Rules staging disalin ke file privat di luar repo dengan struktur/validasi ketat yang sama; hanya binding UID/workspace diganti. Smoke emulator staging lulus untuk owner, penolakan non-owner/delete, Lead–Activity/readback, replay dan cleanup. Deployment Rules memakai `--project ar-crm-staging-angga-20261027` secara eksplisit dan project diverifikasi sebelum/sesudah. `firestore.rules`, `firebase.json`, serta `firestore.indexes.json` repo tidak diubah.
 
-- Semua uji Rules memakai Firestore Emulator dengan project `demo-ar-crm-rules` dan fixture sintetis.
-- Uji UI development memakai Auth Emulator (`127.0.0.1:9099`) dan Firestore Emulator (`127.0.0.1:8080`) secara default; ini tidak memverifikasi Google OAuth live.
-- Tidak ada test Lead/Activity yang ditulis ke Firestore production.
-- Tidak ada data CRM nyata yang dibaca, diekspor, dipindahkan, atau dihapus.
-- Tidak ada migrator executable; [runbook bootstrap dan migrasi](OWNER_BOOTSTRAP_AND_DATA_MIGRATION_RUNBOOK.md) adalah prosedur/draf, bukan izin apply.
-- Berdasarkan konteks pemilik, data operasional lama belum dimigrasikan ke Firestore. Rilis aplikasi baru akan menampilkan CRM Firebase yang kosong dari Leads/Activities sampai migrasi disetujui dan dilakukan; sumber lama tidak otomatis dihapus, tetapi dapat tidak terlihat di UI baru.
-- Firestore Rules tidak mengizinkan client menghapus record atau mengubah membership. Activity immutable; Lead hanya dapat diubah pada stage, follow-up, dan `updated_at`.
-- Notes tidak dikirim ke AI; GPS tidak ditangkap atau disimpan oleh jalur aplikasi baru.
+Admin commit atomik dengan precondition create-only membuat tepat root workspace (`ownerId`) dan membership owner (`role=owner`), sebelum record CRM apa pun dibuat. Kedua dokumen dibaca kembali dan tetap ada setelah cleanup. Client tidak memprovisikan root/member dan tetap tidak boleh menghapus CRM atau mengubah membership.
 
-## Status deployment
+Query awal aplikasi gagal `FAILED_PRECONDITION` karena indeks belum ada. Dua indeks `ownerId ASC + created_at DESC` untuk Leads dan Activities diterapkan hanya ke staging dan sudah READY. Daftar API memuat kedua parent koleksi sekaligus; dugaan awal duplikasi ternyata salah. Guard cleanup berhenti sebelum DELETE, sehingga tidak ada indeks yang dihapus. Query ekuivalen aplikasi kemudian HTTP 200 dan UI berhasil membaca record.
 
-Deployment production terakhir yang diketahui adalah Vercel project `arcrm-app`, dari branch `cue/firebase-stabilization`, commit `f010c46f6358fa57fe2b0957e8f049058acb0b7d`. Status deployment tersebut tidak diperiksa ulang pada pembaruan ini. HEAD checkout lokal saat pemeriksaan adalah `a6670b8`; working tree berisi perubahan lokal yang sudah ada dan perubahan dokumentasi task ini, tanpa membandingkan remote ref. Tidak ada perubahan tersebut yang dipromosikan atau di-deploy. Cutover penuh dan migrasi data operasional tetap terpisah. Data lama belum dimigrasikan dan tidak otomatis tampil pada aplikasi Firebase.
+Source guard staging menerima workspace staging tetap dan UID non-production; exact UID tetap ditegakkan Rules privat. Binding production yang ada dipertahankan. `.env.staging.local` dibuat ignored Git dengan mode `0600`; `.env.local` tidak dibaca/disentuh. Build hanya pada salinan privat yang mengecualikan seluruh `.env*`/`.npmrc` sumber, memasukkan env staging eksplisit, dan membersihkan environment proses dengan `env -i`.
 
-Delapan `VITE_FIREBASE_*` awal sebelumnya dilaporkan tersedia di Vercel Production dan Preview, tetapi environment cloud tidak dibaca ulang. Guard lokal mensyaratkan `VITE_FIREBASE_TARGET=production` hanya pada Production dengan exact project ID production, serta target `staging` dan project ID berprefix `ar-crm-staging-` yang cocok persis dengan `VITE_FIREBASE_STAGING_PROJECT_ID_ALLOWLIST` pada Preview. Penambahan nilai ini ke Vercel belum dilakukan atau diverifikasi. Tanpa target eksplisit, hosted build akan ditolak oleh guard. Paritas SHA Rules production dengan file lokal pernah dikonfirmasi sebelumnya; tidak diperiksa ulang dalam pembaruan ini. Jangan mengubah Authorized Domains atau environment cloud tanpa persetujuan terpisah.
+## Hasil CRUD dan offline terbatas
 
-## Hasil verifikasi lokal
+Server preview hanya listen di `127.0.0.1:4174`. App Check dan Google Auth owner berhasil membuka CRM staging kosong tanpa tindakan owner tambahan. Lewat UI, satu Lead dan satu Activity online bertanda **SYNTHETIC STAGING … DELETE AFTER TEST** dibuat; readback server serta parent Activity terverifikasi.
 
-- Pada 27 Oktober 2026, `npm test`: **74/74 lulus**; `npm run lint`: **lulus**; `npx tsc --noEmit`: **lulus**; dan `npm run build`: **lulus**.
-- Rules Emulator: **12/12 lulus** pada project demo sintetis, termasuk commit-then-retry reconciliation untuk lead dan activity. Suite dijalankan langsung ke emulator lokal yang sudah aktif di `127.0.0.1:8080`; proses emulator tidak dihentikan.
-- Build masih menampilkan warning Vite terkait `__dirname` dan chunk JavaScript **950,41 kB** (ambang warning 500 kB). `git diff --check` lulus setelah pembaruan dokumentasi.
+Harness sementara di salinan privat memakai repository/queue asli dan Rules normal, bukan admin writer. Dengan Firestore SDK `disableNetwork()`, pasangan Lead–Activity kedua diterima lokal tanpa acknowledgement. Admin GET memastikan keduanya 404 sebelum dan sesudah reload. Reload memulihkan dua operasi durable (`pending=1`, `syncing=1`, `failed=0`); reconnect kemudian mempersist keduanya.
 
-Tes lokal tidak menggantikan pemeriksaan live. Verifikasi ini tidak membuka Firebase/Vercel cloud, tidak membaca `.env.local`, dan tidak menggunakan data production.
+Verifikasi readback awal harness dilakukan terlalu cepat dan ditolak Rules saat dokumen belum ada. Kedua write kemudian terkonfirmasi berhasil di server; harness diperbaiki agar menunggu queue selesai dan melanjutkan ID yang sama tanpa enqueue ulang. Server-only readback serta replay pada ID tetap lulus; timestamp immutable tidak berubah dan queue berakhir `pending=0`, `syncing=0`, `failed=0`.
 
-## Perkembangan stabilisasi lokal
+**Batas bukti:** ini uji offline Firestore SDK, bukan pemutusan seluruh jaringan browser/perangkat atau uji service-worker offline penuh. Penolakan non-owner dan delete diverifikasi di emulator, bukan login non-owner live. Update stage/arsip tercakup Rules Emulator dan implementasi lokal, tetapi belum diuji melalui browser pada hosted Preview.
 
-- Guard `src/firebaseDeploymentGuard.ts` menolak hosted Preview tanpa target `staging`, exact allowlist, dan project ID berprefix `ar-crm-staging-`; development tetap menggunakan emulator; target `production` hanya diterima pada Vercel Production dengan exact project ID production.
-- App Check dengan reCAPTCHA Enterprise hanya diinisialisasi pada staging. Site key/provider/token preflight yang hilang atau gagal ditangkap sebagai startup error; Auth/Firestore ditahan. Belum ada project staging, provider/site key, environment Preview, atau status enforcement Console yang diverifikasi. Enforcement tetap menjadi pengaturan Firebase Console dan tidak diubah oleh kode.
-- Antrean create Lead, update stage, dan create Activity memakai IndexedDB outbox dengan payload AES-GCM allowlisted, partisi owner/workspace, pemulihan saat startup, retry transient saat reconnect, deduplikasi stable document ID, dependency lead→activity, UI server acknowledgement, serta koreksi manual untuk payload failed. Data pending tidak dihapus saat logout; UI memperingatkan dan antrean dipulihkan hanya untuk scope owner/workspace yang sama.
-- Ekspor Firestore → Sheets tersedia sebagai kode lokal saja. Belum ada spreadsheet pelaporan, service account/IAM, server environment variable, atau Cron yang dikonfigurasi; Sheets bukan backup.
-- Working tree berisi perubahan lokal yang belum di-stage/commit; tidak ada commit, push, merge, atau deploy pada pembaruan ini. `npm audit --json` melaporkan 10 entri paket rentan (5 moderate, 5 high, 0 critical), bukan 10 advisory unik. `npm audit --omit=dev --json` melaporkan empat entri paket production yang berasal dari satu advisory unik High (GHSA-m9gg-hp2v-232j, CVSS 7,4) dan satu Low (GHSA-f596-whhp-79r4, CVSS 3,7) melalui `@grpc/grpc-js@1.9.16`. Tidak ada upgrade dependency yang diterapkan; detail patch, paparan browser, dan blocker dicatat di [`PROJECT_STATE.md`](../PROJECT_STATE.md).
+## Cleanup dan keselamatan data
 
-## Gate sebelum production
+Setiap marker online/offline terverifikasi tepat satu: total dua Lead dan dua Activity, tanpa duplikat. Admin commit menghapus hanya empat ID tersebut setelah memverifikasi project/path, marker, owner, parent, dan `updateTime`. GET masing-masing kemudian 404; koleksi Leads/Activities staging kosong dan root/member owner tetap utuh.
 
-1. Pemilik menentukan apakah rilis ditunda sampai migrasi operasional yang disetujui, atau dirilis dengan data lama tetap di sumber legacy namun tidak terlihat pada UI baru.
-2. Persetujuan eksplisit dibutuhkan sebelum merge/promosi ke `main`; nama branch yang diminta untuk commit/push adalah `cue/firebase-stabilization`.
-3. Verifikasi domain Google Auth production dan environment variables Vercel tanpa membocorkan nilainya. Jangan ubah Authorized Domains tanpa persetujuan.
-4. Pastikan Rules production sudah cocok dengan branch (khususnya binding workspace tunggal) sebelum mengaktifkan aplikasi baru. Jika perlu memperbarui Rules, deployment Rules memerlukan jalur/otorisasi tersendiri.
-5. Migrasi perlu scope, backup/recovery, pemetaan schema, dry-run sintetis, manifest/checksum, rekonsiliasi, approval apply, dan cutover tersendiri sesuai runbook.
+Reload aplikasi setelah cleanup menunjukkan 0 akun, tidak ada Activity, dan antrean kosong. Sesi staging kemudian logout; layar Google Sign-In kembali tampil. Tidak dilakukan relogin sesudah logout akhir ini.
+
+Tidak ada data CRM nyata yang dibaca, diekspor, dipindahkan, dihapus, atau ditulis. Google Sheet `Personal CRM Data` tidak digunakan. Tidak ada migrator executable; runbook/mapping bukan izin apply. Tidak ada catatan rapat nyata yang dikirim ke AI atau GPS nyata yang ditangkap selama pengujian; implementasi lokal baru dapat menyimpan hasil ringkasan berizin dan GPS satu-kali pada Activity. Ekspor Sheets adalah pelaporan, bukan backup.
+
+Tidak ada perubahan production/`main`, push, merge, deployment Vercel, atau migrasi. Operasi cloud sesi ini terbatas pada Rules/indeks, provisioning owner, dan fixture/cleanup staging yang disebutkan di atas.
+
+## Verifikasi lokal sesi ini
+
+- `npm test`: **83/83 lulus**.
+- `npm run lint`: **lulus**.
+- `npx --no-install tsc --noEmit`: **lulus**.
+- Rules Emulator: **12/12 lulus**, project sintetis `demo-ar-crm-rules`, port terpisah 18081.
+- `git diff --check`: **lulus**.
+- Build staging sanitasi: **lulus**, dengan warning ukuran JavaScript chunk di atas ambang 500 kB. Harness multi-entry juga lulus dengan shared chunk sekitar 594,42 kB.
+
+Audit/build terdahulu yang mungkin memuat env otomatis tetap merupakan catatan historis di [`PROJECT_STATE.md`](../PROJECT_STATE.md), bukan prosedur build sesi ini. Dependency tidak di-upgrade; advisory unik High/Low pada jalur `@grpc/grpc-js@1.9.16` yang tercatat sebelumnya belum diselesaikan dan audit dependency tidak dijalankan ulang.
+
+## Production: catatan historis, tidak diperiksa ulang
+
+Tidak ada operasi Rules/data yang menargetkan project production `ar-crm-73222`, tidak ada perubahannya, dan data CRM production tidak diakses. Catatan terdahulu menyebut Firestore Singapore, Google Auth, Rules dan root/member tersedia; pemilik melaporkan login berhasil, tetapi production CRUD belum terverifikasi. Deployment terakhir yang diketahui berasal dari Vercel project `arcrm-app`, commit `f010c46f6358fa57fe2b0957e8f049058acb0b7d`; status live tidak diperiksa ulang.
+
+Google Sign-In dapat membuat identitas Auth sebelum client gate menolak non-owner. Rules membatasi CRM, bukan allowlist pembuatan akun Auth. Outbox AES-GCM per owner/workspace bukan backup lintas perangkat atau persistence seluruh snapshot CRM. Ekspor Firestore→Sheets masih kode lokal; IAM/service account, environment server, dan Cron belum disiapkan.
+
+## Gate berikutnya
+
+1. **Hosted Vercel Preview masih belum disetujui.** Environment, domain/key App Check yang sesuai, serta deployment memerlukan persetujuan eksplisit; tidak boleh mengubah Production settings.
+2. Setelah izin Preview, uji owner/non-owner live, update stage, logout/relogin, full-browser offline/reconnect, acknowledgement, dan tidak adanya duplikasi pada origin hosted.
+3. Selesaikan dependency High serta backup/restore melalui scope dan persetujuan tersendiri.
+4. App Check production, production CRUD, migrasi dan cutover harus disetujui serta diverifikasi terpisah. Persetujuan staging bukan izin merge, deployment production, atau cutover.
+
+
+## Pembaruan lokal: perubahan hanya saat online
+
+Perubahan lokal pada branch `cue/firebase-stabilization` menolak mutasi CRM baru saat browser menyatakan perangkat offline. Record yang sudah terlanjur menunggu atau gagal di antrean tidak dihapus; antrean tersebut tetap menunggu dan baru dicoba lagi ketika koneksi pulih. Retry dan koreksi record gagal juga ditahan saat offline. Cache Service Worker hanya berisi berkas aplikasi, bukan daftar Lead atau Activity.
+
+Peta penyimpanan saat ini:
+
+- **Lead dan Activity aktif:** Firestore adalah sumber data; aplikasi membaca perubahan melalui langganan Firestore realtime. Kode aktif tidak menghidrasi Lead/Activity dari `localStorage`.
+- **Antrean pemulihan:** IndexedDB terenkripsi pada browser ini hanya menyimpan mutasi yang belum diakui Firestore, bukan salinan lengkap data CRM. Record antar-perangkat tidak otomatis tersinkron kecuali diakui server. Jangan menghapus browser data atau record pending/failed sebelum antrean diperiksa dan record aman dipulihkan.
+- **Kode CRM lama:** helper `CrmStorage` berbasis `localStorage` tetap ada untuk kompatibilitas dan tes lama, tetapi tidak lagi diimpor oleh jalur Auth, UI, atau repository aktif. Nilai lama tidak dibaca, dihapus, atau dimigrasikan oleh patch ini.
+- **Kunci layar lokal:** `SecurityVault` masih menyimpan PIN/kebijakan kunci layar dan preferensi per-browser di `localStorage`. Itu bukan PIN akun dan tidak dibagikan antar-perangkat. Data ini sengaja tidak dihapus atau dimatikan; menggantinya memerlukan penyimpanan preferensi online yang aman dan keputusan pemilik.
+
+Guard offline memakai status koneksi browser. Jika browser masih menganggap dirinya online meskipun internet atau Firestore tidak dapat dijangkau, SDK dapat tetap menunggu konfirmasi; itulah alasan outbox pemulihan dipertahankan. Outbox ini tidak boleh dipasarkan sebagai sinkronisasi lintas-perangkat atau backup.
+
+**PIN akun lintas perangkat dan penggunaan hosted belum siap production.** Gerbang fail-closed yang sudah ada tetap menahan akses cloud sampai verifier PIN tepercaya, hash/secret server-only, rate-limit durable lintas perangkat, sesi server yang dapat kedaluwarsa/dicabut, dan Firestore Rules yang teruji tersedia. Patch lokal ini tidak mengubah cloud, environment, deployment, atau data. Langkah berikutnya adalah menyelesaikan backend sesi/PIN dan penyimpanan preferensi terpusat, lalu uji staging terpisah; setelah antrean pending/failed direkonsiliasi, pemilik dapat memutuskan apakah outbox lokal masih diperlukan sebelum seluruh penyimpanan lokal dihapus lewat perubahan yang disetujui.

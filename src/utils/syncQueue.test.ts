@@ -306,38 +306,130 @@ test('offline write is persisted locally, then acknowledged after reconnect', as
   } finally { queue.dispose(); }
 });
 
-test('offline-aware Firestore write stays pending until the server promise resolves', async () => {
+test('new durable mutation is rejected while offline without touching the outbox', async () => {
   const connectivity = new FakeConnectivity(false);
   const store = new MemoryOutboxStore();
   const queue = new OfflineWriteQueue(connectivity, store);
-  const sdkWrite = createDeferred<void>();
   const record = leadRecord('offline-sdk-write');
   let calls = 0;
   try {
     await queue.activateScope(ownerScope, async () => undefined);
-    const receipt = queue.enqueue({
+    assert.throws(() => queue.enqueue({
       id: record.id,
       label: record.label,
       durable: record,
-      runWhenOffline: true,
-      run: () => { calls += 1; return sdkWrite.promise; },
+      run: async () => { calls += 1; },
+    }), { name: 'OfflineWriteBlockedError' });
+    assert.equal(calls, 0);
+    assert.equal(queue.getSnapshot().operations.length, 0);
+    assert.equal((await store.list(ownerScope)).length, 0, 'a rejected new mutation must not be stored in the outbox');
+  } finally { queue.dispose(); }
+});
+
+test('restored durable mutation stays paused after reconnect until owner starts replay', async () => {
+  const connectivity = new FakeConnectivity(false);
+  const store = new MemoryOutboxStore();
+  const queue = new OfflineWriteQueue(connectivity, store);
+  const sdkWrite = createDeferred<void>();
+  const record = leadRecord('restored-offline-sdk-write');
+  await store.insert({ ...record, attempts: 0, state: 'pending' } as DurableQueueRecord);
+  let calls = 0;
+  try {
+    await queue.activateScope(ownerScope, async () => {
+      calls += 1;
+      return sdkWrite.promise;
     });
-    await receipt.accepted;
-    await waitFor(() => calls === 1);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(calls, 0, 'previously accepted writes must not be sent offline');
     assert.equal(queue.getSnapshot().pendingCount, 1);
-    assert.equal(queue.getSnapshot().syncingCount, 0);
-    assert.equal(queue.getSnapshot().operations[0].state, 'pending');
+    assert.throws(() => queue.retry(record.id), { name: 'OfflineWriteBlockedError' });
+    assert.equal(queue.getSnapshot().manualReplayCount, 1, 'an offline retry cannot release the manual replay guard');
+    assert.equal(queue.startManualReplay(), 0, 'batch replay is not released while offline');
+    assert.equal((await store.list(ownerScope)).length, 1, 'recovery record remains available offline');
 
     connectivity.setOnline(true);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(calls, 0, 'reconnect must not replay a mutation restored after login');
+    assert.equal(queue.getSnapshot().manualReplayCount, 1);
+    assert.equal(queue.getSnapshot().operations[0].requiresManualReplay, true);
+    assert.equal('payload' in queue.getSnapshot().operations[0], false, 'UI snapshot exposes no queued payload');
+
+    assert.equal(queue.startManualReplay(), 1, 'the owner action releases the restored operation');
+    await waitFor(() => calls === 1);
     assert.equal(queue.getSnapshot().syncingCount, 1);
     sdkWrite.resolve();
-    await receipt.acknowledged;
-    assert.equal(queue.getSnapshot().operations[0].state, 'acknowledged');
+    await waitFor(() => queue.getSnapshot().acknowledgedCount === 1);
+    assert.equal((await store.list(ownerScope)).length, 0, 'record is removed only after Firestore acknowledgement');
+  } finally { queue.dispose(); }
+});
+
+test('explicit owner action starts a restored replay once', async () => {
+  const store = new MemoryOutboxStore();
+  const queue = new OfflineWriteQueue(new FakeConnectivity(true), store);
+  const replayAck = createDeferred<void>();
+  const record = leadRecord('manual-replay-once');
+  await store.insert({ ...record, attempts: 0, state: 'pending' } as DurableQueueRecord);
+  let calls = 0;
+  try {
+    await queue.activateScope(ownerScope, async () => {
+      calls += 1;
+      return replayAck.promise;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(calls, 0, 'restore must not send even while online');
+    assert.equal(queue.startManualReplay(), 1);
+    await waitFor(() => calls === 1);
+    assert.equal(queue.startManualReplay(), 0, 'repeating the owner action must not release the same operation again');
+    assert.equal(calls, 1, 'a single restored operation is sent only once while its first attempt is active');
+    replayAck.resolve();
+    await waitFor(() => queue.getSnapshot().acknowledgedCount === 1);
+    assert.equal((await store.list(ownerScope)).length, 0);
+  } finally { queue.dispose(); }
+});
+
+test('restore fails closed without deleting an unrecoverable outbox record', async () => {
+  const store = new MemoryOutboxStore();
+  const record = leadRecord('unrecoverable-restored-record');
+  await store.insert({ ...record, payload: undefined, attempts: 0, state: 'pending' } as unknown as DurableQueueRecord);
+  const queue = new OfflineWriteQueue(new FakeConnectivity(true), store);
+  let calls = 0;
+  try {
+    await assert.rejects(
+      queue.activateScope(ownerScope, async () => { calls += 1; }),
+      /no recoverable payload/,
+    );
+    assert.equal(calls, 0, 'an unrecoverable record must never be sent');
+    const preserved = await store.list(ownerScope);
+    assert.equal(preserved.length, 1);
+    assert.equal(preserved[0].id, record.id);
+    assert.equal(preserved[0].state, 'pending');
+    assert.equal(preserved[0].payload, undefined);
+  } finally { queue.dispose(); }
+});
+
+test('failed manual replay preserves the pending record and payload unchanged', async () => {
+  const store = new MemoryOutboxStore();
+  const queue = new OfflineWriteQueue(new FakeConnectivity(true), store);
+  const record = leadRecord('manual-replay-failure');
+  await store.insert({ ...record, attempts: 0, state: 'pending' } as DurableQueueRecord);
+  let calls = 0;
+  try {
+    await queue.activateScope(ownerScope, async () => {
+      calls += 1;
+      throw { code: 'permission-denied' };
+    });
+    assert.equal(queue.startManualReplay(), 1);
+    await waitFor(() => queue.getSnapshot().failedCount === 1);
+    assert.equal(calls, 1);
+    const [preserved] = await store.list(ownerScope);
+    assert.equal(preserved?.id, record.id);
+    assert.equal(preserved?.state, 'failed');
+    assert.deepEqual(preserved?.payload, record.payload, 'a failed replay does not alter the original payload');
   } finally { queue.dispose(); }
 });
 
 test('scope deactivation settles in-flight and dependency-blocked receipts without stale finalization', async () => {
-  const connectivity = new FakeConnectivity(false);
+  const connectivity = new FakeConnectivity(true);
   const store = new MemoryOutboxStore();
   const queue = new OfflineWriteQueue(connectivity, store);
   const sdkAttempt = createDeferred<void>();
@@ -362,7 +454,6 @@ test('scope deactivation settles in-flight and dependency-blocked receipts witho
       id: parent.id,
       label: parent.label,
       durable: parent,
-      runWhenOffline: true,
       run: () => { parentCalls += 1; return sdkAttempt.promise; },
     });
     await parentReceipt.accepted;
@@ -371,7 +462,6 @@ test('scope deactivation settles in-flight and dependency-blocked receipts witho
       id: child.id,
       label: child.label,
       durable: child,
-      runWhenOffline: true,
       run: async () => { childCalls += 1; },
     });
     await childReceipt.accepted;
@@ -389,7 +479,7 @@ test('scope deactivation settles in-flight and dependency-blocked receipts witho
     await new Promise((resolve) => setTimeout(resolve, 0));
     const persisted = await store.list(ownerScope);
     assert.equal(persisted.length, 2, 'unconfirmed writes remain recoverable in the outbox');
-    assert.equal(persisted.find((record) => record.id === parent.id)?.state, 'pending');
+    assert.equal(persisted.find((record) => record.id === parent.id)?.state, 'syncing', 'a request in progress remains recoverable after logout');
   } finally { queue.dispose(); }
 });
 
@@ -401,7 +491,7 @@ test('scope deactivation settles an accepted receipt waiting on local outbox per
     await insertGate.promise;
     await originalInsert(record);
   };
-  const queue = new OfflineWriteQueue(new FakeConnectivity(false), store);
+  const queue = new OfflineWriteQueue(new FakeConnectivity(true), store);
   const record = leadRecord('scope-deactivation-pending-insert');
 
   try {
@@ -410,7 +500,6 @@ test('scope deactivation settles an accepted receipt waiting on local outbox per
       id: record.id,
       label: record.label,
       durable: record,
-      runWhenOffline: true,
       run: async () => undefined,
     });
 
@@ -555,18 +644,10 @@ test('permanent failures are not automatically replayed on reconnect', async () 
   } finally { queue.dispose(); }
 });
 
-test('pending durable operation survives queue recreation and resumes for the same owner/workspace', async () => {
+test('pending durable operation survives queue recreation and waits for owner action', async () => {
   const store = new MemoryOutboxStore();
-  const firstConnectivity = new FakeConnectivity(false);
-  const firstQueue = new OfflineWriteQueue(firstConnectivity, store);
   const record = leadRecord('durable-lead-op');
-  let sendsBeforeReload = 0;
-  await firstQueue.activateScope(ownerScope, async () => undefined);
-  const receipt = firstQueue.enqueue({ id: record.id, label: record.label, durable: record, run: async () => { sendsBeforeReload += 1; } });
-  await receipt.accepted;
-  assert.equal(firstQueue.getSnapshot().pendingCount, 1);
-  assert.equal((await store.list(ownerScope)).length, 1);
-  firstQueue.dispose();
+  await store.insert({ ...record, attempts: 0, state: 'pending' } as DurableQueueRecord);
 
   const recoveredConnectivity = new FakeConnectivity(false);
   const recoveredQueue = new OfflineWriteQueue(recoveredConnectivity, store);
@@ -575,8 +656,12 @@ test('pending durable operation survives queue recreation and resumes for the sa
     await recoveredQueue.activateScope(ownerScope, async (restored) => { recoveredRecord = restored; });
     assert.equal(recoveredQueue.getSnapshot().pendingCount, 1);
     assert.equal(recoveredQueue.getSnapshot().operations[0].state, 'pending');
-    assert.equal(sendsBeforeReload, 0);
+    assert.equal((await store.list(ownerScope)).length, 1, 'pending outbox record remains stored while offline');
     recoveredConnectivity.setOnline(true);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(recoveredQueue.getSnapshot().acknowledgedCount, 0, 'reconnect alone does not replay restored data');
+    assert.equal((await store.list(ownerScope)).length, 1);
+    assert.equal(recoveredQueue.startManualReplay(), 1);
     await waitFor(() => recoveredQueue.getSnapshot().acknowledgedCount === 1);
     assert.equal(recoveredRecord?.documentId, record.documentId);
     assert.equal(recoveredRecord?.ownerId, ownerScope.ownerId);
@@ -587,12 +672,8 @@ test('pending durable operation survives queue recreation and resumes for the sa
 
 test('outbox restore is isolated by both workspace and owner', async () => {
   const store = new MemoryOutboxStore();
-  const firstQueue = new OfflineWriteQueue(new FakeConnectivity(false), store);
-  await firstQueue.activateScope(ownerScope, async () => undefined);
   const record = leadRecord('partitioned-op');
-  const receipt = firstQueue.enqueue({ id: record.id, label: record.label, durable: record, run: async () => undefined });
-  await receipt.accepted;
-  firstQueue.dispose();
+  await store.insert({ ...record, attempts: 0, state: 'pending' } as DurableQueueRecord);
 
   const otherQueue = new OfflineWriteQueue(new FakeConnectivity(false), store);
   try {
@@ -603,9 +684,10 @@ test('outbox restore is isolated by both workspace and owner', async () => {
 });
 
 test('activity waits for its pending lead create to be acknowledged', async () => {
-  const connectivity = new FakeConnectivity(false);
+  const connectivity = new FakeConnectivity(true);
   const queue = new OfflineWriteQueue(connectivity, new MemoryOutboxStore());
   const writes: string[] = [];
+  const parentWrite = createDeferred<void>();
   const lead = leadRecord('lead-parent');
   const activity: DurableQueueInput = {
     id: 'activity-child',
@@ -620,13 +702,14 @@ test('activity waits for its pending lead create to be acknowledged', async () =
   };
   try {
     await queue.activateScope(ownerScope, async () => undefined);
-    const leadReceipt = queue.enqueue({ id: lead.id, label: lead.label, durable: lead, run: async () => { writes.push('lead'); } });
+    const leadReceipt = queue.enqueue({ id: lead.id, label: lead.label, durable: lead, run: () => { writes.push('lead'); return parentWrite.promise; } });
     const activityReceipt = queue.enqueue({ id: activity.id, label: activity.label, durable: activity, run: async () => { writes.push('activity'); } });
     await Promise.all([leadReceipt.accepted, activityReceipt.accepted]);
+    await waitFor(() => writes.length === 1);
     const waitingActivity = queue.getSnapshot().operations.find((operation) => operation.id === activity.id);
     assert.equal(waitingActivity?.dependencyBlocked, true);
     assert.equal(waitingActivity?.canRetry, false);
-    connectivity.setOnline(true);
+    parentWrite.resolve();
     await Promise.all([leadReceipt.acknowledged, activityReceipt.acknowledged]);
     assert.deepEqual(writes, ['lead', 'activity']);
   } finally { queue.dispose(); }
@@ -636,13 +719,8 @@ test('real IndexedDB outbox encrypts a pending lead and restores it in a fresh q
   const scope = { ownerId: `owner-${Date.now()}`, workspaceId: `workspace-${Date.now()}` };
   const id = `reload-${Date.now()}`;
   const firstStore = new IndexedDbOfflineOutboxStore();
-  const firstQueue = new OfflineWriteQueue(new FakeConnectivity(false), firstStore);
   const record = { ...leadRecord(id), ownerId: scope.ownerId, workspaceId: scope.workspaceId } as DurableQueueInput;
-  try {
-    await firstQueue.activateScope(scope, async () => undefined);
-    const receipt = firstQueue.enqueue({ id, label: record.label, durable: record, run: async () => undefined });
-    await receipt.accepted;
-    firstQueue.dispose();
+  await firstStore.insert({ ...record, attempts: 0, state: 'pending' } as DurableQueueRecord);
 
     const open = indexedDB.open('ar-crm-offline-outbox', 1);
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -671,22 +749,48 @@ test('real IndexedDB outbox encrypts a pending lead and restores it in a fresh q
     const recoveredConnectivity = new FakeConnectivity(false);
     const recoveredQueue = new OfflineWriteQueue(recoveredConnectivity, new IndexedDbOfflineOutboxStore());
     const replayAck = createDeferred<void>();
-    let replayed: RestoredQueueRecord | undefined;
+    const replayState: { record?: RestoredQueueRecord } = {};
     try {
       await recoveredQueue.activateScope(scope, async (restored) => {
-        replayed = restored;
+        replayState.record = restored;
         return replayAck.promise;
       });
-      await waitFor(() => Boolean(replayed));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(replayState.record, undefined, 'the restored payload is not sent while offline');
       assert.equal(recoveredQueue.getSnapshot().pendingCount, 1);
-      assert.equal((replayed?.payload as Extract<DurableMutation, { kind: 'create-lead' }>['payload']).company_name, 'Synthetic Company');
 
       recoveredConnectivity.setOnline(true);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      assert.equal(replayState.record, undefined, 'reconnect alone must not send an IndexedDB-restored payload');
+      assert.equal((await new IndexedDbOfflineOutboxStore().list(scope)).length, 1);
+      assert.equal(recoveredQueue.startManualReplay(), 1);
+      await waitFor(() => Boolean(replayState.record));
+      const restoredAfterReconnect = replayState.record as unknown as RestoredQueueRecord;
+      assert.equal((restoredAfterReconnect.payload as Extract<DurableMutation, { kind: 'create-lead' }>['payload']).company_name, 'Synthetic Company');
       replayAck.resolve();
       await waitFor(() => recoveredQueue.getSnapshot().acknowledgedCount === 1);
       assert.equal((await new IndexedDbOfflineOutboxStore().list(scope)).length, 0);
     } finally { recoveredQueue.dispose(); }
-  } finally { firstQueue.dispose(); }
+});
+
+test('encrypted IndexedDB outbox restores payload when caller label is not canonical', async () => {
+  const scope = { ownerId: `owner-label-${Date.now()}`, workspaceId: `workspace-label-${Date.now()}` };
+  const id = `noncanonical-label-${Date.now()}`;
+  const record = {
+    ...leadRecord(id),
+    ownerId: scope.ownerId,
+    workspaceId: scope.workspaceId,
+    label: 'Caller-supplied label that differs from the stored label',
+  } as DurableQueueInput;
+  const store = new IndexedDbOfflineOutboxStore();
+  await store.insert({ ...record, attempts: 0, state: 'pending' } as DurableQueueRecord);
+  try {
+    const [restored] = await new IndexedDbOfflineOutboxStore().list(scope);
+    assert.equal(restored?.label, 'Tambah prospek');
+    assert.equal((restored?.payload as Extract<DurableMutation, { kind: 'create-lead' }>['payload']).company_name, 'Synthetic Company');
+  } finally {
+    await store.remove(scope, id);
+  }
 });
 
 test('outbox allowlist strips unknown properties before they reach storage', () => {
@@ -698,6 +802,40 @@ test('outbox allowlist strips unknown properties before they reach storage', () 
     kind: 'create-activity',
     payload: { lead_id: 'lead-safe', activity_type: 'Call', notes: 'Synthetic note' },
   });
+});
+
+test('outbox keeps only validated Activity summary and explicitly captured GPS fields', () => {
+  const sanitized = allowlistedMutation({
+    kind: 'create-activity',
+    payload: {
+      lead_id: 'lead-safe',
+      activity_type: 'Meeting',
+      notes: 'Synthetic meeting note',
+      ai_summary: 'Synthetic reviewed summary',
+      ai_summary_source: 'local',
+      location_gps: { latitude: -6.2, longitude: 106.8, accuracy_m: 12 },
+      authToken: 'must-not-persist',
+    },
+  } as any);
+  assert.deepEqual(sanitized, {
+    kind: 'create-activity',
+    payload: {
+      lead_id: 'lead-safe',
+      activity_type: 'Meeting',
+      notes: 'Synthetic meeting note',
+      ai_summary: 'Synthetic reviewed summary',
+      ai_summary_source: 'local',
+      location_gps: { latitude: -6.2, longitude: 106.8, accuracy_m: 12 },
+    },
+  });
+  assert.throws(() => allowlistedMutation({
+    kind: 'create-activity',
+    payload: { lead_id: 'lead-safe', activity_type: 'Meeting', notes: 'note', ai_summary: 'missing provenance' },
+  } as any));
+  assert.throws(() => allowlistedMutation({
+    kind: 'create-activity',
+    payload: { lead_id: 'lead-safe', activity_type: 'Meeting', notes: 'note', location_gps: { latitude: 91, longitude: 0, accuracy_m: 5 } },
+  } as any));
 });
 
 test('stage mutation keeps follow-up date optional instead of clearing it', () => {
