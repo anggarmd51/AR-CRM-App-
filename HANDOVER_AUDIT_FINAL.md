@@ -1,10 +1,19 @@
 # AR CRM — Audit Final & Handover Package
 
-**Diperbarui:** 29 Oktober 2026 (WIB)
+**Diperbarui:** 29 Oktober 2026, 09:29 WIB
 **Repository:** `/workspace/ar-crm`
 **Branch:** `cue/firebase-stabilization`
 **Commit aplikasi yang menjadi basis audit:** `a5aae41fd278aa0961d504a0a67caedd18a474a3` (`chore(backup): snapshot firebase stabilization work`), sudah didorong ke `origin/cue/firebase-stabilization`.
-**Status singkat:** **Belum dinyatakan siap untuk staging atau Production.** Tes lokal terakhir lulus, tetapi endpoint PIN belum memiliki tes HTTP tingkat-handler dan belum diverifikasi saat runtime hosted. Risiko Firestore, service worker, AI, CRUD live, serta backup/restore masih terbuka.
+**Status singkat:** **Belum dinyatakan siap untuk staging atau Production.** Remediasi lokal menutup dua temuan awal (aturan arsip Won dan cakupan cache Service Worker), tetapi belum di-commit atau di-deploy. Endpoint PIN, AI, hosted CRUD, serta backup/restore tetap memerlukan validasi terpisah.
+
+## Update remediasi lokal — 29 Oktober 2026, 09:29 WIB
+
+- Remote branch saat pemeriksaan berada di `8daeb7383f19b95365450f6a5476873288a6edb4`; commit ini memperbarui handover setelah basis source audit `a5aae41`. Clone yang digunakan bersih sebelum pekerjaan. Working tree lain yang tercantum dalam audit lampiran tidak tersedia; perubahan ini tidak menimpa perubahan lokal pengguna.
+- `firestore.rules` kini mewajibkan status awal Lead bukan `Closing Won` sebelum arsip dapat dibuat. Tes Rules Emulator mencakup penolakan arsip langsung untuk Lead yang sudah Won, penolakan pembuatan duplikat, dan penerimaan transisi atomik yang sah.
+- `public/sw.js` kini hanya menangani navigasi app shell dan aset statis same-origin yang dikenal. API, path dinamis/ekspor, serta request lintas-origin tidak disimpan. Tes unit Service Worker membuktikan batas intersepsi tersebut.
+- `docs/FIRESTORE_STAGED_MIGRATION_READINESS.md` dikoreksi agar selaras dengan validasi tanggal kalender nyata pada Rules lokal.
+- Verifikasi lokal: `npm test` **154 lulus, 1 skip**; `npm run test:firestore` **17/17**; lint/type-check lulus; build Vite lulus; `git diff --check` lulus; smoke test HTTP localhost app shell dan `/sw.js` lulus; `npm audit --omit=dev` menemukan **0 advisori**. Build tetap memberi peringatan bundle **984,30 kB** (gzip **288,11 kB**); instalasi mencatat 5 advisori Moderate pada dependency tree keseluruhan.
+- Tidak ada commit, push, deploy, perubahan Rules hosted, perubahan Vercel/Firebase, atau penulisan data CRM. Ini bukan bukti hosted sign-in/CRUD, runtime endpoint PIN, AI live, maupun backup/restore.
 
 ## 1. Ringkasan untuk handover
 
@@ -26,7 +35,7 @@ Vercel secara otomatis membuat deployment Preview dari commit aplikasi tersebut.
 
 Commit koreksi handover merupakan commit dokumentasi tersendiri pada branch yang sama; commit aplikasi di atas tetap menjadi snapshot source yang dirujuk oleh temuan dan angka tes.
 
-## 3. Hasil verifikasi teknis terakhir yang tersedia
+## 3. Hasil verifikasi pada saat audit awal
 
 | Pemeriksaan | Hasil terakhir yang tersedia |
 |---|---:|
@@ -36,22 +45,20 @@ Commit koreksi handover merupakan commit dokumentasi tersendiri pada branch yang
 | `npx --no-install tsc --noEmit` | Lulus |
 | `npm run build` | Lulus; bundle JavaScript sekitar 984,30 kB dan peringatan chunk >500 kB |
 
-Tes unit, emulator, lint, type-check, dan build lokal tidak membuktikan bahwa endpoint atau alur aplikasi bekerja pada hosted Preview/Production. Angka di atas dicatat sebagai hasil run terakhir yang tersedia, bukan sebagai tes ulang pada commit dokumentasi.
+Tes unit, emulator, lint, type-check, dan build lokal tidak membuktikan bahwa endpoint atau alur aplikasi bekerja pada hosted Preview/Production. Angka di atas mencatat baseline audit; verifikasi lokal yang lebih baru berada pada bagian “Update remediasi lokal” di awal dokumen.
 
-## 4. Temuan yang masih perlu ditangani
+## 4. Temuan pada saat audit awal dan status lokal
 
-1. **Firestore — arsip Deal Won.** Rule `wonDealArchives/{leadId}` mensyaratkan lead berstatus `Closing Won` setelah operasi melalui `getAfter`, tetapi tidak membuktikan bahwa perubahan status dari bukan-Won terjadi dalam transaksi yang sama. Tinjau aturan dan tambahkan tes untuk pembuatan arsip langsung setelah lead sudah Won serta kasus duplikat.
-2. **Service worker — cakupan cache terlalu luas.** `public/sw.js` menangani hampir semua GET same-origin non-navigasi dan non-`/api/`, lalu dapat menyimpan respons `200` bertipe `basic`. Batasi ke aset statis yang dikenal dan pastikan respons/data khusus pengguna tidak tersimpan.
+1. **Firestore — arsip Deal Won (ditangani secara lokal).** Pada saat audit, Rule `wonDealArchives/{leadId}` belum membuktikan bahwa perubahan status dari bukan-Won terjadi dalam transaksi yang sama. Working tree saat ini mensyaratkan transisi itu dan tes emulator menolak arsip langsung untuk Lead yang sudah Won serta arsip duplikat. Belum di-commit atau di-deploy.
+2. **Service worker — cakupan cache (ditangani secara lokal).** Pada saat audit, hampir semua GET same-origin non-navigasi/non-API dapat dicache. Working tree saat ini membatasi cache pada app shell navigasi dan aset statis same-origin yang dikenal; tes unit memverifikasi API, path dinamis, dan request lintas-origin tidak diintersep. Belum di-commit atau di-deploy.
 3. **AI — gate UI dan endpoint berbeda.** UI Lead Finder memakai flag build client `VITE_AI_LEAD_FINDER_ENABLED`; endpoint server dibatasi ke target staging/Preview dan flag server. Jika flag client aktif di Production, kontrol UI dapat terlihat walau endpoint menolak permintaan. Selaraskan gate dan verifikasi perilaku per environment sebelum mengaktifkan AI.
 4. **Account PIN — cakupan tes belum cukup.** Bukan defect `response` yang telah dituduhkan sebelumnya: parameter itu terdefinisi. Yang belum ada adalah tes HTTP tingkat-handler untuk `enroll`, `status`, dan `verify` (misalnya metode/content-type salah, sukses, serta kegagalan layanan). Runtime hosted masih perlu diuji pada Preview.
 5. **Hosted CRUD — belum diuji live.** Belum ada bukti uji hosted Google Sign-In atau CRUD Lead/Activity pada Preview terisolasi; jangan menganggap tes lokal sebagai validasi hosted.
 6. **Backup/restore — belum diuji.** Belum ada backup/restore drill Firestore yang terverifikasi. Ekspor Sheets, bila digunakan, bukan pengganti backup/restore.
 
-## 5. Langkah berikut yang disarankan
+## 5. Langkah berikut yang tetap terbuka
 
 - Tambahkan tes HTTP tingkat-handler untuk tiga endpoint Account PIN dan jalankan verifikasi runtime di hosted Preview.
-- Perketat aturan arsip Deal Won beserta tes transisi dan pembuatan arsip langsung/duplikat.
-- Batasi cache service worker pada allowlist aset statis; tambahkan pengujian agar data khusus pengguna tidak di-cache.
 - Samakan gate AI client/server; tetap default-off sampai alur dan environment yang didukung jelas.
 - Setelah perubahan disetujui, uji sign-in dan CRUD dengan data sintetis di Preview terisolasi. Uji backup/restore pada project terpisah sebelum migrasi atau cutover.
 - Jangan merge ke `main`, mempromosikan Preview ke Production, menulis data Production, atau mengubah konfigurasi cloud tanpa otorisasi terpisah.

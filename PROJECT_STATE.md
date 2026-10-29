@@ -1,16 +1,32 @@
 # PROJECT STATE & ARCHITECTURAL SPECIFICATION
 ## AR Personal CRM Enterprise (Solo Account Manager Edition)
 
-> **Document Version:** 2.4.0 (local Firebase stabilization candidate)
-> **Status:** Perubahan lokal pada branch `cue/firebase-stabilization` (HEAD `8498878`) kini menahan replay otomatis semua mutasi outbox yang dipulihkan sampai owner memilih sinkronisasi manual. Antrean tetap terenkripsi dan jumlah/status yang tampil tidak membawa payload. Belum aman dirilis: verifikasi akses PIN Production, deployment/rollback, dan tindakan sinkronisasi owner masih menjadi blocker.
-> **Production terakhir diperiksa baca-saja melalui metadata Vercel (28 Okt 2026):** project `arcrm-app`, alias [https://arcrmapp.vercel.app/](https://arcrmapp.vercel.app/) READY pada commit `f010c46f6358fa57fe2b0957e8f049058acb0b7d`, branch `cue/firebase-stabilization`; ditandai Vercel sebagai rollback candidate. Metadata deployment terkonfirmasi, tetapi prosedur dan keberhasilan rollback belum diuji. Perubahan lokal belum ter-deploy.
-> **Preview staging:** [https://arcrm-4sv1mj6xw-anggaramadhan538-8607.vercel.app](https://arcrm-4sv1mj6xw-anggaramadhan538-8607.vercel.app) — SSO `all_except_custom_domains` tetap enabled; belum dilakukan login/e2e browser pada kandidat kode ini.
+> **Document Version:** 2.4.1 (local Rules and PWA hardening)
+> **Status:** Branch `cue/firebase-stabilization` diperiksa dari clone remote bersih pada HEAD `8daeb73`. Working tree sesi ini memuat remediasi lokal belum di-commit untuk aturan arsip Won, cache Service Worker, tes regresi, dan dokumentasi. Working tree lama yang disebut dalam audit tidak tersedia pada sesi ini; tidak ada perubahan lokal pengguna yang dapat diperiksa atau ditimpa. Belum siap untuk staging/Production: hosted sign-in/CRUD, runtime PIN, dan backup/restore belum diverifikasi.
+> **Production terakhir diperiksa baca-saja melalui metadata Vercel (28 Okt 2026; tidak diperiksa ulang pada pembaruan ini):** project `arcrm-app`, alias [https://arcrmapp.vercel.app/](https://arcrmapp.vercel.app/) READY pada commit `f010c46f6358fa57fe2b0957e8f049058acb0b7d`, branch `cue/firebase-stabilization`; ditandai Vercel sebagai rollback candidate. Metadata deployment terkonfirmasi saat itu, tetapi prosedur dan keberhasilan rollback belum diuji.
+> **Preview staging:** [https://arcrm-4sv1mj6xw-anggaramadhan538-8607.vercel.app](https://arcrm-4sv1mj6xw-anggaramadhan538-8607.vercel.app) — status dari catatan terdahulu; tidak diperiksa ulang pada pembaruan ini.
 > **Author & Architect:** Lead Full-Stack Software Architect & UI/UX State Specialist  
-> **Last Updated:** 28 Oktober 2026, 17:07 WIB
+> **Last Updated:** 29 Oktober 2026, 09:29 WIB
 > **Target Platform:** Responsive Progressive Web App (PWA) untuk browser laptop dan ponsel; tidak ada native Android app pada source ini.
 > **Catatan sumber kebenaran:** bagian “Status operasional terbaru” di bawah menjadi ringkasan saat ini. Bagian bertanggal setelahnya adalah snapshot historis pada waktu masing-masing dan tidak boleh mengalahkan bukti yang lebih baru. Branch `cue/firebase-stabilization` memakai Firebase Auth/Firestore untuk Leads/Activities dan tidak mengimpor data lama otomatis. Data operasional belum dimigrasikan; jangan memakai spreadsheet lama yang dikosongkan sebagai sumber.
 
-## Status operasional terbaru — 28 Oktober 2026, 17:07 WIB
+## Status operasional terbaru — 29 Oktober 2026, 09:29 WIB
+
+### Snapshot, remediasi lokal, dan verifikasi
+
+- Snapshot awal adalah remote branch `cue/firebase-stabilization` pada `8daeb7383f19b95365450f6a5476873288a6edb4`; clone sesi ini bersih sebelum perubahan. Audit lampiran melaporkan working tree lain dengan perubahan pengguna, tetapi checkout tersebut tidak tersedia di sini. Perubahan di bawah hanya ada pada clone ini dan belum di-stage, di-commit, atau di-push.
+- Firestore Rules kini mensyaratkan Lead yang diarsipkan berpindah dari status non-Won menjadi `Closing Won` dalam operasi yang sama. Tes emulator menolak arsip langsung untuk Lead yang sudah Won dan pembuatan arsip duplikat; transaksi valid tetap diterima.
+- Service Worker sekarang hanya mengintersep request same-origin untuk navigasi app shell dan aset statis yang dikenal di `/assets/`; API, halaman dinamis, ekspor, dan request lintas-origin tidak dicache. Cache key dinaikkan ke `arcrm-cache-v2.2.1`. Ditambahkan dua tes unit untuk cakupan intersepsi/cache.
+- Dokumen kesiapan migrasi dikoreksi agar menyatakan Firestore Rules memvalidasi tanggal kalender nyata, termasuk tahun kabisat. Tidak ada migrasi data atau perubahan cloud.
+- Verifikasi 29 Okt: `npm test` **154 lulus, 0 gagal, 1 skip** (155 total); `npm run test:firestore` **17/17**; `npm run lint`; `npx --no-install tsc --noEmit`; `npm run build`; `git diff --check`; smoke test HTTP localhost untuk app shell dan `/sw.js`; `npm audit --omit=dev` **0 advisori**.
+- Build lulus dengan warning chunk JavaScript **984,30 kB** (gzip **288,11 kB**), melampaui ambang 500 kB. `npm ci` juga melaporkan **5 advisori Moderate** pada pohon dependency keseluruhan; tidak ada upgrade otomatis yang dilakukan.
+
+### Batas bukti dan gate berikutnya
+
+- Tidak ada commit, push, deployment, perubahan Firebase/Vercel, penulisan data CRM, hosted browser test, uji PIN hosted, maupun backup/restore drill. Smoke test hanya di Vite Preview localhost; bukan verifikasi Preview/Production.
+- Tetap perlu pengujian hosted sign-in/CRUD dengan data sintetis di Preview terisolasi, tes handler HTTP PIN dan runtime, backup/restore pada project terpisah, serta keputusan untuk bundle splitting. Jangan promosikan branch ini atau menyatakan siap Production hanya dari tes lokal.
+
+## Snapshot operasional sebelumnya — 28 Oktober 2026, 17:07 WIB
 
 ### Perubahan lokal dan verifikasi
 

@@ -326,10 +326,21 @@ test('activity accepts bounded summary provenance and explicitly captured GPS on
   }));
 });
 
-test('won archive is owner-only, immutable, and created only with the lead closing-won transition', async () => {
+test('won archive requires a new closing-won transition and cannot be created twice', async () => {
   const db = ownerWithActivePinSession();
   const archive = doc(db, 'workspaces', workspace, 'wonDealArchives', 'owned-lead');
   await assertFails(setDoc(archive, validWonArchive('owned-lead')));
+
+  await env.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), 'workspaces', workspace, 'leads', 'already-won-lead'), {
+      ...validLead(),
+      pipeline_stage: 'Closing Won',
+    });
+  });
+  await assertFails(setDoc(
+    doc(db, 'workspaces', workspace, 'wonDealArchives', 'already-won-lead'),
+    validWonArchive('already-won-lead'),
+  ));
 
   const lead = doc(db, 'workspaces', workspace, 'leads', 'owned-lead');
   await assertSucceeds(runTransaction(db, async (transaction) => {
@@ -339,6 +350,7 @@ test('won archive is owner-only, immutable, and created only with the lead closi
     transaction.set(archive, { ...validWonArchive('owned-lead'), archived_at: serverTimestamp() });
   }));
   await assertSucceeds(getDoc(archive));
+  await assertFails(setDoc(archive, { ...validWonArchive('owned-lead'), archived_at: serverTimestamp() }));
   await assertFails(updateDoc(archive, { deal_value: 1 }));
   await assertFails(deleteDoc(archive));
 });

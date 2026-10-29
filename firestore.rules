@@ -198,6 +198,8 @@ service cloud.firestore {
           && resource.data.ownerId == request.auth.uid;
         allow create: if ownerMembership(workspaceId)
           && validWonArchiveFields(request.resource.data, leadId)
+          && exists(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(leadId))
+          && get(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(leadId)).data.pipeline_stage != 'Closing Won'
           && existsAfter(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(leadId))
           && getAfter(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(leadId)).data.ownerId == request.auth.uid
           && getAfter(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(leadId)).data.role == 'owner'
