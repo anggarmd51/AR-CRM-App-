@@ -14,6 +14,21 @@ export default defineConfig(() => {
       __VERCEL_ENV__: JSON.stringify(process.env.VERCEL_ENV ?? ''),
     },
     plugins: [react(), tailwindcss()],
+    build: {
+      rolldownOptions: {
+        output: {
+          codeSplitting: {
+            groups: [
+              {
+                name: 'vendor',
+                test: /node_modules[\\/]/,
+                maxSize: 350 * 1024,
+              },
+            ],
+          },
+        },
+      },
+    },
     resolve: {
       alias: {
         '@': path.resolve(configDirectory, '.'),

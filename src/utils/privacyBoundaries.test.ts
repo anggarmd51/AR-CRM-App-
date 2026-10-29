@@ -80,7 +80,7 @@ test('hosted App never invokes device SecurityVault or mounts its local PIN sett
   assert.match(app, /const useLocalSecurityVault = shouldUseLocalSecurityVault\(firebaseTarget\)/);
   assert.match(app, /useLocalSecurityVault && SecurityVault\.isCurrentlyLocked\(\)/);
   assert.match(app, /useLocalSecurityVault && SecurityVault\.isSecurityEnabled\(\)/);
-  assert.match(app, /useLocalSecurityVault && \(\s*<SecuritySettingsModal/);
+  assert.match(app, /useLocalSecurityVault && \(\s*hasOpenedSecuritySettings && \(\s*<Suspense[\s\S]{0,200}<SecuritySettingsModal/);
   assert.match(app, /useLocalSecurityVault && isAppLocked/);
 });
 

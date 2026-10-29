@@ -3,20 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { lazy, Suspense, useState, useEffect, useCallback, useRef } from 'react';
 import { TopAppBar } from './components/TopAppBar.tsx';
 import { BottomNavBar, NavTab } from './components/BottomNavBar.tsx';
-import { DashboardView } from './components/DashboardView.tsx';
-import { PipelineKanbanView } from './components/PipelineKanbanView.tsx';
-import { GlobalLeadsView } from './components/GlobalLeadsView.tsx';
-import { ActivitiesListView } from './components/ActivitiesListView.tsx';
-import { AndroidCodeExplorer } from './components/AndroidCodeExplorer.tsx';
-import { QuickLeadModal } from './components/QuickLeadModal.tsx';
-import { ActivityLoggerModal } from './components/ActivityLoggerModal.tsx';
-import { LeadDetailModal } from './components/LeadDetailModal.tsx';
-import { WhatsAppModal } from './components/WhatsAppModal.tsx';
-import { SecurityLockScreen } from './components/SecurityLockScreen.tsx';
-import { SecuritySettingsModal } from './components/SecuritySettingsModal.tsx';
 import { AndroidFrame } from './components/AndroidFrame.tsx';
 import { Lead, Activity, GlobalLead, PipelineStage, ActivityGpsLocation, ActivitySummarySource } from './types/crm.ts';
 import { filterFollowUps, formatNumber } from './utils/crmCalculations.ts';
@@ -30,6 +19,30 @@ import { createImportedLeadDocumentId, normalizeImportedCompanyName } from './ut
 import { OptimisticLeadStageOverlay, type LeadSnapshotState } from './utils/optimisticLeadStages.ts';
 import { firestoreWriteQueue, type SyncQueueSnapshot } from './utils/offlineWriteQueue.ts';
 import { createAppHistoryState, getClosedModalNames, readAppHistoryState, type AppHistoryState, type AppModalName } from './utils/appHistory.ts';
+
+const DashboardView = lazy(() => import('./components/DashboardView.tsx').then(({ DashboardView }) => ({ default: DashboardView })));
+const PipelineKanbanView = lazy(() => import('./components/PipelineKanbanView.tsx').then(({ PipelineKanbanView }) => ({ default: PipelineKanbanView })));
+const GlobalLeadsView = lazy(() => import('./components/GlobalLeadsView.tsx').then(({ GlobalLeadsView }) => ({ default: GlobalLeadsView })));
+const ActivitiesListView = lazy(() => import('./components/ActivitiesListView.tsx').then(({ ActivitiesListView }) => ({ default: ActivitiesListView })));
+const AndroidCodeExplorer = lazy(() => import('./components/AndroidCodeExplorer.tsx').then(({ AndroidCodeExplorer }) => ({ default: AndroidCodeExplorer })));
+const QuickLeadModal = lazy(() => import('./components/QuickLeadModal.tsx').then(({ QuickLeadModal }) => ({ default: QuickLeadModal })));
+const ActivityLoggerModal = lazy(() => import('./components/ActivityLoggerModal.tsx').then(({ ActivityLoggerModal }) => ({ default: ActivityLoggerModal })));
+const LeadDetailModal = lazy(() => import('./components/LeadDetailModal.tsx').then(({ LeadDetailModal }) => ({ default: LeadDetailModal })));
+const WhatsAppModal = lazy(() => import('./components/WhatsAppModal.tsx').then(({ WhatsAppModal }) => ({ default: WhatsAppModal })));
+const SecurityLockScreen = lazy(() => import('./components/SecurityLockScreen.tsx').then(({ SecurityLockScreen }) => ({ default: SecurityLockScreen })));
+const SecuritySettingsModal = lazy(() => import('./components/SecuritySettingsModal.tsx').then(({ SecuritySettingsModal }) => ({ default: SecuritySettingsModal })));
+
+const AppChunkFallback = ({ label = 'Memuat tampilan…' }: { label?: string }) => (
+  <div className="min-h-64 grid place-items-center text-sm text-[#6b665c]" role="status" aria-live="polite">
+    {label}
+  </div>
+);
+
+const ModalChunkFallback = () => (
+  <div className="fixed inset-0 z-[100] grid place-items-center bg-black/20 text-sm font-semibold text-[#1f1f1f]" role="status" aria-live="polite">
+    Memuat formulir…
+  </div>
+);
 
 const APP_TABS: readonly NavTab[] = ['dashboard', 'pipeline', 'leads_finder', 'activities', 'android_code'];
 
@@ -55,6 +68,11 @@ export default function App() {
   const [activityLead, setActivityLead] = useState<Lead | null>(null);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [whatsAppLead, setWhatsAppLead] = useState<Lead | null>(null);
+  const [hasOpenedQuickLead, setHasOpenedQuickLead] = useState(false);
+  const [hasOpenedActivityLogger, setHasOpenedActivityLogger] = useState(false);
+  const [hasOpenedLeadDetail, setHasOpenedLeadDetail] = useState(false);
+  const [hasOpenedWhatsApp, setHasOpenedWhatsApp] = useState(false);
+  const [hasOpenedSecuritySettings, setHasOpenedSecuritySettings] = useState(false);
 
   // Snackbar Toast
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -440,6 +458,33 @@ export default function App() {
     }
   };
 
+  const openQuickLead = () => {
+    setHasOpenedQuickLead(true);
+    openModalWithHistory(() => setIsQuickLeadOpen(true), 'quickLead');
+  };
+
+  const openActivityLogger = (lead?: Lead) => {
+    setActivityLead(lead ?? null);
+    setHasOpenedActivityLogger(true);
+    openModalWithHistory(() => setIsActivityLoggerOpen(true), 'activityLogger');
+  };
+
+  const openLeadDetail = (lead: Lead) => {
+    setHasOpenedLeadDetail(true);
+    openModalWithHistory(() => setSelectedLead(lead), 'leadDetail');
+  };
+
+  const openWhatsApp = (lead: Lead) => {
+    setHasOpenedWhatsApp(true);
+    setWhatsAppLead(lead);
+    openModalWithHistory(() => setWhatsAppLead(lead), 'whatsapp');
+  };
+
+  const openSecuritySettings = () => {
+    setHasOpenedSecuritySettings(true);
+    openModalWithHistory(() => setIsSecuritySettingsOpen(true), 'securitySettings');
+  };
+
   return (
     <AndroidFrame isPhoneFrame={isPhoneFrame} isOnline={isOnline}>
       <div className="flex-1 flex flex-col min-h-screen bg-[#fcfcfa]">
@@ -471,63 +516,63 @@ export default function App() {
         {/* Main Content Area */}
         <main className="flex-1 p-3.5 sm:p-6 max-w-7xl w-full mx-auto">
           {currentTab === 'dashboard' && (
-            <DashboardView
-              leads={leads}
-              activities={activities}
-              onOpenQuickLead={() => openModalWithHistory(() => setIsQuickLeadOpen(true), 'quickLead')}
-              onOpenActivityLogger={(lead) => {
-                setActivityLead(lead || null);
-                openModalWithHistory(() => setIsActivityLoggerOpen(true), 'activityLogger');
-              }}
-              onSelectLead={(lead) => openModalWithHistory(() => setSelectedLead(lead), 'leadDetail')}
-              onOpenWhatsApp={(lead) => {
-                setWhatsAppLead(lead);
-                openModalWithHistory(() => setWhatsAppLead(lead), 'whatsapp');
-              }}
-              onNavigateToPipeline={() => changeTabWithHistory('pipeline')}
-              onNavigateToFinder={() => changeTabWithHistory('leads_finder')}
-              onExportCsv={handleExportCsv}
-            />
+            <Suspense fallback={<AppChunkFallback />}>
+              <DashboardView
+                leads={leads}
+                activities={activities}
+                onOpenQuickLead={openQuickLead}
+                onOpenActivityLogger={openActivityLogger}
+                onSelectLead={openLeadDetail}
+                onOpenWhatsApp={openWhatsApp}
+                onNavigateToPipeline={() => changeTabWithHistory('pipeline')}
+                onNavigateToFinder={() => changeTabWithHistory('leads_finder')}
+                onExportCsv={handleExportCsv}
+              />
+            </Suspense>
           )}
 
           {currentTab === 'pipeline' && (
-            <PipelineKanbanView
-              leads={leads}
-              onUpdateLeadStage={handleUpdateLeadStage}
-              onSelectLead={(lead) => openModalWithHistory(() => setSelectedLead(lead), 'leadDetail')}
-              onOpenQuickLead={() => openModalWithHistory(() => setIsQuickLeadOpen(true), 'quickLead')}
-              onOpenWhatsApp={(lead) => {
-                setWhatsAppLead(lead);
-                openModalWithHistory(() => setWhatsAppLead(lead), 'whatsapp');
-              }}
-              onExportCsv={handleExportCsv}
-            />
+            <Suspense fallback={<AppChunkFallback />}>
+              <PipelineKanbanView
+                leads={leads}
+                onUpdateLeadStage={handleUpdateLeadStage}
+                onSelectLead={openLeadDetail}
+                onOpenQuickLead={openQuickLead}
+                onOpenWhatsApp={openWhatsApp}
+                onExportCsv={handleExportCsv}
+              />
+            </Suspense>
           )}
 
           {currentTab === 'leads_finder' && (
-            <GlobalLeadsView
-              personalLeads={leads}
-              globalLeads={globalLeads}
-              pendingImportedCompanyNames={pendingGlobalLeadNames}
-              aiSearchEnabled={import.meta.env.VITE_AI_LEAD_FINDER_ENABLED === 'true'}
-              onImportGlobalLead={handleImportGlobalLead}
-              onNavigateToPipeline={() => changeTabWithHistory('pipeline')}
-            />
+            <Suspense fallback={<AppChunkFallback />}>
+              <GlobalLeadsView
+                personalLeads={leads}
+                globalLeads={globalLeads}
+                pendingImportedCompanyNames={pendingGlobalLeadNames}
+                aiSearchEnabled={import.meta.env.VITE_AI_LEAD_FINDER_ENABLED === 'true'}
+                onImportGlobalLead={handleImportGlobalLead}
+                onNavigateToPipeline={() => changeTabWithHistory('pipeline')}
+              />
+            </Suspense>
           )}
 
           {currentTab === 'activities' && (
-            <ActivitiesListView
-              activities={activities}
-              leads={leads}
-              onOpenActivityLogger={(lead) => {
-                setActivityLead(lead || null);
-                openModalWithHistory(() => setIsActivityLoggerOpen(true), 'activityLogger');
-              }}
-              onSelectLead={(lead) => openModalWithHistory(() => setSelectedLead(lead), 'leadDetail')}
-            />
+            <Suspense fallback={<AppChunkFallback />}>
+              <ActivitiesListView
+                activities={activities}
+                leads={leads}
+                onOpenActivityLogger={openActivityLogger}
+                onSelectLead={openLeadDetail}
+              />
+            </Suspense>
           )}
 
-          {currentTab === 'android_code' && <AndroidCodeExplorer />}
+          {currentTab === 'android_code' && (
+            <Suspense fallback={<AppChunkFallback />}>
+              <AndroidCodeExplorer />
+            </Suspense>
+          )}
         </main>
 
         {/* Android Material 3 Bottom Navigation Bar */}
@@ -546,68 +591,84 @@ export default function App() {
         )}
 
         {/* MODALS WITH MOBILE BACK GESTURE INTEGRATION */}
-        <QuickLeadModal
-          isOpen={isQuickLeadOpen}
-          onClose={() => closeModalWithHistory('quickLead', () => setIsQuickLeadOpen(false))}
-          onAddLead={handleAddLead}
-        />
+        {hasOpenedQuickLead && (
+          <Suspense fallback={<ModalChunkFallback />}>
+            <QuickLeadModal
+              isOpen={isQuickLeadOpen}
+              onClose={() => closeModalWithHistory('quickLead', () => setIsQuickLeadOpen(false))}
+              onAddLead={handleAddLead}
+            />
+          </Suspense>
+        )}
 
-        <ActivityLoggerModal
-          isOpen={isActivityLoggerOpen}
-          onClose={() =>
-            closeModalWithHistory('activityLogger', () => {
-              setIsActivityLoggerOpen(false);
-              setActivityLead(null);
-            })
-          }
-          leads={leads}
-          initialLead={activityLead}
-          aiSummarizerEnabled={import.meta.env.VITE_AI_MEETING_SUMMARIZER_ENABLED === 'true'}
-          onSaveActivity={handleSaveActivity}
-        />
+        {hasOpenedActivityLogger && (
+          <Suspense fallback={<ModalChunkFallback />}>
+            <ActivityLoggerModal
+              isOpen={isActivityLoggerOpen}
+              onClose={() =>
+                closeModalWithHistory('activityLogger', () => {
+                  setIsActivityLoggerOpen(false);
+                  setActivityLead(null);
+                })
+              }
+              leads={leads}
+              initialLead={activityLead}
+              aiSummarizerEnabled={import.meta.env.VITE_AI_MEETING_SUMMARIZER_ENABLED === 'true'}
+              onSaveActivity={handleSaveActivity}
+            />
+          </Suspense>
+        )}
 
-        <LeadDetailModal
-          isOpen={!!selectedLead}
-          onClose={() => closeModalWithHistory('leadDetail', () => setSelectedLead(null))}
-          lead={selectedLead}
-          activities={activities}
-          onUpdateStage={handleUpdateLeadStage}
-          onOpenActivityLogger={(l) => {
-            setActivityLead(l);
-            openModalWithHistory(() => setIsActivityLoggerOpen(true), 'activityLogger');
-          }}
-          onOpenWhatsApp={(l) => {
-            setWhatsAppLead(l);
-            openModalWithHistory(() => setWhatsAppLead(l), 'whatsapp');
-          }}
-        />
+        {hasOpenedLeadDetail && (
+          <Suspense fallback={<ModalChunkFallback />}>
+            <LeadDetailModal
+              isOpen={!!selectedLead}
+              onClose={() => closeModalWithHistory('leadDetail', () => setSelectedLead(null))}
+              lead={selectedLead}
+              activities={activities}
+              onUpdateStage={handleUpdateLeadStage}
+              onOpenActivityLogger={openActivityLogger}
+              onOpenWhatsApp={openWhatsApp}
+            />
+          </Suspense>
+        )}
 
-        <WhatsAppModal
-          isOpen={!!whatsAppLead}
-          onClose={() => closeModalWithHistory('whatsapp', () => setWhatsAppLead(null))}
-          lead={whatsAppLead}
-        />
+        {hasOpenedWhatsApp && (
+          <Suspense fallback={<ModalChunkFallback />}>
+            <WhatsAppModal
+              isOpen={!!whatsAppLead}
+              onClose={() => closeModalWithHistory('whatsapp', () => setWhatsAppLead(null))}
+              lead={whatsAppLead}
+            />
+          </Suspense>
+        )}
 
         {useLocalSecurityVault && (
-          <SecuritySettingsModal
-            isOpen={isSecuritySettingsOpen}
-            onClose={() => closeModalWithHistory('securitySettings', () => setIsSecuritySettingsOpen(false))}
-            onLockNow={() => {
-              closeModalWithHistory('securitySettings', () => setIsSecuritySettingsOpen(false));
-              SecurityVault.lockNow();
-              setIsAppLocked(true);
-            }}
-          />
+          hasOpenedSecuritySettings && (
+            <Suspense fallback={<ModalChunkFallback />}>
+              <SecuritySettingsModal
+                isOpen={isSecuritySettingsOpen}
+                onClose={() => closeModalWithHistory('securitySettings', () => setIsSecuritySettingsOpen(false))}
+                onLockNow={() => {
+                  closeModalWithHistory('securitySettings', () => setIsSecuritySettingsOpen(false));
+                  SecurityVault.lockNow();
+                  setIsAppLocked(true);
+                }}
+              />
+            </Suspense>
+          )
         )}
 
         {/* Local Security Shield Fullscreen Lock Overlay */}
         {useLocalSecurityVault && isAppLocked && (
-          <SecurityLockScreen
-            onUnlocked={() => {
-              SecurityVault.recordUnlock();
-              setIsAppLocked(false);
-            }}
-          />
+          <Suspense fallback={<ModalChunkFallback />}>
+            <SecurityLockScreen
+              onUnlocked={() => {
+                SecurityVault.recordUnlock();
+                setIsAppLocked(false);
+              }}
+            />
+          </Suspense>
         )}
       </div>
     </AndroidFrame>
