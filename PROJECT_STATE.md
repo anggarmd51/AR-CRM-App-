@@ -2,15 +2,23 @@
 ## AR Personal CRM Enterprise (Solo Account Manager Edition)
 
 > **Document Version:** 2.4.1 (local Rules and PWA hardening)
-> **Status:** Branch `cue/firebase-stabilization` diperiksa dari clone remote bersih pada HEAD `8daeb73`. Working tree sesi ini memuat remediasi lokal belum di-commit untuk aturan arsip Won, cache Service Worker, tes regresi, dan dokumentasi. Working tree lama yang disebut dalam audit tidak tersedia pada sesi ini; tidak ada perubahan lokal pengguna yang dapat diperiksa atau ditimpa. Belum siap untuk staging/Production: hosted sign-in/CRUD, runtime PIN, dan backup/restore belum diverifikasi.
+> **Status:** Commit aplikasi terbaru yang tercatat pada branch `cue/firebase-stabilization` adalah `f06647a` (`f06647ac9e2447e37c0100c555b66d355f7365fd`); verifikasi lokal tercantum pada snapshot terbaru di bawah. Hasil tes lokal bukan verifikasi hosted dan tidak mengubah gate Production: hosted sign-in/CRUD, runtime PIN, serta backup/restore belum diverifikasi.
 > **Production terakhir diperiksa baca-saja melalui metadata Vercel (28 Okt 2026; tidak diperiksa ulang pada pembaruan ini):** project `arcrm-app`, alias [https://arcrmapp.vercel.app/](https://arcrmapp.vercel.app/) READY pada commit `f010c46f6358fa57fe2b0957e8f049058acb0b7d`, branch `cue/firebase-stabilization`; ditandai Vercel sebagai rollback candidate. Metadata deployment terkonfirmasi saat itu, tetapi prosedur dan keberhasilan rollback belum diuji.
 > **Preview staging:** [https://arcrm-4sv1mj6xw-anggaramadhan538-8607.vercel.app](https://arcrm-4sv1mj6xw-anggaramadhan538-8607.vercel.app) — status dari catatan terdahulu; tidak diperiksa ulang pada pembaruan ini.
 > **Author & Architect:** Lead Full-Stack Software Architect & UI/UX State Specialist  
-> **Last Updated:** 29 Oktober 2026, 09:29 WIB
+> **Last Updated:** 29 Oktober 2026, 11:06 WIB
 > **Target Platform:** Responsive Progressive Web App (PWA) untuk browser laptop dan ponsel; tidak ada native Android app pada source ini.
 > **Catatan sumber kebenaran:** bagian “Status operasional terbaru” di bawah menjadi ringkasan saat ini. Bagian bertanggal setelahnya adalah snapshot historis pada waktu masing-masing dan tidak boleh mengalahkan bukti yang lebih baru. Branch `cue/firebase-stabilization` memakai Firebase Auth/Firestore untuk Leads/Activities dan tidak mengimpor data lama otomatis. Data operasional belum dimigrasikan; jangan memakai spreadsheet lama yang dikosongkan sebagai sumber.
 
-## Status operasional terbaru — 29 Oktober 2026, 09:29 WIB
+## Status operasional terbaru — 29 Oktober 2026, 11:06 WIB
+
+### Commit aplikasi dan verifikasi lokal
+
+- Commit aplikasi terbaru adalah `f06647ac9e2447e37c0100c555b66d355f7365fd` (`f06647a`) pada branch `cue/firebase-stabilization`; branch berada satu commit di depan `origin/cue/firebase-stabilization` sebelum pembaruan dokumentasi ini.
+- Verifikasi lokal terakhir yang dilaporkan: `npm test` **154 lulus, 0 gagal, 1 dilewati**; `npm run test:firestore` **17/17**; lint, TypeScript (`npx --no-install tsc --noEmit`), build, dan `git diff --check` lulus.
+- Pembaruan ini hanya mengubah dokumentasi dan dibuat sebagai commit terpisah secara lokal. Tidak ada push, merge, deployment, ataupun perubahan pada Production. Hasil lokal ini tidak membuktikan kesiapan hosted atau Production; gate kesiapan sebelumnya tetap berlaku.
+
+## Snapshot operasional sebelumnya — 29 Oktober 2026, 09:29 WIB
 
 ### Snapshot, remediasi lokal, dan verifikasi
 
