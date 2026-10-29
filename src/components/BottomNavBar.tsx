@@ -44,7 +44,7 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = ({
   ];
 
   return (
-    <nav className="sticky bottom-0 z-30 bg-[#fcfcfa] border-t border-[#1f1f1f] px-2 py-2">
+    <nav className="sticky bottom-0 z-30 border-t border-[#1f1f1f] bg-[#fcfcfa] px-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] pt-2">
       <div className="max-w-md mx-auto grid grid-cols-4 gap-1">
         {tabs.map((tab) => {
           const Icon = tab.icon;
@@ -53,6 +53,7 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = ({
             <button
               key={tab.id}
               onClick={() => onSelectTab(tab.id)}
+              aria-current={isActive ? 'page' : undefined}
               className={`relative flex flex-col items-center justify-center py-1.5 px-2 rounded-[8px] transition-all duration-150 ${
                 isActive
                   ? 'text-[#1f1f1f] font-bold'

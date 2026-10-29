@@ -12,21 +12,24 @@ import {
   Smartphone,
 } from 'lucide-react';
 import { ANDROID_KOTLIN_PROJECT } from '../data/androidKotlinCode.ts';
+import { copyTextToClipboard } from '../utils/whatsapp.ts';
 
 export const AndroidCodeExplorer: React.FC = () => {
   const [selectedFilePath, setSelectedFilePath] = useState<string>(
     ANDROID_KOTLIN_PROJECT[0].path
   );
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState('');
 
   const selectedFile =
     ANDROID_KOTLIN_PROJECT.find((f) => f.path === selectedFilePath) ||
     ANDROID_KOTLIN_PROJECT[0];
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(selectedFile.code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const handleCopy = async () => {
+    const result = await copyTextToClipboard(selectedFile.code);
+    setCopied(result.ok);
+    setCopyError(result.ok ? '' : result.error);
+    if (result.ok) window.setTimeout(() => setCopied(false), 2000);
   };
 
   const handleDownload = () => {
@@ -95,6 +98,8 @@ export const AndroidCodeExplorer: React.FC = () => {
         </div>
       </div>
 
+      {copyError && <p role="alert" className="rounded-[8px] border border-[#9b2c2c]/30 p-3 text-xs text-[#9b2c2c]">{copyError}</p>}
+
       {/* Explorer Layout: 16px radius, 1px hairline borders */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         {/* Left: File Tree / File List */}
@@ -110,7 +115,7 @@ export const AndroidCodeExplorer: React.FC = () => {
               return (
                 <button
                   key={file.path}
-                  onClick={() => setSelectedFilePath(file.path)}
+                  onClick={() => { setSelectedFilePath(file.path); setCopied(false); setCopyError(''); }}
                   className={`w-full text-left p-2.5 rounded-[8px] text-xs font-medium transition-all flex items-start gap-2.5 ${
                     isSelected
                       ? 'bg-[#1f1f1f] text-white font-bold'

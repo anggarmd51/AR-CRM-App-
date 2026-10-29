@@ -13,14 +13,25 @@ export type DurableMutation =
         deal_value: number;
         next_followup_date: string;
         lead_score: LeadScore;
-      };
-    }
+        won_date?: string;
+    };
+  }
   | {
       kind: 'update-lead-stage';
       payload: {
         lead_id: string;
         pipeline_stage: PipelineStage;
         next_followup_date?: string;
+      };
+    }
+  | {
+      kind: 'update-lead-details';
+      payload: {
+        lead_id: string;
+        contact_person?: string;
+        phone?: string;
+        deal_value?: number;
+        lead_score?: LeadScore;
       };
     }
   | {
@@ -199,6 +210,14 @@ export function allowlistedMutation(mutation: DurableMutation): DurableMutation 
           deal_value: payload.deal_value,
           next_followup_date: assertCalendarDate(payload.next_followup_date),
           lead_score: payload.lead_score as LeadScore,
+          ...(payload.won_date === undefined ? {} : {
+            won_date: (() => {
+              if (payload.pipeline_stage !== 'Closing Won') throw new Error('Offline operation data failed local validation.');
+              const date = assertCalendarDate(payload.won_date);
+              if (!date) throw new Error('Offline operation data failed local validation.');
+              return date;
+            })(),
+          }),
         },
       };
     }
@@ -214,6 +233,33 @@ export function allowlistedMutation(mutation: DurableMutation): DurableMutation 
           ...(payload.next_followup_date === undefined
             ? {}
             : { next_followup_date: assertCalendarDate(payload.next_followup_date) }),
+        },
+      };
+    }
+    case 'update-lead-details': {
+      const contactPerson = payload.contact_person === undefined
+        ? undefined
+        : assertText(payload.contact_person, 200, false);
+      const phone = payload.phone === undefined ? undefined : assertText(payload.phone, 200);
+      const dealValue = payload.deal_value;
+      const leadScore = payload.lead_score;
+      if (dealValue !== undefined && (typeof dealValue !== 'number' || !Number.isFinite(dealValue) || dealValue < 0)) {
+        throw new Error('Offline operation data failed local validation.');
+      }
+      if (leadScore !== undefined && !ALLOWED_SCORES.has(leadScore as LeadScore)) {
+        throw new Error('Offline operation data failed local validation.');
+      }
+      if (contactPerson === undefined && phone === undefined && dealValue === undefined && leadScore === undefined) {
+        throw new Error('Offline operation data failed local validation.');
+      }
+      return {
+        kind: mutation.kind,
+        payload: {
+          lead_id: assertId(payload.lead_id),
+          ...(contactPerson !== undefined ? { contact_person: contactPerson } : {}),
+          ...(phone !== undefined ? { phone } : {}),
+          ...(dealValue !== undefined ? { deal_value: dealValue } : {}),
+          ...(leadScore !== undefined ? { lead_score: leadScore as LeadScore } : {}),
         },
       };
     }
@@ -244,6 +290,7 @@ function labelFor(kind: DurableMutation['kind']): string {
   switch (kind) {
     case 'create-lead': return 'Tambah prospek';
     case 'update-lead-stage': return 'Ubah tahap prospek';
+    case 'update-lead-details': return 'Koreksi data prospek';
     case 'create-activity': return 'Simpan aktivitas';
   }
 }

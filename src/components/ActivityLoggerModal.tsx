@@ -4,6 +4,7 @@ import { getFirebaseAuth } from '../firebase.ts';
 import { formatMeetingSummary, summarizeMeetingNotesLocally } from '../meetingSummary.ts';
 import type { MeetingSummary } from '../meetingSummary.ts';
 import type { ActivityGpsLocation, ActivitySummarySource, Lead } from '../types/crm.ts';
+import { useModalAccessibility } from '../utils/useModalAccessibility.ts';
 
 interface ActivityLoggerModalProps {
   isOpen: boolean;
@@ -44,6 +45,8 @@ export const ActivityLoggerModal: React.FC<ActivityLoggerModalProps> = ({
   const [locationMessage, setLocationMessage] = useState('');
   const [isCapturingLocation, setIsCapturingLocation] = useState(false);
   const locationRequestId = useRef(0);
+  const closeModal = () => { if (!isSubmitting) { locationRequestId.current += 1; onClose(); } };
+  const { dialogRef } = useModalAccessibility({ isOpen, onClose: closeModal, titleId: 'activity-logger-modal-title' });
 
   useEffect(() => {
     if (!isOpen) {
@@ -200,23 +203,23 @@ export const ActivityLoggerModal: React.FC<ActivityLoggerModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#1f1f1f]/50 backdrop-blur-xs overflow-y-auto">
-      <div className="bg-[#fcfcfa] border border-[#1f1f1f] rounded-[16px] w-full max-w-lg overflow-hidden my-8">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#1f1f1f]/50 backdrop-blur-xs overflow-y-auto" role="presentation">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="activity-logger-modal-title" tabIndex={-1} className="bg-[#fcfcfa] border border-[#1f1f1f] rounded-[16px] w-full max-w-lg max-h-[calc(100dvh-2rem)] flex flex-col overflow-hidden my-2">
         <div className="px-5 py-4 border-b border-[#1f1f1f] flex items-center justify-between bg-[#f8f5ee]">
           <div className="flex items-center gap-2.5">
             <div className="p-2 rounded-[8px] bg-[#1f1f1f] text-[#ff4800]"><MapPin className="w-5 h-5" /></div>
             <div>
-              <h3 className="font-bold text-[#1f1f1f] text-base font-serif-heading">Activity Logger</h3>
+              <h3 id="activity-logger-modal-title" className="font-bold text-[#1f1f1f] text-base font-serif-heading">Activity Logger</h3>
               <p className="text-xs text-[#6b665c]">GPS hanya sekali saat diminta; AI hanya setelah persetujuan.</p>
             </div>
           </div>
-          <button type="button" onClick={close} disabled={isSubmitting} aria-label="Tutup" className="p-1.5 rounded-[8px] hover:bg-[#eae4d5] text-[#1f1f1f] transition-colors"><X className="w-5 h-5" /></button>
+          <button type="button" onClick={close} disabled={isSubmitting} aria-label="Tutup Activity Logger" className="min-h-11 min-w-11 flex items-center justify-center rounded-[8px] hover:bg-[#eae4d5] text-[#1f1f1f] transition-colors"><X className="w-5 h-5" /></button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-5 space-y-4 text-xs">
+        <form onSubmit={handleSubmit} className="p-5 space-y-4 text-xs overflow-y-auto">
           <div className="space-y-1.5">
-            <label className="text-[#1f1f1f] font-semibold block">Select Account / Lead</label>
-            <select value={selectedLeadId} onChange={(event) => setSelectedLeadId(event.target.value)} required className="w-full bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] px-3 py-2.5 text-xs text-[#1f1f1f] font-medium focus:outline-none focus:bg-[#fcfcfa]">
+            <label htmlFor="activity-lead" className="text-[#1f1f1f] font-semibold block">Select Account / Lead</label>
+            <select id="activity-lead" value={selectedLeadId} onChange={(event) => setSelectedLeadId(event.target.value)} required className="w-full bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] px-3 py-2.5 text-xs text-[#1f1f1f] font-medium focus:outline-none focus:bg-[#fcfcfa]">
               <option value="" disabled>-- Choose Lead --</option>
               {leads.map((lead) => <option key={lead.id} value={lead.id}>{lead.company_name} ({lead.contact_person} - {lead.city})</option>)}
             </select>
@@ -232,8 +235,8 @@ export const ActivityLoggerModal: React.FC<ActivityLoggerModalProps> = ({
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-[#1f1f1f] font-semibold block">Field Notes</label>
-            <textarea rows={4} maxLength={12_000} placeholder="Masukkan catatan aktivitas untuk record CRM." value={notes} onChange={(event) => updateNotes(event.target.value)} required className="w-full bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] p-3 text-xs text-[#1f1f1f] placeholder-[#6b665c] focus:outline-none focus:bg-[#fcfcfa] resize-none" />
+            <label htmlFor="activity-notes" className="text-[#1f1f1f] font-semibold block">Field Notes</label>
+            <textarea id="activity-notes" rows={4} maxLength={12_000} placeholder="Masukkan catatan aktivitas untuk record CRM." value={notes} onChange={(event) => updateNotes(event.target.value)} required className="w-full bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] p-3 text-xs text-[#1f1f1f] placeholder-[#6b665c] focus:outline-none focus:bg-[#fcfcfa] resize-none" />
             <p className="text-[10px] text-[#6b665c]">Catatan asli tersimpan di CRM; Gemini tidak dipanggil otomatis.</p>
           </div>
 
@@ -263,8 +266,8 @@ export const ActivityLoggerModal: React.FC<ActivityLoggerModalProps> = ({
             ) : <p className="text-[10px] text-[#6b665c]">Gemini dinonaktifkan pada deployment ini; ringkasan lokal tetap tersedia.</p>}
             {summaryMessage && <p role="status" className="text-[10px] text-[#6b665c]">{summaryMessage}</p>}
             {aiSummary && <div className="space-y-1.5">
-              <label className="text-[10px] font-semibold text-[#1f1f1f]">{summarySource === 'gemini' ? 'Hasil Gemini (dapat diedit)' : 'Hasil lokal (dapat diedit)'}</label>
-              <textarea rows={4} maxLength={4_000} value={aiSummary} onChange={(event) => setAiSummary(event.target.value)} className="w-full rounded-[8px] border border-[#1f1f1f] bg-[#fcfcfa] p-2 text-[11px] text-[#1f1f1f]" />
+              <label htmlFor="activity-summary" className="text-[10px] font-semibold text-[#1f1f1f]">{summarySource === 'gemini' ? 'Hasil Gemini (dapat diedit)' : 'Hasil lokal (dapat diedit)'}</label>
+              <textarea id="activity-summary" rows={4} maxLength={4_000} value={aiSummary} onChange={(event) => setAiSummary(event.target.value)} className="w-full rounded-[8px] border border-[#1f1f1f] bg-[#fcfcfa] p-2 text-[11px] text-[#1f1f1f]" />
               <button type="button" onClick={() => { setAiSummary(''); setSummarySource(undefined); }} className="text-[10px] font-semibold text-[#9b2c2c] underline">Jangan simpan ringkasan</button>
             </div>}
           </section>

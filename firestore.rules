@@ -154,6 +154,24 @@ service cloud.firestore {
     }
 
     match /workspaces/{workspaceId} {
+      function wonLeadHasMatchingArchive(leadId, leadData) {
+        let archivePath = /databases/$(database)/documents/workspaces/$(workspaceId)/wonDealArchives/$(leadId);
+        let archiveAfter = getAfter(archivePath);
+        return existsAfter(archivePath)
+          && validWonArchiveFields(archiveAfter.data, leadId)
+          && archiveAfter.data.company_name == leadData.company_name
+          && archiveAfter.data.contact_person == leadData.contact_person
+          && archiveAfter.data.phone == leadData.phone
+          && archiveAfter.data.industry == leadData.industry
+          && archiveAfter.data.city == leadData.city
+          && archiveAfter.data.deal_value == leadData.deal_value;
+      }
+
+      function directWonLeadHasMatchingArchive(leadId, leadData) {
+        let archivePath = /databases/$(database)/documents/workspaces/$(workspaceId)/wonDealArchives/$(leadId);
+        return !exists(archivePath) && wonLeadHasMatchingArchive(leadId, leadData);
+      }
+
       allow get: if ownerMembership(workspaceId);
       allow list, create, update, delete: if false;
 
@@ -165,17 +183,26 @@ service cloud.firestore {
       }
 
       match /leads/{leadId} {
-        allow get, list: if ownerMembership(workspaceId)
+        allow get: if ownerMembership(workspaceId)
+          && (!exists(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(leadId))
+            || resource.data.ownerId == request.auth.uid);
+        allow list: if ownerMembership(workspaceId)
           && resource.data.ownerId == request.auth.uid;
         allow create: if ownerMembership(workspaceId)
-          && validLeadFields(request.resource.data);
+          && validLeadFields(request.resource.data)
+          && (request.resource.data.pipeline_stage != 'Closing Won'
+            || directWonLeadHasMatchingArchive(leadId, request.resource.data));
         allow update: if ownerMembership(workspaceId)
           && resource.data.ownerId == request.auth.uid
           && resource.data.role == 'owner'
           && validLeadFields(request.resource.data)
           && immutableLeadIdentity(resource.data, request.resource.data)
+          && (request.resource.data.pipeline_stage != 'Closing Won'
+            || resource.data.pipeline_stage == 'Closing Won'
+            || wonLeadHasMatchingArchive(leadId, request.resource.data))
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            'pipeline_stage', 'next_followup_date', 'updated_at'
+            'pipeline_stage', 'next_followup_date', 'phone', 'contact_person',
+            'deal_value', 'lead_score', 'updated_at'
           ]);
         allow delete: if false;
       }
@@ -194,12 +221,15 @@ service cloud.firestore {
       }
 
       match /wonDealArchives/{leadId} {
-        allow get, list: if ownerMembership(workspaceId)
+        allow get: if ownerMembership(workspaceId)
+          && (!exists(/databases/$(database)/documents/workspaces/$(workspaceId)/wonDealArchives/$(leadId))
+            || resource.data.ownerId == request.auth.uid);
+        allow list: if ownerMembership(workspaceId)
           && resource.data.ownerId == request.auth.uid;
         allow create: if ownerMembership(workspaceId)
           && validWonArchiveFields(request.resource.data, leadId)
-          && exists(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(leadId))
-          && get(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(leadId)).data.pipeline_stage != 'Closing Won'
+          && (!exists(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(leadId))
+            || get(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(leadId)).data.pipeline_stage != 'Closing Won')
           && existsAfter(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(leadId))
           && getAfter(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(leadId)).data.ownerId == request.auth.uid
           && getAfter(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(leadId)).data.role == 'owner'

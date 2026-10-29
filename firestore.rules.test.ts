@@ -186,6 +186,29 @@ test('unauthenticated and non-owner users cannot read or write owner data', asyn
   await assertFails(setDoc(doc(other, 'workspaces', workspace, 'leads', 'other-lead'), validLead(otherUid)));
 });
 
+test('owner can pre-read missing lead and archive documents without reading another owner\'s documents', async () => {
+  const owner = ownerWithActivePinSession();
+  const other = env.authenticatedContext(otherUid).firestore();
+  const missingLead = doc(owner, 'workspaces', workspace, 'leads', 'pre-read-missing-lead');
+  const missingArchive = doc(owner, 'workspaces', workspace, 'wonDealArchives', 'pre-read-missing-archive');
+
+  const missingLeadSnapshot = await assertSucceeds(getDoc(missingLead));
+  const missingArchiveSnapshot = await assertSucceeds(getDoc(missingArchive));
+  assert.equal(missingLeadSnapshot.exists(), false);
+  assert.equal(missingArchiveSnapshot.exists(), false);
+
+  await env.withSecurityRulesDisabled(async (context) => {
+    const serverDb = context.firestore();
+    await setDoc(doc(serverDb, 'workspaces', workspace, 'leads', 'foreign-owned-lead'), validLead(otherUid));
+    await setDoc(doc(serverDb, 'workspaces', workspace, 'wonDealArchives', 'foreign-owned-archive'), validWonArchive('foreign-owned-archive', otherUid));
+  });
+
+  await assertFails(getDoc(doc(owner, 'workspaces', workspace, 'leads', 'foreign-owned-lead')));
+  await assertFails(getDoc(doc(owner, 'workspaces', workspace, 'wonDealArchives', 'foreign-owned-archive')));
+  await assertFails(getDoc(doc(other, 'workspaces', workspace, 'leads', 'pre-read-missing-lead')));
+  await assertFails(getDoc(doc(other, 'workspaces', workspace, 'wonDealArchives', 'pre-read-missing-archive')));
+});
+
 test('owner access requires an active, unexpired, UID-bound server PIN session', async () => {
   const ownerWithoutClaim = env.authenticatedContext(ownerUid).firestore();
   const ownerWithMissingSession = env.authenticatedContext(ownerUid, { pinSessionId: 'm'.repeat(43) }).firestore();
@@ -266,7 +289,25 @@ test('owner identity and role cannot be changed on a lead', async () => {
   await assertFails(updateDoc(lead, { role: 'member' }));
   await assertFails(updateDoc(lead, { created_at: updatedAt }));
   await assertFails(updateDoc(lead, { company_name: 'tampered name' }));
-  await assertSucceeds(updateDoc(lead, { pipeline_stage: 'Meeting', updated_at: updatedAt }));
+  await assertSucceeds(updateDoc(lead, { pipeline_stage: 'Meeting', updated_at: serverTimestamp() }));
+});
+
+test('owner can correct only allowlisted lead details with a server timestamp', async () => {
+  const db = ownerWithActivePinSession();
+  const lead = doc(db, 'workspaces', workspace, 'leads', 'detail-correction-lead');
+  await assertSucceeds(setDoc(lead, validLead()));
+
+  await assertSucceeds(updateDoc(lead, { phone: '+628111222333', updated_at: serverTimestamp() }));
+  await assertSucceeds(updateDoc(lead, { contact_person: 'Corrected Contact', updated_at: serverTimestamp() }));
+  await assertSucceeds(updateDoc(lead, { deal_value: 125000000, updated_at: serverTimestamp() }));
+  await assertSucceeds(updateDoc(lead, { lead_score: 'Hot', updated_at: serverTimestamp() }));
+
+  await assertFails(updateDoc(lead, { phone: 812345678, updated_at: serverTimestamp() }));
+  await assertFails(updateDoc(lead, { contact_person: '', updated_at: serverTimestamp() }));
+  await assertFails(updateDoc(lead, { deal_value: -1, updated_at: serverTimestamp() }));
+  await assertFails(updateDoc(lead, { lead_score: 'Invalid', updated_at: serverTimestamp() }));
+  await assertFails(updateDoc(lead, { industry: 'Not allowlisted', updated_at: serverTimestamp() }));
+  await assertSucceeds(updateDoc(lead, { phone: 'valid phone', updated_at: updatedAt }));
 });
 
 test('activity parent lookup is workspace-scoped and requires a valid lead schema', async () => {
@@ -355,6 +396,87 @@ test('won archive requires a new closing-won transition and cannot be created tw
   await assertFails(deleteDoc(archive));
 });
 
+test('new Closing Won lead and matching archive must be created in the same transaction', async () => {
+  const db = ownerWithActivePinSession();
+  const leadRef = doc(db, 'workspaces', workspace, 'leads', 'direct-won-lead');
+  const archiveRef = doc(db, 'workspaces', workspace, 'wonDealArchives', 'direct-won-lead');
+  const wonLead = { ...validLead(), pipeline_stage: 'Closing Won', deal_value: 87500000 };
+  const archive = {
+    ...validWonArchive('direct-won-lead'),
+    company_name: wonLead.company_name,
+    contact_person: wonLead.contact_person,
+    phone: wonLead.phone,
+    industry: wonLead.industry,
+    city: wonLead.city,
+    deal_value: wonLead.deal_value,
+    won_date: '2026-10-29',
+    archived_at: serverTimestamp(),
+  };
+
+  await assertFails(setDoc(leadRef, {
+    ...wonLead,
+    created_at: serverTimestamp(),
+    updated_at: serverTimestamp(),
+  }));
+  await assertFails(setDoc(archiveRef, archive));
+
+  await assertFails(runTransaction(db, async (transaction) => {
+    transaction.set(leadRef, { ...wonLead, created_at: serverTimestamp(), updated_at: serverTimestamp() });
+    transaction.set(archiveRef, { ...archive, phone: '+620000000000' });
+  }));
+
+  await assertSucceeds(runTransaction(db, async (transaction) => {
+    const leadSnapshot = await transaction.get(leadRef);
+    const archiveSnapshot = await transaction.get(archiveRef);
+    assert.equal(leadSnapshot.exists(), false);
+    assert.equal(archiveSnapshot.exists(), false);
+    transaction.set(leadRef, { ...wonLead, created_at: serverTimestamp(), updated_at: serverTimestamp() });
+    transaction.set(archiveRef, archive);
+  }));
+  const [savedLead, savedArchive] = await Promise.all([getDoc(leadRef), getDoc(archiveRef)]);
+  assert.equal(savedLead.get('pipeline_stage'), 'Closing Won');
+  assert.equal(savedArchive.get('lead_id'), 'direct-won-lead');
+  assert.equal(savedArchive.get('deal_value'), wonLead.deal_value);
+  await assertFails(setDoc(archiveRef, archive));
+});
+
+test('an existing lead cannot enter Won without a matching archive in the same atomic write', async () => {
+  const db = ownerWithActivePinSession();
+  const leadRef = doc(db, 'workspaces', workspace, 'leads', 'atomic-stage-won');
+  const archiveRef = doc(db, 'workspaces', workspace, 'wonDealArchives', 'atomic-stage-won');
+  await assertSucceeds(setDoc(leadRef, validLead()));
+  await assertFails(updateDoc(leadRef, { pipeline_stage: 'Closing Won', updated_at: serverTimestamp() }));
+  await assertFails(runTransaction(db, async (transaction) => {
+    transaction.update(leadRef, { pipeline_stage: 'Closing Won', updated_at: serverTimestamp() });
+    transaction.set(archiveRef, { ...validWonArchive('atomic-stage-won'), deal_value: 1, archived_at: serverTimestamp() });
+  }));
+  await assertSucceeds(runTransaction(db, async (transaction) => {
+    transaction.update(leadRef, { pipeline_stage: 'Closing Won', updated_at: serverTimestamp() });
+    transaction.set(archiveRef, { ...validWonArchive('atomic-stage-won'), archived_at: serverTimestamp() });
+  }));
+});
+
+test('re-win preserves the immutable first-win archive and rejects a changed archived snapshot', async () => {
+  const db = ownerWithActivePinSession();
+  const leadRef = doc(db, 'workspaces', workspace, 'leads', 'immutable-rewin');
+  const archiveRef = doc(db, 'workspaces', workspace, 'wonDealArchives', 'immutable-rewin');
+  await assertSucceeds(setDoc(leadRef, validLead()));
+  await assertSucceeds(runTransaction(db, async (transaction) => {
+    transaction.update(leadRef, { pipeline_stage: 'Closing Won', updated_at: serverTimestamp() });
+    transaction.set(archiveRef, { ...validWonArchive('immutable-rewin'), archived_at: serverTimestamp() });
+  }));
+  const firstArchive = (await getDoc(archiveRef)).data();
+  await assertSucceeds(updateDoc(leadRef, { pipeline_stage: 'Closing Lost', updated_at: serverTimestamp() }));
+  await assertSucceeds(updateDoc(leadRef, { pipeline_stage: 'Closing Won', updated_at: serverTimestamp() }));
+  // A contact correction is allowed, but never rewrites the historical first win.
+  await assertSucceeds(updateDoc(leadRef, { contact_person: 'Corrected Synthetic Contact', deal_value: 100, updated_at: serverTimestamp() }));
+  assert.deepEqual((await getDoc(archiveRef)).data(), firstArchive);
+  await assertSucceeds(updateDoc(leadRef, { pipeline_stage: 'Negotiation', updated_at: serverTimestamp() }));
+  await assertFails(updateDoc(leadRef, { pipeline_stage: 'Closing Won', updated_at: serverTimestamp() }));
+  assert.equal((await getDoc(leadRef)).get('pipeline_stage'), 'Negotiation');
+  assert.deepEqual((await getDoc(archiveRef)).data(), firstArchive);
+});
+
 test('field length boundaries and update allowlists are enforced', async () => {
   const db = ownerWithActivePinSession();
   const maxLengthLead = {
@@ -379,7 +501,7 @@ test('field length boundaries and update allowlists are enforced', async () => {
   await assertSucceeds(setDoc(doc(db, 'workspaces', workspace, 'activities', 'max-length-activity'), maxLengthActivity));
   await assertFails(setDoc(doc(db, 'workspaces', workspace, 'activities', 'long-activity-type'), { ...validActivity('owned-lead'), activity_type: 'A'.repeat(81) }));
   await assertFails(setDoc(doc(db, 'workspaces', workspace, 'activities', 'long-notes'), { ...validActivity('owned-lead'), notes: 'N'.repeat(12001) }));
-  await assertFails(updateDoc(doc(db, 'workspaces', workspace, 'leads', 'owned-lead'), { pipeline_stage: 'Meeting', unexpected: true }));
+  await assertFails(updateDoc(doc(db, 'workspaces', workspace, 'leads', 'owned-lead'), { pipeline_stage: 'Meeting', unexpected: true, updated_at: serverTimestamp() }));
 });
 
 test('Firestore Emulator transactions preserve shared PIN-attempt increments across two clients', async () => {

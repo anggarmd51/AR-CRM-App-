@@ -12,11 +12,12 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore';
 import { getFirebaseAuth, getFirebaseDb, workspaceId } from './firebase.ts';
-import type { Activity, Lead, PipelineStage } from './types/crm.ts';
+import type { Activity, Lead, LeadCorrection, PipelineStage, WonDealArchiveRecord } from './types/crm.ts';
 import { firestoreWriteQueue, type QueueWriteReceipt as QueueReceipt } from './utils/offlineWriteQueue.ts';
 import type { DurableMutation, DurableQueueInput, DurableQueueRecord, RestoredQueueRecord } from './utils/offlineOutbox.ts';
 import { setDocWithServerReconciliation } from './utils/idempotentFirestoreCreate.ts';
 import type { LeadSnapshotState } from './utils/optimisticLeadStages.ts';
+import { wonArchiveMatchesLeadSnapshot } from './utils/wonArchivePolicy.ts';
 
 export interface RepositoryWriteReceipt<T = void> {
   operationId: string;
@@ -74,6 +75,27 @@ function mapActivity(id: string, data: DocumentData): Activity {
   } as Activity;
 }
 
+function mapWonDealArchive(id: string, data: DocumentData): WonDealArchiveRecord {
+  return {
+    ...data,
+    id,
+    archived_at: timestampToIso(data.archived_at) ?? '',
+  } as WonDealArchiveRecord;
+}
+
+function matchesCreatedDocument(
+  actual: DocumentData,
+  expected: DocumentData,
+  timestampKeys: string[],
+): boolean {
+  const expectedKeys = [...Object.keys(expected), ...timestampKeys].sort();
+  const actualKeys = Object.keys(actual).sort();
+  return actualKeys.length === expectedKeys.length
+    && actualKeys.every((key, index) => key === expectedKeys[index])
+    && Object.entries(expected).every(([key, value]) => Object.is(actual[key], value))
+    && timestampKeys.every((key) => typeof actual[key]?.toDate === 'function');
+}
+
 function createDurableRecord(
   ownerId: string,
   id: string,
@@ -83,7 +105,13 @@ function createDurableRecord(
 ): DurableQueueInput {
   return {
     id,
-    label: mutation.kind === 'create-lead' ? 'Tambah prospek' : mutation.kind === 'create-activity' ? 'Simpan aktivitas' : 'Ubah tahap prospek',
+    label: mutation.kind === 'create-lead'
+      ? 'Tambah prospek'
+      : mutation.kind === 'create-activity'
+        ? 'Simpan aktivitas'
+        : mutation.kind === 'update-lead-details'
+          ? 'Koreksi data prospek'
+          : 'Ubah tahap prospek',
     ownerId,
     workspaceId: requireWorkspace(),
     documentId,
@@ -110,11 +138,56 @@ async function executeDurableMutation(restored: RestoredQueueRecord): Promise<vo
   switch (record.kind) {
     case 'create-lead': {
       const ref = doc(db, 'workspaces', record.workspaceId, 'leads', record.documentId);
+      const { won_date: queuedWonDate, ...leadPayload } = record.payload;
       const expected = {
-        ...record.payload,
+        ...leadPayload,
         ownerId: record.ownerId,
         role: 'owner',
       };
+      if (leadPayload.pipeline_stage === 'Closing Won') {
+        const archiveRef = doc(db, 'workspaces', record.workspaceId, 'wonDealArchives', record.documentId);
+        const wonDate = queuedWonDate ?? todayInJakarta();
+        const archiveExpected = {
+          lead_id: record.documentId,
+          company_name: leadPayload.company_name,
+          contact_person: leadPayload.contact_person,
+          phone: leadPayload.phone,
+          industry: leadPayload.industry,
+          city: leadPayload.city,
+          deal_value: leadPayload.deal_value,
+          won_date: wonDate,
+          ownerId: record.ownerId,
+          role: 'owner',
+        };
+        await runTransaction(db, async (transaction) => {
+          const [leadSnapshot, archiveSnapshot] = await Promise.all([
+            transaction.get(ref),
+            transaction.get(archiveRef),
+          ]);
+          if (leadSnapshot.exists() || archiveSnapshot.exists()) {
+            const actualArchive = archiveSnapshot.exists() ? archiveSnapshot.data() : undefined;
+            const reconciledWonDate = queuedWonDate
+              ?? (typeof actualArchive?.won_date === 'string' ? actualArchive.won_date : undefined);
+            const reconciledArchive = reconciledWonDate
+              ? { ...archiveExpected, won_date: reconciledWonDate }
+              : archiveExpected;
+            if (leadSnapshot.exists() && archiveSnapshot.exists() && actualArchive
+              && matchesCreatedDocument(leadSnapshot.data(), expected, ['created_at', 'updated_at'])
+              && matchesCreatedDocument(actualArchive, reconciledArchive, ['archived_at'])) return;
+            throw Object.assign(new Error('Lead atau arsip dengan ID ini sudah ada dan tidak cocok dengan mutasi create.'), { code: 'already-exists' });
+          }
+          transaction.set(ref, {
+            ...expected,
+            created_at: serverTimestamp(),
+            updated_at: serverTimestamp(),
+          });
+          transaction.set(archiveRef, {
+            ...archiveExpected,
+            archived_at: serverTimestamp(),
+          });
+        });
+        return;
+      }
       await setDocWithServerReconciliation(ref, {
         ...expected,
         created_at: serverTimestamp(),
@@ -136,7 +209,14 @@ async function executeDurableMutation(restored: RestoredQueueRecord): Promise<vo
           }
           const archiveSnapshot = await transaction.get(archiveRef);
           const lead = leadSnapshot.data();
+          if (archiveSnapshot.exists() && lead.pipeline_stage !== 'Closing Won'
+            && !wonArchiveMatchesLeadSnapshot(archiveSnapshot.data(), lead, record.documentId, record.ownerId)) {
+            throw Object.assign(new Error('Arsip kemenangan pertama tidak cocok dengan data Lead saat ini. Arsip tidak diubah; buat Lead baru untuk peluang yang berbeda.'), { code: 'failed-precondition' });
+          }
           if (!archiveSnapshot.exists()) {
+            if (lead.pipeline_stage === 'Closing Won') {
+              throw Object.assign(new Error('Lead Won ini belum memiliki arsip yang valid. Rekonsiliasi administratif diperlukan; arsip historis tidak dibuat ulang otomatis.'), { code: 'failed-precondition' });
+            }
             transaction.set(archiveRef, {
               lead_id: record.documentId,
               company_name: lead.company_name,
@@ -168,6 +248,15 @@ async function executeDurableMutation(restored: RestoredQueueRecord): Promise<vo
           : {}),
         updated_at: serverTimestamp(),
       });
+      return;
+    }
+    case 'update-lead-details': {
+      if (record.payload.lead_id !== record.documentId) {
+        throw Object.assign(new Error('Invalid lead-details operation.'), { code: 'invalid-argument' });
+      }
+      const ref = doc(db, 'workspaces', record.workspaceId, 'leads', record.documentId);
+      const { lead_id: _leadId, ...fields } = record.payload;
+      await updateDoc(ref, { ...fields, updated_at: serverTimestamp() });
       return;
     }
     case 'create-activity': {
@@ -235,13 +324,28 @@ export function subscribeToLeads(ownerId: string, onData: (leads: Lead[], state:
   );
 }
 
-export function subscribeToActivities(ownerId: string, onData: (activities: Activity[]) => void, onError: (error: Error) => void): Unsubscribe {
+export function subscribeToActivities(ownerId: string, onData: (activities: Activity[], fromCache: boolean) => void, onError: (error: Error) => void): Unsubscribe {
   requireOwner(ownerId);
   const ref = collection(getFirebaseDb(), 'workspaces', requireWorkspace(), 'activities');
   return onSnapshot(
     query(ref, where('ownerId', '==', ownerId), orderBy('created_at', 'desc')),
     { includeMetadataChanges: true },
-    (snapshot) => onData(snapshot.docs.map((item) => mapActivity(item.id, item.data()))),
+    (snapshot) => onData(snapshot.docs.map((item) => mapActivity(item.id, item.data())), snapshot.metadata.fromCache),
+    onError,
+  );
+}
+
+export function subscribeToWonDealArchives(
+  ownerId: string,
+  onData: (archives: WonDealArchiveRecord[], fromCache: boolean) => void,
+  onError: (error: Error) => void,
+): Unsubscribe {
+  requireOwner(ownerId);
+  const ref = collection(getFirebaseDb(), 'workspaces', requireWorkspace(), 'wonDealArchives');
+  return onSnapshot(
+    query(ref, where('ownerId', '==', ownerId)),
+    { includeMetadataChanges: true },
+    (snapshot) => onData(snapshot.docs.map((item) => mapWonDealArchive(item.id, item.data())), snapshot.metadata.fromCache),
     onError,
   );
 }
@@ -267,6 +371,7 @@ export async function createLead(
       deal_value: Number(lead.deal_value) || 0,
       next_followup_date: lead.next_followup_date || '',
       lead_score: lead.lead_score,
+      ...(lead.pipeline_stage === 'Closing Won' ? { won_date: todayInJakarta() } : {}),
     },
   };
   const durable = createDurableRecord(ownerId, operationId, payload, ref.id);
@@ -290,6 +395,24 @@ export async function updateLeadStage(
       pipeline_stage,
       ...(next_followup_date !== undefined ? { next_followup_date } : {}),
     },
+  };
+  const dependency = firestoreWriteQueue.dependencyForLead(leadId);
+  const durable = createDurableRecord(ownerId, operationId, payload, leadId, dependency);
+  const receipt = enqueueDurable(ownerId, durable);
+  await receipt.accepted;
+  return { operationId, state: 'queued-locally', acknowledged: receipt.acknowledged };
+}
+
+export async function updateLeadDetails(
+  ownerId: string,
+  leadId: string,
+  changes: LeadCorrection,
+): Promise<RepositoryWriteReceipt<void>> {
+  getFirebaseDb();
+  const operationId = `lead-details:${leadId}:${createOperationId()}`;
+  const payload: DurableMutation = {
+    kind: 'update-lead-details',
+    payload: { lead_id: leadId, ...changes },
   };
   const dependency = firestoreWriteQueue.dependencyForLead(leadId);
   const durable = createDurableRecord(ownerId, operationId, payload, leadId, dependency);

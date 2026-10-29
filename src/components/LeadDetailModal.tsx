@@ -1,6 +1,8 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   X,
+  Pencil,
+  Check,
   Phone,
   MapPin,
   Calendar,
@@ -9,8 +11,9 @@ import {
   Clock,
   Sparkles,
 } from 'lucide-react';
-import { Lead, Activity, PipelineStage, PIPELINE_STAGES, STAGE_CONFIG } from '../types/crm.ts';
+import { Lead, Activity, LeadCorrection, LeadScore, PipelineStage, PIPELINE_STAGES, STAGE_CONFIG } from '../types/crm.ts';
 import { formatCurrency, formatDateDisplay, formatNumber } from '../utils/crmCalculations.ts';
+import { useModalAccessibility } from '../utils/useModalAccessibility.ts';
 
 interface LeadDetailModalProps {
   isOpen: boolean;
@@ -18,6 +21,7 @@ interface LeadDetailModalProps {
   lead: Lead | null;
   activities: Activity[];
   onUpdateStage: (leadId: string, stage: PipelineStage, nextFollowupDate?: string) => void;
+  onUpdateLeadDetails: (leadId: string, changes: LeadCorrection) => Promise<void>;
   onOpenActivityLogger: (lead: Lead) => void;
   onOpenWhatsApp: (lead: Lead) => void;
 }
@@ -28,44 +32,108 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
   lead,
   activities,
   onUpdateStage,
+  onUpdateLeadDetails,
   onOpenActivityLogger,
   onOpenWhatsApp,
 }) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [editValues, setEditValues] = useState({
+    contact_person: '',
+    phone: '',
+    deal_value: 0,
+    lead_score: 'Unrated' as LeadScore,
+  });
+
+  const close = () => { if (!isSaving) onClose(); };
+  const { dialogRef } = useModalAccessibility({ isOpen: isOpen && Boolean(lead), onClose: close, titleId: 'lead-detail-modal-title' });
+
+  useEffect(() => {
+    setIsEditing(false);
+    setEditError(null);
+  }, [lead?.id]);
+
   if (!isOpen || !lead) return null;
+
+  const beginEditing = () => {
+    setEditValues({
+      contact_person: lead.contact_person,
+      phone: lead.phone,
+      deal_value: lead.deal_value,
+      lead_score: lead.lead_score,
+    });
+    setEditError(null);
+    setIsEditing(true);
+  };
+
+  const saveLeadDetails = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (isSaving) return;
+    setIsSaving(true);
+    setEditError(null);
+    try {
+      await onUpdateLeadDetails(lead.id, {
+        contact_person: editValues.contact_person.trim(),
+        phone: editValues.phone.trim(),
+        deal_value: Number(editValues.deal_value),
+        lead_score: editValues.lead_score,
+      });
+      setIsEditing(false);
+    } catch (error) {
+      setEditError(error instanceof Error ? error.message : 'Koreksi Lead gagal disimpan.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   const leadActivities = activities.filter((a) => a.lead_id === lead.id);
   const stageCfg = STAGE_CONFIG[lead.pipeline_stage];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#1f1f1f]/50 backdrop-blur-xs overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#1f1f1f]/50 backdrop-blur-xs overflow-y-auto" role="presentation">
       {/* 16px radius, cream canvas, 1px hairline border */}
-      <div className="bg-[#fcfcfa] border border-[#1f1f1f] rounded-[16px] w-full max-w-lg overflow-hidden my-6">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="lead-detail-modal-title" tabIndex={-1} className="bg-[#fcfcfa] border border-[#1f1f1f] rounded-[16px] w-full max-w-lg max-h-[calc(100dvh-2rem)] flex flex-col overflow-hidden my-2">
         {/* Header */}
-        <div className="px-5 py-4 border-b border-[#1f1f1f] flex items-center justify-between bg-[#f8f5ee]">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <h3 className="font-bold text-[#1f1f1f] text-lg truncate font-serif-heading">{lead.company_name}</h3>
+        <div className="shrink-0 px-5 py-4 border-b border-[#1f1f1f] flex items-center justify-between gap-2 bg-[#f8f5ee]">
+          <div className="min-w-0 flex-1">
+            <h3 id="lead-detail-modal-title" title={lead.company_name} className="font-bold text-[#1f1f1f] text-lg truncate font-serif-heading">{lead.company_name}</h3>
+            <div className="flex min-w-0 items-center gap-2">
               <span className={`text-[10px] px-2 py-0.5 rounded-[4px] font-semibold ${stageCfg.badgeBg}`}>
                 {stageCfg.label}
               </span>
+              <p className="min-w-0 text-xs text-[#6b665c] font-medium truncate">{lead.contact_person}</p>
             </div>
-            <p className="text-xs text-[#6b665c] font-medium truncate">{lead.contact_person}</p>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-[8px] hover:bg-[#eae4d5] text-[#1f1f1f] transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex shrink-0 items-center gap-1">
+            {!isEditing && (
+              <button
+                onClick={beginEditing}
+                aria-label="Koreksi data"
+                title="Koreksi telepon, PIC, nilai deal, atau skor"
+                className="min-h-11 min-w-11 flex items-center justify-center gap-1 rounded-[8px] border border-[#1f1f1f] px-2 py-1.5 text-[11px] font-semibold hover:bg-[#eae4d5]"
+              >
+                <Pencil className="h-3.5 w-3.5 text-[#ff4800]" />
+                <span className="hidden sm:inline">Koreksi data</span>
+              </button>
+            )}
+            <button
+              onClick={close}
+              aria-label="Tutup detail Lead"
+              className="min-h-11 min-w-11 flex items-center justify-center rounded-[8px] hover:bg-[#eae4d5] text-[#1f1f1f] transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Modal Body */}
-        <div className="p-5 space-y-4 text-xs max-h-[75vh] overflow-y-auto">
+        <div className="p-5 space-y-4 text-xs overflow-y-auto">
           {/* Quick Metrics Bar: 16px radius, warm parchment */}
-          <div className="grid grid-cols-2 gap-2.5 bg-[#f8f5ee] p-3.5 rounded-[16px] border border-[#1f1f1f]">
+          <div className="grid grid-cols-1 min-[380px]:grid-cols-2 gap-2.5 bg-[#f8f5ee] p-3.5 rounded-[16px] border border-[#1f1f1f]">
             <div>
               <span className="text-[11px] text-[#6b665c] font-medium">Deal Value:</span>
-              <div className="text-base font-extrabold text-[#1f1f1f] font-mono">
+              <div className="break-words text-base font-extrabold text-[#1f1f1f] font-mono">
                 {formatCurrency(lead.deal_value)}
               </div>
             </div>
@@ -77,6 +145,66 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
               </div>
             </div>
           </div>
+
+          {isEditing && (
+            <form onSubmit={saveLeadDetails} className="space-y-3 rounded-[16px] border border-[#1f1f1f] bg-[#fff8f3] p-3.5">
+              <div>
+                <h4 className="font-bold text-sm text-[#1f1f1f]">Koreksi data Lead</h4>
+                <p className="mt-0.5 text-[11px] leading-4 text-[#6b665c]">Hanya telepon, PIC, nilai deal, dan skor yang dapat dikoreksi di sini.</p>
+              </div>
+              {editError && <p role="alert" className="rounded-[8px] border border-[#9b2c2c]/30 bg-white p-2 text-[11px] text-[#9b2c2c]">{editError}</p>}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <label className="space-y-1 font-semibold text-[#1f1f1f]">
+                  <span>PIC / Contact Person *</span>
+                  <input
+                    required
+                    maxLength={200}
+                    value={editValues.contact_person}
+                    onChange={(event) => setEditValues((current) => ({ ...current, contact_person: event.target.value }))}
+                    className="w-full rounded-[8px] border border-[#1f1f1f] bg-white px-3 py-2 font-normal"
+                  />
+                </label>
+                <label className="space-y-1 font-semibold text-[#1f1f1f]">
+                  <span>Telepon / WhatsApp</span>
+                  <input
+                    type="tel"
+                    maxLength={200}
+                    value={editValues.phone}
+                    onChange={(event) => setEditValues((current) => ({ ...current, phone: event.target.value }))}
+                    className="w-full rounded-[8px] border border-[#1f1f1f] bg-white px-3 py-2 font-mono font-normal"
+                  />
+                </label>
+                <label className="space-y-1 font-semibold text-[#1f1f1f]">
+                  <span>Nilai deal (IDR) *</span>
+                  <input
+                    required
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={editValues.deal_value}
+                    onChange={(event) => setEditValues((current) => ({ ...current, deal_value: Number(event.target.value) }))}
+                    className="w-full rounded-[8px] border border-[#1f1f1f] bg-white px-3 py-2 font-mono font-normal"
+                  />
+                </label>
+                <label className="space-y-1 font-semibold text-[#1f1f1f]">
+                  <span>Lead Score</span>
+                  <select
+                    value={editValues.lead_score}
+                    onChange={(event) => setEditValues((current) => ({ ...current, lead_score: event.target.value as LeadScore }))}
+                    className="w-full rounded-[8px] border border-[#1f1f1f] bg-white px-3 py-2 font-normal"
+                  >
+                    {(['Hot', 'Warm', 'Cold', 'Unrated'] as LeadScore[]).map((score) => <option key={score} value={score}>{score}</option>)}
+                  </select>
+                </label>
+              </div>
+              <div className="flex justify-end gap-2 border-t border-[#1f1f1f]/10 pt-2">
+                <button type="button" disabled={isSaving} onClick={() => { setIsEditing(false); setEditError(null); }} className="rounded-[8px] px-3 py-2 font-semibold text-[#6b665c] disabled:opacity-50">Batal</button>
+                <button type="submit" disabled={isSaving} className="flex items-center gap-1.5 rounded-[8px] border border-[#1f1f1f] bg-[#ff4800] px-3 py-2 font-bold text-white disabled:opacity-50">
+                  <Check className="h-4 w-4" />{isSaving ? 'Menyimpan…' : 'Simpan koreksi'}
+                </button>
+              </div>
+            </form>
+          )}
 
           {/* Quick Contact & Action Buttons: 8px radius */}
           <div className="grid grid-cols-3 gap-2">

@@ -8,10 +8,8 @@ import {
   Flame,
   ArrowRight,
   ArrowLeft,
-  ChevronDown,
   Building2,
   MapPin,
-  Check,
   FileSpreadsheet,
 } from 'lucide-react';
 import { Lead, PipelineStage, PIPELINE_STAGES, STAGE_CONFIG } from '../types/crm.ts';
@@ -251,8 +249,6 @@ const LeadKanbanCard: React.FC<LeadKanbanCardProps> = ({
   onStageChange,
   onOpenWhatsApp,
 }) => {
-  const [showStageSelector, setShowStageSelector] = useState(false);
-
   const currentIndex = PIPELINE_STAGES.indexOf(lead.pipeline_stage);
   const canMoveBack = currentIndex > 0;
   const canMoveForward = currentIndex < PIPELINE_STAGES.length - 1;
@@ -350,46 +346,18 @@ const LeadKanbanCard: React.FC<LeadKanbanCardProps> = ({
             </button>
           )}
 
-          {/* Direct Stage Selector Dropdown */}
-          <div className="relative">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setShowStageSelector(!showStageSelector);
-              }}
-              className="min-h-[36px] px-2.5 py-1.5 rounded-[8px] bg-[#f8f5ee] hover:bg-[#eae4d5] text-[11px] font-bold text-[#1f1f1f] border border-[#1f1f1f] flex items-center gap-1 transition-all active:scale-95"
-            >
-              <span>Move</span>
-              <ChevronDown className="w-3 h-3" />
-            </button>
-
-            {showStageSelector && (
-              <div
-                onClick={(e) => e.stopPropagation()}
-                className="absolute right-0 bottom-full mb-1 z-30 bg-[#fcfcfa] border border-[#1f1f1f] rounded-[8px] p-1 w-36 space-y-0.5 shadow-sm"
-              >
-                {PIPELINE_STAGES.map((st) => (
-                  <button
-                    key={st}
-                    type="button"
-                    onClick={() => {
-                      onStageChange(st);
-                      setShowStageSelector(false);
-                    }}
-                    className={`w-full text-left px-2.5 py-2 rounded-[6px] text-xs font-semibold flex items-center justify-between transition-colors ${
-                      lead.pipeline_stage === st
-                        ? 'bg-[#1f1f1f] text-white'
-                        : 'text-[#1f1f1f] hover:bg-[#f8f5ee]'
-                    }`}
-                  >
-                    <span>{st}</span>
-                    {lead.pipeline_stage === st && <Check className="w-3 h-3 text-[#ff4800]" />}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          {/* Native options are not clipped by the Kanban scroll container. */}
+          <select
+            value=""
+            aria-label={`Ubah stage ${lead.company_name}`}
+            title={`Stage saat ini: ${lead.pipeline_stage}`}
+            onClick={(event) => event.stopPropagation()}
+            onChange={(event) => onStageChange(event.target.value as PipelineStage)}
+            className="min-h-[36px] w-20 rounded-[8px] bg-[#f8f5ee] px-1.5 text-[11px] font-bold text-[#1f1f1f] border border-[#1f1f1f]"
+          >
+            <option value="" disabled>Move</option>
+            {PIPELINE_STAGES.map((stage) => <option key={stage} value={stage}>{stage}</option>)}
+          </select>
 
           {canMoveForward && (
             <button

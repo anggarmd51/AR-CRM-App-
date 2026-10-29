@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import 'fake-indexeddb/auto';
 import { CrmSyncEngine, CrmStorage, OfflineWriteQueue } from './syncQueue.ts';
 import { allowlistedMutation, IndexedDbOfflineOutboxStore, type DurableMutation, type DurableQueueInput, type DurableQueueRecord, type OfflineOutboxStore, type QueueOwnerScope, type RestoredQueueRecord } from './offlineOutbox.ts';
+import { reconcileDocumentSyncStatuses, type LocalSyncStatus } from './syncStatus.ts';
+import type { Activity, Lead } from '../types/crm.ts';
+import { OptimisticLeadStageOverlay } from './optimisticLeadStages.ts';
 
 // Mock localStorage for Node environment testing
 const storageMap = new Map<string, string>();
@@ -303,6 +306,35 @@ test('offline write is persisted locally, then acknowledged after reconnect', as
     await receipt.acknowledged;
     assert.equal(calls, 1);
     assert.equal(queue.getSnapshot().acknowledgedCount, 1);
+  } finally { queue.dispose(); }
+});
+
+test('queue acknowledgement reactively marks a rendered lead synced without a Firestore snapshot', async () => {
+  const connectivity = new FakeConnectivity(true);
+  const store = new MemoryOutboxStore();
+  const queue = new OfflineWriteQueue(connectivity, store);
+  const record = leadRecord('reactive-status');
+  let finishWrite!: () => void;
+  const write = new Promise<void>((resolve) => { finishWrite = resolve; });
+  let renderedLeads: Array<{ id: string; _syncStatus: LocalSyncStatus }> = [
+    { id: record.documentId, _syncStatus: 'pending_insert' },
+  ];
+  try {
+    await queue.activateScope(ownerScope, async () => undefined);
+    const receipt = queue.enqueue({ id: record.id, label: record.label, durable: record, run: () => write });
+    await receipt.accepted;
+    const unsubscribe = queue.subscribe(() => {
+      renderedLeads = reconcileDocumentSyncStatuses(renderedLeads, (id) => queue.getDocumentSyncStatus(id));
+    });
+    try {
+      await waitFor(() => queue.getSnapshot().syncingCount === 1);
+      assert.equal(renderedLeads[0]?._syncStatus, 'pending_insert');
+      finishWrite();
+      await receipt.acknowledged;
+      assert.equal(renderedLeads[0]?._syncStatus, 'synced');
+    } finally {
+      unsubscribe();
+    }
   } finally { queue.dispose(); }
 });
 
@@ -847,4 +879,184 @@ test('stage mutation keeps follow-up date optional instead of clearing it', () =
     kind: 'update-lead-stage',
     payload: { lead_id: 'lead-safe', pipeline_stage: 'Meeting' },
   });
+});
+
+test('lead detail correction allowlist keeps only valid contact and deal fields', () => {
+  const sanitized = allowlistedMutation({
+    kind: 'update-lead-details',
+    payload: {
+      lead_id: 'lead-safe',
+      phone: '+628111222333',
+      contact_person: 'Synthetic Contact',
+      deal_value: 85000000,
+      lead_score: 'Hot',
+      ownerId: 'must-not-persist',
+    },
+  } as any);
+  assert.deepEqual(sanitized, {
+    kind: 'update-lead-details',
+    payload: {
+      lead_id: 'lead-safe',
+      phone: '+628111222333',
+      contact_person: 'Synthetic Contact',
+      deal_value: 85000000,
+      lead_score: 'Hot',
+    },
+  });
+
+  for (const payload of [
+    { lead_id: 'lead-safe', contact_person: '' },
+    { lead_id: 'lead-safe', phone: 812345678 },
+    { lead_id: 'lead-safe', deal_value: -1 },
+    { lead_id: 'lead-safe', deal_value: Number.NaN },
+    { lead_id: 'lead-safe', lead_score: 'Invalid' },
+    { lead_id: 'lead-safe' },
+  ]) {
+    assert.throws(() => allowlistedMutation({ kind: 'update-lead-details', payload } as any), /local validation/);
+  }
+});
+
+test('direct won create mutation carries a valid stable archive date', () => {
+  const mutation: DurableMutation = {
+    kind: 'create-lead',
+    payload: {
+      company_name: 'Synthetic Won Co',
+      contact_person: 'Synthetic Contact',
+      phone: '+628111222333',
+      industry: 'Test',
+      city: 'Jakarta',
+      pipeline_stage: 'Closing Won',
+      deal_value: 25000000,
+      next_followup_date: '',
+      lead_score: 'Hot',
+      won_date: '2026-10-29',
+    },
+  };
+  assert.deepEqual(allowlistedMutation(mutation), mutation);
+  assert.throws(() => allowlistedMutation({
+    ...mutation,
+    payload: { ...mutation.payload, won_date: '2026-02-29' },
+  }), /local validation/);
+  assert.throws(() => allowlistedMutation({
+    ...mutation,
+    payload: { ...mutation.payload, pipeline_stage: 'Prospect' },
+  }), /local validation/);
+});
+
+test('queue acknowledgement reactively marks a rendered activity synced without a Firestore snapshot', async () => {
+  const connectivity = new FakeConnectivity(true);
+  const store = new MemoryOutboxStore();
+  const queue = new OfflineWriteQueue(connectivity, store);
+  const record: DurableQueueInput = {
+    id: 'activity-reactive-status',
+    label: 'Simpan aktivitas',
+    ownerId: ownerScope.ownerId,
+    workspaceId: ownerScope.workspaceId,
+    documentId: 'activity-document-reactive-status',
+    kind: 'create-activity',
+    payload: { lead_id: 'stable-lead-document', activity_type: 'Call', notes: 'Synthetic activity' },
+    createdAt: Date.now(),
+  };
+  const write = createDeferred<void>();
+  let renderedActivity: Activity = {
+    id: record.documentId,
+    lead_id: 'stable-lead-document',
+    activity_type: 'Call',
+    notes: 'Synthetic activity',
+    _syncStatus: 'pending_insert',
+  };
+
+  try {
+    await queue.activateScope(ownerScope, async () => undefined);
+    const receipt = queue.enqueue({
+      id: record.id,
+      label: record.label,
+      durable: record,
+      run: () => write.promise,
+    });
+    await receipt.accepted;
+    const unsubscribe = queue.subscribe(() => {
+      [renderedActivity] = reconcileDocumentSyncStatuses(
+        [renderedActivity],
+        (id) => queue.getDocumentSyncStatus(id),
+      );
+    });
+    try {
+      await waitFor(() => queue.getSnapshot().syncingCount === 1);
+      assert.equal(renderedActivity._syncStatus, 'pending_insert');
+
+      write.resolve();
+      await receipt.acknowledged;
+
+      assert.equal(renderedActivity._syncStatus, 'synced');
+      assert.equal((await store.list(ownerScope)).length, 0, 'acknowledged activity is removed from the outbox');
+    } finally {
+      unsubscribe();
+    }
+  } finally {
+    queue.dispose();
+  }
+});
+
+test('stage overlay changes from pending_update to synced only after queue acknowledgement', async () => {
+  const connectivity = new FakeConnectivity(true);
+  const store = new MemoryOutboxStore();
+  const queue = new OfflineWriteQueue(connectivity, store);
+  const leadId = 'stable-stage-lead';
+  const operationId = 'stage-acknowledgement';
+  const record: DurableQueueInput = {
+    id: operationId,
+    label: 'Ubah tahap prospek',
+    ownerId: ownerScope.ownerId,
+    workspaceId: ownerScope.workspaceId,
+    documentId: leadId,
+    kind: 'update-lead-stage',
+    payload: { lead_id: leadId, pipeline_stage: 'Negotiation', next_followup_date: '2026-11-02' },
+    createdAt: Date.now(),
+  };
+  const write = createDeferred<void>();
+  const overlay = new OptimisticLeadStageOverlay();
+  const lead: Lead = {
+    id: leadId,
+    company_name: 'Synthetic Company',
+    contact_person: 'Synthetic Contact',
+    phone: '',
+    industry: 'Test',
+    city: 'Jakarta',
+    pipeline_stage: 'Prospect',
+    deal_value: 0,
+    next_followup_date: '',
+    lead_score: 'Unrated',
+    _syncStatus: 'synced',
+  };
+  overlay.apply(leadId, operationId, 'Negotiation', '2026-11-02');
+
+  try {
+    await queue.activateScope(ownerScope, async () => undefined);
+    const receipt = queue.enqueue({
+      id: operationId,
+      label: record.label,
+      durable: record,
+      run: () => write.promise,
+    });
+    await receipt.accepted;
+    const acknowledgeOverlay = receipt.acknowledged.then(() => overlay.acknowledge(leadId, operationId));
+
+    await waitFor(() => queue.getSnapshot().syncingCount === 1);
+    const pending = overlay.reconcile([lead])[0]!;
+    assert.equal(pending.pipeline_stage, 'Negotiation');
+    assert.equal(pending._syncStatus, 'pending_update');
+
+    write.resolve();
+    await receipt.acknowledged;
+    await acknowledgeOverlay;
+
+    const synced = overlay.reconcile([lead])[0]!;
+    assert.equal(synced.pipeline_stage, 'Negotiation');
+    assert.equal(synced.next_followup_date, '2026-11-02');
+    assert.equal(synced._syncStatus, 'synced');
+    assert.equal((await store.list(ownerScope)).length, 0, 'acknowledged stage mutation is removed from the outbox');
+  } finally {
+    queue.dispose();
+  }
 });

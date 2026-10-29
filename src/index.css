@@ -35,3 +35,25 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #b5ada0;
 }
+
+/* A narrow device preview needs compact layouts even on a desktop viewport. */
+.crm-mobile-preview .sm\:flex-row,
+.crm-mobile-preview .md\:flex-row {
+  flex-direction: column;
+}
+.crm-mobile-preview .sm\:items-center {
+  align-items: stretch;
+}
+.crm-mobile-preview .sm\:grid-cols-2,
+.crm-mobile-preview .md\:grid-cols-2,
+.crm-mobile-preview .lg\:grid-cols-12 {
+  grid-template-columns: minmax(0, 1fr);
+}
+.crm-mobile-preview .md\:grid-cols-4 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.crm-mobile-preview .sm\:col-span-2,
+.crm-mobile-preview .lg\:col-span-4,
+.crm-mobile-preview .lg\:col-span-8 {
+  grid-column: auto;
+}

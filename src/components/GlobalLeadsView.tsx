@@ -503,7 +503,7 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({
             onClick={handleResetSearch}
             className="text-xs font-bold text-[#ff4800] hover:underline"
           >
-            Reset filter
+            Reset filter tampilan
           </button>
         </div>
       )}

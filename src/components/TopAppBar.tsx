@@ -1,13 +1,12 @@
-import { useState } from 'react';
-import { RefreshCw, Smartphone, Monitor, WifiOff, Code2, ShieldCheck, Shield, FileSpreadsheet, AlertCircle, Clock3, CheckCircle2 } from 'lucide-react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { createPortal } from 'react-dom';
+import { RefreshCw, Smartphone, Monitor, WifiOff, Code2, ShieldCheck, Shield, FileSpreadsheet, Download, AlertCircle, Clock3, CheckCircle2 } from 'lucide-react';
 import { formatNumber } from '../utils/crmCalculations.ts';
 import type { SyncQueueOperation } from '../utils/syncQueue.ts';
 
 interface TopAppBarProps {
   title: string;
   isOnline: boolean;
-  isSimulatedOffline: boolean;
-  onToggleSimulatedOffline: () => void;
   pendingCount: number;
   failedCount: number;
   acknowledgedCount: number;
@@ -23,13 +22,12 @@ interface TopAppBarProps {
   onOpenSecurity?: () => void;
   isSecurityActive?: boolean;
   onExportCsv?: () => void;
+  onExportSnapshot?: () => void;
 }
 
 export const TopAppBar: React.FC<TopAppBarProps> = ({
   title,
   isOnline,
-  isSimulatedOffline,
-  onToggleSimulatedOffline,
   pendingCount,
   failedCount,
   acknowledgedCount,
@@ -45,12 +43,39 @@ export const TopAppBar: React.FC<TopAppBarProps> = ({
   onOpenSecurity,
   isSecurityActive = false,
   onExportCsv,
+  onExportSnapshot,
 }) => {
   const [isSyncQueueOpen, setIsSyncQueueOpen] = useState(false);
+  const syncButtonRef = useRef<HTMLButtonElement>(null);
+  const queuePanelRef = useRef<HTMLElement>(null);
+  const [queuePosition, setQueuePosition] = useState<CSSProperties>({ left: 12, top: 80 });
+  useEffect(() => {
+    if (!isSyncQueueOpen) return;
+    const position = () => {
+      const anchor = syncButtonRef.current?.getBoundingClientRect();
+      if (!anchor) return;
+      const width = Math.min(352, window.innerWidth - 24);
+      const top = Math.max(12, Math.min(anchor.bottom + 8, window.innerHeight - 140));
+      setQueuePosition({ width, top, left: Math.max(12, Math.min(anchor.right - width, window.innerWidth - width - 12)), maxHeight: window.innerHeight - top - 12 });
+    };
+    const outside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !syncButtonRef.current?.contains(event.target) && !queuePanelRef.current?.contains(event.target)) setIsSyncQueueOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { setIsSyncQueueOpen(false); syncButtonRef.current?.focus(); } };
+    position();
+    window.addEventListener('resize', position);
+    window.addEventListener('scroll', position, true);
+    document.addEventListener('pointerdown', outside);
+    document.addEventListener('keydown', escape);
+    return () => {
+      window.removeEventListener('resize', position); window.removeEventListener('scroll', position, true);
+      document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape);
+    };
+  }, [isSyncQueueOpen]);
 
   return (
-    <header className="sticky top-0 z-30 bg-[#fcfcfa] border-b border-[#1f1f1f] px-4 py-3">
-      <div className="flex items-center justify-between gap-2 max-w-7xl mx-auto">
+    <header className="sticky top-0 z-30 bg-[#fcfcfa] border-b border-[#1f1f1f] px-4 py-3 [&_button]:min-h-11">
+      <div className={`mx-auto flex max-w-7xl flex-col items-stretch gap-2 ${isPhoneFrame ? '' : 'sm:flex-row sm:items-center sm:justify-between'}`}>
         {/* Left: Branding & Editorial Title */}
         <div className="flex items-center gap-3 min-w-0">
           {/* Official AR CRM Brand Mark: Navy Blue #1A2E40 with Sprout/Hub Orange #FF4800 Network Node */}
@@ -74,12 +99,13 @@ export const TopAppBar: React.FC<TopAppBarProps> = ({
         </div>
 
         {/* Right: Sync Status & Controls */}
-        <div className="flex items-center gap-2 shrink-0">
-          {/* Offline / Online indicator & toggle (8px border radius, hairline 1px border) */}
-          <button
-            onClick={onToggleSimulatedOffline}
-            title={isSimulatedOffline ? 'Simulating Offline: Click to go Online' : 'Network Online: Click to simulate Offline mode'}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] text-xs font-semibold border border-[#1f1f1f] transition-all ${
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+          {/* Read-only network status; offline simulation is controlled by the app/runtime. */}
+          <div
+            role="status"
+            aria-live="polite"
+            title={isOnline ? 'Status jaringan: online' : 'Status jaringan: offline'}
+            className={`flex min-h-11 items-center gap-1.5 rounded-[8px] border border-[#1f1f1f] px-3 py-1.5 text-xs font-semibold ${
               !isOnline
                 ? 'bg-[#f8f5ee] text-[#1f1f1f]'
                 : 'bg-[#fcfcfa] text-[#1f1f1f]'
@@ -88,7 +114,7 @@ export const TopAppBar: React.FC<TopAppBarProps> = ({
             {!isOnline ? (
               <>
                 <WifiOff className="w-3.5 h-3.5 text-[#ff4800]" />
-                <span className="hidden sm:inline">Offline</span>
+                <span className={isPhoneFrame ? 'hidden' : 'hidden sm:inline'}>Offline</span>
                 {pendingCount > 0 && (
                   <span className="bg-[#1f1f1f] text-[#fcfcfa] px-1.5 py-0.2 rounded-[4px] text-[10px] font-mono">
                     {formatNumber(pendingCount)}
@@ -98,22 +124,24 @@ export const TopAppBar: React.FC<TopAppBarProps> = ({
             ) : (
               <>
                 <span className="w-2 h-2 rounded-full bg-[#ff4800]"></span>
-                <span className="hidden sm:inline">Online</span>
+                <span className={isPhoneFrame ? 'hidden' : 'hidden sm:inline'}>Online</span>
               </>
             )}
-          </button>
+          </div>
 
           {/* Visible queue status and recovery actions */}
           <div className="relative">
             <button
+              ref={syncButtonRef}
               onClick={() => setIsSyncQueueOpen((open) => !open)}
+              aria-label="Buka status dan antrean sinkronisasi Firestore"
               aria-expanded={isSyncQueueOpen}
               aria-controls="firestore-sync-queue"
               title="Lihat status dan antrean sinkronisasi Firestore"
               className={`flex items-center gap-1.5 border border-[#1f1f1f] px-3 py-1.5 rounded-[8px] text-xs font-semibold transition-all ${failedCount > 0 ? 'bg-[#fff5f5] text-[#9b2c2c]' : 'bg-[#f8f5ee] hover:bg-[#f2ede4] text-[#1f1f1f]'}`}
             >
               {failedCount > 0 ? <AlertCircle className="w-3.5 h-3.5" /> : <RefreshCw className={`w-3.5 h-3.5 text-[#ff4800] ${isSyncing ? 'animate-spin' : ''}`} />}
-              <span className="hidden md:inline">
+              <span className={isPhoneFrame ? 'hidden' : 'hidden md:inline'}>
                 {failedCount > 0
                   ? `Gagal (${formatNumber(failedCount)})`
                   : isSyncing
@@ -131,11 +159,11 @@ export const TopAppBar: React.FC<TopAppBarProps> = ({
               )}
             </button>
 
-            {isSyncQueueOpen && (
-              <section id="firestore-sync-queue" aria-label="Antrean sinkronisasi Firestore" className="absolute right-0 top-full z-50 mt-2 w-[min(22rem,calc(100vw-1.5rem))] rounded-[12px] border border-[#1f1f1f] bg-[#fcfcfa] p-3 shadow-lg">
+            {isSyncQueueOpen && createPortal(
+              <section ref={queuePanelRef} style={queuePosition} id="firestore-sync-queue" aria-label="Antrean sinkronisasi Firestore" className="fixed z-[90] overflow-y-auto rounded-[12px] border border-[#1f1f1f] bg-[#fcfcfa] p-3 shadow-lg">
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <h2 className="text-sm font-bold text-[#1f1f1f]">Status sinkronisasi</h2>
-                  <button onClick={onSyncNow} disabled={!isOnline || isSyncing || (manualReplayCount === 0 && failedCount === 0)} className="rounded-[6px] border border-[#1f1f1f] px-2 py-1 text-[11px] font-semibold disabled:opacity-50">
+                  <button onClick={onSyncNow} disabled={!isOnline || isSyncing || (manualReplayCount === 0 && failedCount === 0)} className="min-h-11 rounded-[6px] border border-[#1f1f1f] px-2 py-1 text-[11px] font-semibold disabled:opacity-50">
                     {manualReplayCount > 0
                       ? `Sinkronkan mutasi tersimpan (${formatNumber(manualReplayCount)})`
                       : failedCount > 0 ? 'Coba lagi yang gagal' : 'Tidak ada tindakan manual'}
@@ -177,7 +205,7 @@ export const TopAppBar: React.FC<TopAppBarProps> = ({
                             </p>
                           </div>
                           {operation.canRetry && (
-                            <button onClick={() => onRetrySyncOperation(operation.id)} disabled={!isOnline && operation.requiresManualReplay} className="shrink-0 rounded-[6px] bg-[#1f1f1f] px-2 py-1 text-[11px] font-semibold text-white disabled:opacity-50">
+                            <button onClick={() => onRetrySyncOperation(operation.id)} disabled={!isOnline && operation.requiresManualReplay} aria-label={`Tindakan sinkronisasi untuk ${operation.label}`} className="min-h-11 shrink-0 rounded-[6px] bg-[#1f1f1f] px-2 py-1 text-[11px] font-semibold text-white disabled:opacity-50">
                               {operation.requiresManualReplay ? 'Kirim sekarang' : 'Coba lagi'}
                             </button>
                           )}
@@ -190,7 +218,7 @@ export const TopAppBar: React.FC<TopAppBarProps> = ({
                 <p className="mt-2 border-t border-[#eae4d5] pt-2 text-[10px] leading-4 text-[#6b665c]">
                   Mutasi tertunda disimpan dalam outbox IndexedDB terenkripsi per workspace dan UID; payload dibatasi ke field yang diperlukan dan dihapus setelah acknowledgement. Data tetap berada di profil browser, tidak menjadi backup, dan XSS pada origin yang sama tetap dapat mengakses data saat aplikasi berjalan.
                 </p>
-              </section>
+              </section>, document.body
             )}
           </div>
 
@@ -206,7 +234,7 @@ export const TopAppBar: React.FC<TopAppBarProps> = ({
               }`}
             >
               <Code2 className={`w-3.5 h-3.5 ${isAndroidCodeActive ? 'text-white' : 'text-[#ff4800]'}`} />
-              <span className="hidden sm:inline">Android Code</span>
+              <span className={isPhoneFrame ? 'hidden' : 'hidden sm:inline'}>Android Code</span>
             </button>
           )}
 
@@ -214,11 +242,24 @@ export const TopAppBar: React.FC<TopAppBarProps> = ({
           {onExportCsv && (
             <button
               onClick={onExportCsv}
-              title="Download Rekapitulasi Leads (CSV)"
+              title="Unduh CSV Lead saja"
+              aria-label="Unduh CSV Lead saja"
               className="flex items-center gap-1.5 bg-[#f8f5ee] hover:bg-[#f2ede4] text-[#1f1f1f] border border-[#1f1f1f] px-3 py-1.5 rounded-[8px] text-xs font-semibold transition-all active:scale-95"
             >
               <FileSpreadsheet className="w-3.5 h-3.5 text-[#ff4800]" />
-              <span className="hidden xl:inline">Export CSV</span>
+              <span className={isPhoneFrame ? 'hidden' : 'hidden xl:inline'}>Export CSV</span>
+            </button>
+          )}
+
+          {onExportSnapshot && (
+            <button
+              onClick={onExportSnapshot}
+              title="Ekspor JSON lengkap Lead, aktivitas, dan arsip Won"
+              aria-label="Ekspor JSON lengkap CRM"
+              className="flex items-center gap-1.5 bg-[#fff8f3] hover:bg-[#fff0e8] text-[#1f1f1f] border border-[#1f1f1f] px-3 py-1.5 rounded-[8px] text-xs font-semibold transition-all active:scale-95"
+            >
+              <Download className="w-3.5 h-3.5 text-[#ff4800]" />
+              <span className={isPhoneFrame ? 'hidden' : 'hidden xl:inline'}>Ekspor Lengkap</span>
             </button>
           )}
 
@@ -236,12 +277,12 @@ export const TopAppBar: React.FC<TopAppBarProps> = ({
               {isSecurityActive ? (
                 <>
                   <ShieldCheck className="w-3.5 h-3.5 text-[#155e3c]" />
-                  <span className="hidden sm:inline">PIN On</span>
+                  <span className={isPhoneFrame ? 'hidden' : 'hidden sm:inline'}>PIN On</span>
                 </>
               ) : (
                 <>
                   <Shield className="w-3.5 h-3.5 text-[#6b665c]" />
-                  <span className="hidden sm:inline">Keamanan</span>
+                  <span className={isPhoneFrame ? 'hidden' : 'hidden sm:inline'}>Keamanan</span>
                 </>
               )}
             </button>
@@ -256,7 +297,7 @@ export const TopAppBar: React.FC<TopAppBarProps> = ({
             {isPhoneFrame ? (
               <>
                 <Monitor className="w-3.5 h-3.5 text-[#ff4800]" />
-                <span>Full Canvas</span>
+                <span className="sr-only">Full Canvas</span>
               </>
             ) : (
               <>

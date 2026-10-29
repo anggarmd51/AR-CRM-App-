@@ -26,6 +26,8 @@ export interface Lead {
   _syncStatus?: 'synced' | 'pending_insert' | 'pending_update' | 'error';
 }
 
+export type LeadCorrection = Partial<Pick<Lead, 'contact_person' | 'phone' | 'deal_value' | 'lead_score'>>;
+
 export interface Activity {
   id: string;
   lead_id: string;

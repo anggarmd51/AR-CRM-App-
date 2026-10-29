@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, ShieldCheck, Lock, Fingerprint, Clock, Check, AlertTriangle, KeyRound } from 'lucide-react';
 import { SecurityVault } from '../utils/securityLock.ts';
+import { useModalAccessibility } from '../utils/useModalAccessibility.ts';
 
 interface SecuritySettingsModalProps {
   isOpen: boolean;
@@ -20,6 +21,7 @@ export const SecuritySettingsModal: React.FC<SecuritySettingsModalProps> = ({
   const [useBiometric, setUseBiometric] = useState(SecurityVault.isBiometricEnabled());
   const [timeoutMins, setTimeoutMins] = useState(SecurityVault.getTimeoutMinutes());
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const { dialogRef } = useModalAccessibility({ isOpen, onClose, titleId: 'security-settings-modal-title' });
 
   if (!isOpen) return null;
 
@@ -71,8 +73,8 @@ export const SecuritySettingsModal: React.FC<SecuritySettingsModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#1f1f1f]/50 backdrop-blur-xs overflow-y-auto">
-      <div className="bg-[#fcfcfa] border border-[#1f1f1f] rounded-[16px] w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-150 my-6">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#1f1f1f]/50 backdrop-blur-xs overflow-y-auto" role="presentation">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="security-settings-modal-title" tabIndex={-1} className="bg-[#fcfcfa] border border-[#1f1f1f] rounded-[16px] w-full max-w-md max-h-[calc(100dvh-2rem)] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150 my-2">
         {/* Header */}
         <div className="px-5 py-4 border-b border-[#1f1f1f] flex items-center justify-between bg-[#f8f5ee]">
           <div className="flex items-center gap-2.5">
@@ -80,7 +82,7 @@ export const SecuritySettingsModal: React.FC<SecuritySettingsModalProps> = ({
               <ShieldCheck className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="font-bold text-[#1f1f1f] text-base font-serif-heading">
+              <h3 id="security-settings-modal-title" className="font-bold text-[#1f1f1f] text-base font-serif-heading">
                 Keamanan & Kunci Aplikasi
               </h3>
               <p className="text-xs text-[#6b665c]">
@@ -90,14 +92,14 @@ export const SecuritySettingsModal: React.FC<SecuritySettingsModalProps> = ({
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-[8px] hover:bg-[#eae4d5] text-[#1f1f1f] transition-colors"
+            aria-label="Tutup pengaturan keamanan" className="min-h-11 min-w-11 flex items-center justify-center rounded-[8px] hover:bg-[#eae4d5] text-[#1f1f1f] transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Content */}
-        <div className="p-5 space-y-4 text-xs">
+        <div className="p-5 space-y-4 text-xs overflow-y-auto">
           <p role="note" className="rounded-[8px] border border-[#9b2c2c]/30 bg-[#fff5f0] p-3 text-[11px] text-[#9b2c2c]">
             PIN/biometrik ini hanya mengunci tampilan pada perangkat. Ini bukan login akun dan tidak mengenkripsi data browser.
           </p>
@@ -149,8 +151,9 @@ export const SecuritySettingsModal: React.FC<SecuritySettingsModalProps> = ({
 
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
-                <label className="text-[11px] text-[#6b665c] font-semibold">PIN Baru</label>
+                <label htmlFor="security-new-pin" className="text-[11px] text-[#6b665c] font-semibold">PIN Baru</label>
                 <input
+                  id="security-new-pin"
                   type="password"
                   inputMode="numeric"
                   maxLength={6}
@@ -162,8 +165,9 @@ export const SecuritySettingsModal: React.FC<SecuritySettingsModalProps> = ({
               </div>
 
               <div className="space-y-1">
-                <label className="text-[11px] text-[#6b665c] font-semibold">Ulangi PIN</label>
+                <label htmlFor="security-confirm-pin" className="text-[11px] text-[#6b665c] font-semibold">Ulangi PIN</label>
                 <input
+                  id="security-confirm-pin"
                   type="password"
                   inputMode="numeric"
                   maxLength={6}
@@ -177,11 +181,11 @@ export const SecuritySettingsModal: React.FC<SecuritySettingsModalProps> = ({
 
             {/* Timeout Option */}
             <div className="space-y-1 pt-1">
-              <label className="text-[11px] text-[#6b665c] font-semibold flex items-center gap-1">
+              <label htmlFor="security-timeout" className="text-[11px] text-[#6b665c] font-semibold flex items-center gap-1">
                 <Clock className="w-3 h-3 text-[#1f1f1f]" />
                 Otomatis Kunci Setelah:
               </label>
-              <select
+                <select id="security-timeout"
                 value={timeoutMins}
                 onChange={(e) => setTimeoutMins(parseInt(e.target.value, 10))}
                 className="w-full bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] px-2.5 py-1.5 text-xs text-[#1f1f1f] font-medium"

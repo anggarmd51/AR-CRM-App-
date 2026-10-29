@@ -59,6 +59,7 @@ interface Deferred<T> {
 interface QueuedOperation<T = unknown> {
   id: string;
   label: string;
+  enqueueOrder: number;
   activationVersion: number;
   deactivation: Deferred<void>;
   run: () => Promise<T>;
@@ -166,7 +167,9 @@ function scopeMatches(record: QueueOwnerScope, scope: QueueOwnerScope): boolean 
 function sortByCreation(left: QueuedOperation, right: QueuedOperation): number {
   const leftTime = left.durable?.createdAt ?? 0;
   const rightTime = right.durable?.createdAt ?? 0;
-  return leftTime - rightTime || left.id.localeCompare(right.id);
+  return leftTime - rightTime
+    || left.enqueueOrder - right.enqueueOrder
+    || left.id.localeCompare(right.id);
 }
 
 export class OfflineWriteQueue {
@@ -179,6 +182,7 @@ export class OfflineWriteQueue {
   private restoring = false;
   private pumpPromise?: Promise<void>;
   private activationVersion = 0;
+  private enqueueSequence = 0;
   private readonly retryBaseMs: number;
   private readonly retryMaxMs: number;
 
@@ -279,6 +283,7 @@ export class OfflineWriteQueue {
           persisted: true,
           requiresManualReplay: true,
           activationVersion: version,
+          enqueueOrder: this.enqueueSequence++,
         });
         if (version !== this.activationVersion) return;
         operation.errorMessage = record.state === 'syncing' ? undefined : record.errorMessage;
@@ -331,6 +336,7 @@ export class OfflineWriteQueue {
       persisted: !input.durable,
       requiresManualReplay: false,
       activationVersion: this.activationVersion,
+      enqueueOrder: this.enqueueSequence++,
     });
     this.operations.set(operation.id, operation);
     operation.acceptedPromise = (async () => {
@@ -417,7 +423,8 @@ export class OfflineWriteQueue {
     if (!this.refreshConnectivity()) throw new OfflineWriteBlockedError();
     const sanitized = allowlistedMutation(mutation);
     if (sanitized.kind !== operation.durable.kind) throw new Error('A correction cannot change the operation type.');
-    if (sanitized.kind === 'update-lead-stage' && sanitized.payload.lead_id !== operation.durable.documentId) {
+    if ((sanitized.kind === 'update-lead-stage' || sanitized.kind === 'update-lead-details')
+      && sanitized.payload.lead_id !== operation.durable.documentId) {
       throw new Error('A correction cannot change the lead document ID.');
     }
 
@@ -457,12 +464,12 @@ export class OfflineWriteQueue {
 
   getDocumentSyncStatus(documentId: string): 'synced' | 'pending_insert' | 'pending_update' | 'error' {
     const matching = [...this.operations.values()]
-      .filter((operation) => operation.durable?.documentId === documentId)
-      .sort((left, right) => sortByCreation(right, left));
-    const latest = matching[0];
-    if (!latest || latest.state === 'acknowledged') return 'synced';
-    if (latest.state === 'failed') return 'error';
-    return latest.durable?.kind === 'create-lead' || latest.durable?.kind === 'create-activity'
+      .filter((operation) => operation.accepted && operation.durable?.documentId === documentId);
+    const unresolved = matching.filter((operation) => operation.state !== 'acknowledged');
+    if (!unresolved.length) return 'synced';
+    if (unresolved.some((operation) => operation.state === 'failed')) return 'error';
+    return unresolved.some((operation) => operation.durable?.kind === 'create-lead'
+      || operation.durable?.kind === 'create-activity')
       ? 'pending_insert'
       : 'pending_update';
   }
@@ -476,6 +483,7 @@ export class OfflineWriteQueue {
   private createOperation<T>(input: {
     id: string;
     label: string;
+    enqueueOrder: number;
     activationVersion: number;
     run: () => Promise<T>;
     runDurable?: (record: RestoredQueueRecord) => Promise<T>;

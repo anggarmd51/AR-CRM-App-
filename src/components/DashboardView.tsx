@@ -56,9 +56,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     <div className="space-y-6 pb-24">
       {/* 1. FINANCIAL METRICS HERO */}
       <section className="space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className="text-xl font-bold text-[#1f1f1f] tracking-tight flex items-center gap-2 font-serif-heading">
+            <h2 className="flex min-w-0 items-start gap-2 break-words text-xl font-bold text-[#1f1f1f] tracking-tight flex items-center gap-2 font-serif-heading">
               <TrendingUp className="w-5 h-5 text-[#ff4800]" />
               Financial & Pipeline Forecast
             </h2>
@@ -66,7 +66,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               Real-time revenue forecast and pipeline health across active deals
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {onExportCsv && (
               <button
                 onClick={onExportCsv}
@@ -95,7 +95,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <span className="text-[11px] font-semibold uppercase tracking-wider">Total Pipeline</span>
               <DollarSign className="w-4 h-4 text-[#ff4800]" />
             </div>
-            <div className="text-lg md:text-xl font-extrabold text-[#1f1f1f]">
+            <div className="break-words text-[15px] sm:text-lg md:text-xl font-extrabold text-[#1f1f1f]">
               {formatCurrency(metrics.totalPipelineValue)}
             </div>
             <div className="text-[11px] text-[#6b665c] mt-0.5">
@@ -109,7 +109,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <span className="text-[11px] font-semibold uppercase tracking-wider">Closed Won</span>
               <CheckCircle2 className="w-4 h-4 text-[#ff4800]" />
             </div>
-            <div className="text-lg md:text-xl font-extrabold text-[#1f1f1f]">
+            <div className="break-words text-[15px] sm:text-lg md:text-xl font-extrabold text-[#1f1f1f]">
               {formatCurrency(metrics.wonValue)}
             </div>
             <div className="text-[11px] text-[#6b665c] mt-0.5 font-medium">
@@ -123,7 +123,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <span className="text-[11px] font-semibold uppercase tracking-wider">Active Deals</span>
               <Briefcase className="w-4 h-4 text-[#1f1f1f]" />
             </div>
-            <div className="text-lg md:text-xl font-extrabold text-[#1f1f1f]">
+            <div className="break-words text-[15px] sm:text-lg md:text-xl font-extrabold text-[#1f1f1f]">
               {formatCurrency(metrics.activeValue)}
             </div>
             <div className="text-[11px] text-[#6b665c] mt-0.5">
@@ -137,7 +137,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <span className="text-[11px] font-semibold uppercase tracking-wider">Weighted Prob.</span>
               <Sparkles className="w-4 h-4 text-[#ff4800]" />
             </div>
-            <div className="text-lg md:text-xl font-extrabold text-[#1f1f1f]">
+            <div className="break-words text-[15px] sm:text-lg md:text-xl font-extrabold text-[#1f1f1f]">
               {formatCurrency(metrics.weightedPipelineValue)}
             </div>
             <div className="text-[11px] text-[#6b665c] mt-0.5 font-medium">
@@ -149,14 +149,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* 2. TODAY'S FOLLOW-UP REMINDERS & ALERTS */}
       <section className="space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex items-center gap-2">
             <CalendarClock className="w-5 h-5 text-[#ff4800]" />
-            <h2 className="text-lg font-bold text-[#1f1f1f] tracking-tight font-serif-heading">
+            <h2 className="break-words text-lg font-bold text-[#1f1f1f] tracking-tight font-serif-heading">
               Action Required: Follow-up Reminders
             </h2>
           </div>
-          <span className="px-2.5 py-0.5 rounded-[4px] text-xs font-bold bg-[#f8f5ee] text-[#1f1f1f] border border-[#1f1f1f]">
+          <span className="shrink-0 rounded-[4px] border border-[#1f1f1f] bg-[#f8f5ee] px-2.5 py-0.5 text-xs font-bold">
             {formatNumber(followUps.dueToday.length + followUps.overdue.length)} Items Due
           </span>
         </div>
@@ -317,10 +317,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* 4. RECENT ACTIVITIES FEED */}
       <section className="space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex items-center gap-2">
             <Clock className="w-5 h-5 text-[#ff4800]" />
-            <h3 className="text-lg font-bold text-[#1f1f1f] tracking-tight font-serif-heading">
+            <h3 className="break-words text-lg font-bold text-[#1f1f1f] tracking-tight font-serif-heading">
               Recent Field Activities & Check-Ins
             </h3>
           </div>
