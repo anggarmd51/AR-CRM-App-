@@ -103,10 +103,12 @@ test('uses an opaque deterministic document ID and never embeds the source key',
 
 test('enables only the exact staging Preview binding or an explicitly enabled loopback emulator', () => {
   const staging = stagingEnvironment();
+  assert.equal(MAKE_WEBHOOK_APPROVED_PREVIEW_BRANCH, 'cue/firebase-stabilization');
   assert.equal(resolveMakeWebhookTarget(staging)?.projectId, MAKE_WEBHOOK_STAGING_PROJECT_ID);
   assert.equal(resolveMakeWebhookTarget(staging)?.workspaceId, FIREBASE_STAGING_WORKSPACE_ID);
   assert.equal(resolveMakeWebhookTarget(stagingEnvironment({ VITE_FIREBASE_PROJECT_ID: 'ar-crm-73222' })), undefined);
   assert.equal(resolveMakeWebhookTarget(stagingEnvironment({ VERCEL_GIT_COMMIT_REF: 'main' })), undefined);
+  assert.equal(resolveMakeWebhookTarget(stagingEnvironment({ VERCEL_GIT_COMMIT_REF: 'cue/ar-crm-operational-features' })), undefined);
 });
 
 test('does not expose the endpoint on production, local without emulator gate, or a wrong Firebase owner/workspace', () => {

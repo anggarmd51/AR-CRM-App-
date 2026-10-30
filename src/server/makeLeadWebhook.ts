@@ -8,7 +8,7 @@ import type { LeadScore, PipelineStage } from '../types/crm.ts';
 
 export const MAKE_WEBHOOK_STAGING_PROJECT_ID = 'ar-crm-staging-angga-20261027';
 export const MAKE_WEBHOOK_LOCAL_PROJECT_ID = 'demo-ar-crm-make-webhook';
-export const MAKE_WEBHOOK_APPROVED_PREVIEW_BRANCH = 'cue/ar-crm-operational-features';
+export const MAKE_WEBHOOK_APPROVED_PREVIEW_BRANCH = 'cue/firebase-stabilization';
 export const MAKE_WEBHOOK_MAX_BODY_BYTES = 32 * 1024;
 const STRONG_SECRET_MIN_BYTES = 32;
 
