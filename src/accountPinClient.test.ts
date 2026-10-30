@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Auth, GoogleAuthProvider, User } from 'firebase/auth';
-import { createAccountPinClient } from './accountPinClient.ts';
+import { createAccountPinClient, safeAccountPinRedirectErrorCode } from './accountPinClient.ts';
 
 const SESSION_ID = 'S'.repeat(43);
 
@@ -10,6 +10,8 @@ function createHarness(options: {
   responses?: Array<{ status: number; body: Record<string, unknown> }>;
   reauthentication?: 'redirect-started' | void;
   redirectUserUid?: string;
+  redirectError?: 'auth/invalid-credential' | 'auth/network-request-failed' | 'auth/operation-not-allowed' | 'auth/unauthorized-domain' | 'auth/internal-error' | 'redirect_result_missing';
+  requireRedirectResult?: boolean;
 } = {}) {
   const calls: {
     requests: Array<{ path: string; init: RequestInit }>;
@@ -34,8 +36,13 @@ function createHarness(options: {
     },
     getAuth: () => ({ currentUser: null } as Auth),
     getGoogleProvider: () => ({} as GoogleAuthProvider),
+    requireRedirectResultForEnrollment: options.requireRedirectResult,
     async reauthenticate() { calls.authSteps.push('reauth'); return options.reauthentication; },
-    async consumeRedirectReauthentication() { calls.authSteps.push('redirect-result'); return options.redirectUserUid; },
+    async consumeRedirectReauthentication() {
+      calls.authSteps.push('redirect-result');
+      if (options.redirectError) return { errorCode: options.redirectError };
+      return options.redirectUserUid ? { userUid: options.redirectUserUid } : undefined;
+    },
     async signInWithCustomToken(_auth, token) { calls.exchangedTokens.push(token); calls.authSteps.push('custom-token'); },
   });
   const user = {
@@ -115,6 +122,43 @@ test('redirect result for another account cannot bypass fresh enrollment reauthe
   assert.equal(await testHarness.client.enrollAndExchange(testHarness.user, '654321', '654321'), false);
   assert.equal(testHarness.calls.requests.length, 0);
   assert.deepEqual(testHarness.calls.authSteps, ['redirect-result', 'reauth']);
+});
+
+test('redirect Auth errors are reduced to the small allowlist or generic missing-result code', () => {
+  assert.equal(safeAccountPinRedirectErrorCode({ code: 'auth/network-request-failed', message: 'private provider details' }), 'auth/network-request-failed');
+  assert.equal(safeAccountPinRedirectErrorCode({ code: 'auth/unauthorized-domain', email: 'private@example.com' }), 'auth/unauthorized-domain');
+  assert.equal(safeAccountPinRedirectErrorCode({ code: 'auth/unrecognized-provider-error', message: 'private provider details' }), 'redirect_result_missing');
+  assert.equal(safeAccountPinRedirectErrorCode(new Error('private provider details')), 'redirect_result_missing');
+});
+
+test('redirect Auth error blocks staging enrollment POST', async () => {
+  const testHarness = createHarness({
+    requireRedirectResult: true,
+    redirectError: 'auth/network-request-failed',
+    reauthentication: 'redirect-started',
+  });
+  assert.equal(await testHarness.client.completeRedirectReauthentication(), 'auth/network-request-failed');
+  await assert.rejects(
+    () => testHarness.client.enrollAndExchange(testHarness.user, '654321', '654321'),
+    (error: unknown) => error instanceof Error && 'code' in error && error.code === 'auth/network-request-failed',
+  );
+  assert.deepEqual(testHarness.calls.requests, []);
+  assert.deepEqual(testHarness.calls.authSteps, ['redirect-result']);
+});
+
+test('missing redirect result blocks staging enrollment POST', async () => {
+  const testHarness = createHarness({
+    requireRedirectResult: true,
+    redirectError: 'redirect_result_missing',
+    reauthentication: 'redirect-started',
+  });
+  assert.equal(await testHarness.client.completeRedirectReauthentication(), 'redirect_result_missing');
+  await assert.rejects(
+    () => testHarness.client.enrollAndExchange(testHarness.user, '654321', '654321'),
+    (error: unknown) => error instanceof Error && 'code' in error && error.code === 'redirect_result_missing',
+  );
+  assert.deepEqual(testHarness.calls.requests, []);
+  assert.deepEqual(testHarness.calls.authSteps, ['redirect-result']);
 });
 
 test('API errors remain fail-closed and never exchange a token', async () => {
