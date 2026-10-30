@@ -8,6 +8,8 @@ const SESSION_ID = 'S'.repeat(43);
 function createHarness(options: {
   claim?: unknown;
   responses?: Array<{ status: number; body: Record<string, unknown> }>;
+  reauthentication?: 'redirect-started' | void;
+  redirectUserUid?: string;
 } = {}) {
   const calls: {
     requests: Array<{ path: string; init: RequestInit }>;
@@ -32,10 +34,12 @@ function createHarness(options: {
     },
     getAuth: () => ({ currentUser: null } as Auth),
     getGoogleProvider: () => ({} as GoogleAuthProvider),
-    async reauthenticate() { calls.authSteps.push('reauth'); },
+    async reauthenticate() { calls.authSteps.push('reauth'); return options.reauthentication; },
+    async consumeRedirectReauthentication() { calls.authSteps.push('redirect-result'); return options.redirectUserUid; },
     async signInWithCustomToken(_auth, token) { calls.exchangedTokens.push(token); calls.authSteps.push('custom-token'); },
   });
   const user = {
+    uid: 'owner-uid',
     async getIdToken(forceRefresh?: boolean) {
       calls.authSteps.push(forceRefresh ? 'id-token-force-refresh' : 'id-token');
       return 'fake.firebase.id.token';
@@ -80,6 +84,37 @@ test('enrollment completes fresh Google re-auth before sending PIN and forces a 
   assert.equal(testHarness.calls.requests[0].path, '/api/account-pin/enroll');
   assert.deepEqual(JSON.parse(String(testHarness.calls.requests[0].init.body)), { pin: '654321', confirmPin: '654321' });
   assert.deepEqual(testHarness.calls.exchangedTokens, ['enrollment.custom.token']);
+});
+
+test('redirect enrollment sends no PIN before return and accepts only the matching reauthenticated user', async () => {
+  const testHarness = createHarness({
+    responses: [{ status: 200, body: { customToken: 'enrollment.custom.token' } }],
+    reauthentication: 'redirect-started',
+    redirectUserUid: 'owner-uid',
+  });
+
+  assert.equal(await testHarness.client.enrollAndExchange(testHarness.user, '654321', '654321'), false);
+  assert.equal(testHarness.calls.requests.length, 0);
+  assert.deepEqual(testHarness.calls.authSteps, ['reauth']);
+
+  await testHarness.client.completeRedirectReauthentication();
+  assert.equal(await testHarness.client.enrollAndExchange(testHarness.user, '654321', '654321'), true);
+  assert.deepEqual(testHarness.calls.authSteps, ['reauth', 'redirect-result', 'id-token-force-refresh', 'custom-token']);
+  const [enrollmentRequest] = testHarness.calls.requests;
+  assert.ok(enrollmentRequest);
+  assert.equal(enrollmentRequest.path, '/api/account-pin/enroll');
+  assert.deepEqual(JSON.parse(String(enrollmentRequest.init.body)), { pin: '654321', confirmPin: '654321' });
+});
+
+test('redirect result for another account cannot bypass fresh enrollment reauthentication', async () => {
+  const testHarness = createHarness({
+    reauthentication: 'redirect-started',
+    redirectUserUid: 'different-user',
+  });
+  await testHarness.client.completeRedirectReauthentication();
+  assert.equal(await testHarness.client.enrollAndExchange(testHarness.user, '654321', '654321'), false);
+  assert.equal(testHarness.calls.requests.length, 0);
+  assert.deepEqual(testHarness.calls.authSteps, ['redirect-result', 'reauth']);
 });
 
 test('API errors remain fail-closed and never exchange a token', async () => {

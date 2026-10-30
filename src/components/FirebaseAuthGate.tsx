@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import {
+  getRedirectResult,
   onIdTokenChanged,
   reauthenticateWithPopup,
+  reauthenticateWithRedirect,
   signInWithCustomToken,
   signInWithPopup,
   signOut,
@@ -21,14 +23,45 @@ import { activateFirestoreWriteQueue, deactivateFirestoreWriteQueue } from '../f
 import { firestoreWriteQueue } from '../utils/offlineWriteQueue.ts';
 import { isOwnerBootstrapEnabled } from '../utils/ownerBootstrap.ts';
 import { requiresServerIssuedPinSession } from '../accountPinPolicy.ts';
+import { isStagingAccountPinRedirectEnabled } from '../accountPinReauthentication.ts';
 import { createAccountPinClient, type AccountPinClientStatus } from '../accountPinClient.ts';
 import { AccountPinGate } from './AccountPinGate.tsx';
+
+const ACCOUNT_PIN_REDIRECT_PENDING_KEY = 'arcrm:account-pin:reauth-redirect-pending';
+const useStagingAccountPinRedirect = isStagingAccountPinRedirectEnabled(
+  firebaseTarget,
+  typeof window === 'undefined' ? '' : window.location.origin,
+);
 
 const accountPinClient = createAccountPinClient({
   fetch: (...args) => fetch(...args),
   getAuth: getFirebaseAuth,
   getGoogleProvider,
-  reauthenticate: reauthenticateWithPopup,
+  reauthenticate: async (user, provider) => {
+    if (!useStagingAccountPinRedirect) {
+      await reauthenticateWithPopup(user, provider);
+      return;
+    }
+    window.sessionStorage.setItem(ACCOUNT_PIN_REDIRECT_PENDING_KEY, 'pending');
+    try {
+      await reauthenticateWithRedirect(user, provider);
+      return 'redirect-started';
+    } catch (cause) {
+      try { window.sessionStorage.removeItem(ACCOUNT_PIN_REDIRECT_PENDING_KEY); } catch { /* fail closed */ }
+      throw cause;
+    }
+  },
+  consumeRedirectReauthentication: async () => {
+    if (!useStagingAccountPinRedirect
+      || window.sessionStorage.getItem(ACCOUNT_PIN_REDIRECT_PENDING_KEY) !== 'pending') return undefined;
+    window.sessionStorage.removeItem(ACCOUNT_PIN_REDIRECT_PENDING_KEY);
+    try {
+      const result = await getRedirectResult(getFirebaseAuth());
+      return result?.user.uid;
+    } catch {
+      return undefined;
+    }
+  },
   signInWithCustomToken,
 });
 
@@ -69,6 +102,8 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
     const start = async () => {
       try {
         await verifyFirebaseStartup();
+        if (!active) return;
+        await accountPinClient.completeRedirectReauthentication();
         if (!active) return;
         unsubscribe = onIdTokenChanged(getFirebaseAuth(), (nextUser) => {
           const eventGeneration = ++generation;
@@ -279,6 +314,7 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
         client={accountPinClient}
         state={sessionRevalidating || accountPinGateState === 'verified' ? 'checking' : accountPinGateState}
         status={accountPinStatus}
+        reauthenticationRedirect={useStagingAccountPinRedirect}
         onRetry={() => setPinRefreshTrigger((value) => value + 1)}
         onSignOut={handleSignOut}
       />

@@ -18,7 +18,8 @@ export interface AccountPinClientDependencies {
   fetch: typeof fetch;
   getAuth(): Auth | Promise<Auth>;
   getGoogleProvider(): GoogleAuthProvider | Promise<GoogleAuthProvider>;
-  reauthenticate(user: User, provider: GoogleAuthProvider): Promise<unknown>;
+  reauthenticate(user: User, provider: GoogleAuthProvider): Promise<'redirect-started' | void>;
+  consumeRedirectReauthentication?(): Promise<string | undefined>;
   signInWithCustomToken(auth: Auth, token: string): Promise<unknown>;
 }
 
@@ -93,14 +94,25 @@ export function createAccountPinClient(dependencies: AccountPinClientDependencie
     await dependencies.signInWithCustomToken(await dependencies.getAuth(), response.customToken);
   }
 
+  let redirectReauthenticatedUid: string | undefined;
+
   return {
+    async completeRedirectReauthentication(): Promise<void> {
+      redirectReauthenticatedUid = await dependencies.consumeRedirectReauthentication?.();
+    },
     fetchStatus,
     async verifyAndExchange(user: User, pin: string): Promise<void> {
       await exchangeCustomToken(user, '/api/account-pin/verify', { pin });
     },
-    async enrollAndExchange(user: User, pin: string, confirmPin: string): Promise<void> {
-      await dependencies.reauthenticate(user, await dependencies.getGoogleProvider());
+    async enrollAndExchange(user: User, pin: string, confirmPin: string): Promise<boolean> {
+      if (redirectReauthenticatedUid === user.uid) {
+        redirectReauthenticatedUid = undefined;
+      } else {
+        const reauthentication = await dependencies.reauthenticate(user, await dependencies.getGoogleProvider());
+        if (reauthentication === 'redirect-started') return false;
+      }
       await exchangeCustomToken(user, '/api/account-pin/enroll', { pin, confirmPin }, true);
+      return true;
     },
   };
 }

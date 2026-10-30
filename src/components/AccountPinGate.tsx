@@ -13,6 +13,7 @@ interface AccountPinGateProps {
   client: AccountPinClient;
   state: AccountPinGateState;
   status?: AccountPinClientStatus;
+  reauthenticationRedirect: boolean;
   onRetry: () => void;
   onSignOut: () => void;
 }
@@ -50,7 +51,7 @@ function localizedError(error: unknown, operation: 'verify' | 'enroll'): string 
   }
 }
 
-export function AccountPinGate({ user, client, state, status, onRetry, onSignOut }: AccountPinGateProps) {
+export function AccountPinGate({ user, client, state, status, reauthenticationRedirect, onRetry, onSignOut }: AccountPinGateProps) {
   const [pin, setPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
   const [busy, setBusy] = useState(false);
@@ -90,7 +91,9 @@ export function AccountPinGate({ user, client, state, status, onRetry, onSignOut
     detail = 'Masukkan PIN akun 6–12 angka untuk membuka sesi cloud. PIN hanya dikirim ke server melalui HTTPS dan tidak disimpan aplikasi di browser.';
   } else if (state === 'enrollment-available') {
     title = 'Daftarkan PIN akun pertama';
-    detail = 'Pendaftaran hanya tersedia jika server mengonfirmasi belum ada credential. Google akan diminta re-authentication baru; server membuat verifier scrypt dan menyimpannya pada dokumen Firestore server-only.';
+    detail = reauthenticationRedirect
+      ? 'Pendaftaran hanya tersedia jika server mengonfirmasi belum ada credential. Anda akan diarahkan ke Google pada tab ini; setelah kembali, masukkan ulang PIN. PIN tidak disimpan selama redirect.'
+      : 'Pendaftaran hanya tersedia jika server mengonfirmasi belum ada credential. Google akan diminta re-authentication baru; server membuat verifier scrypt dan menyimpannya pada dokumen Firestore server-only.';
   } else if (state === 'enrollment-blocked') {
     title = 'PIN akun belum terdaftar';
     detail = 'Pendaftaran aman belum diaktifkan di lingkungan ini. CRM, Firestore, dan antrean tetap ditahan. Jangan masukkan PIN lokal sebagai pengganti.';
@@ -155,7 +158,11 @@ export function AccountPinGate({ user, client, state, status, onRetry, onSignOut
               disabled={busy || pin.length < 6 || (isEnrollment && (confirmPin.length < 6 || pin !== confirmPin))}
               className="w-full rounded-[8px] bg-[#ff4800] px-4 py-2.5 text-sm font-bold text-white hover:bg-[#d93d00] disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {busy ? 'Memverifikasi…' : isEnrollment ? 'Re-auth Google dan daftarkan PIN' : 'Verifikasi PIN akun'}
+              {busy
+                ? isEnrollment && reauthenticationRedirect ? 'Mengalihkan ke Google…' : 'Memverifikasi…'
+                : isEnrollment
+                  ? reauthenticationRedirect ? 'Lanjutkan ke Google' : 'Re-auth Google dan daftarkan PIN'
+                  : 'Verifikasi PIN akun'}
             </button>
           </form>
         )}
