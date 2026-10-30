@@ -139,6 +139,7 @@ test('verification accepts only same-origin HTTPS POST with one PIN field', asyn
   const testHarness = harness();
   assert.equal((await testHarness.verify(request({ pin: '123456' }, { method: 'GET' }))).statusCode, 405);
   assert.equal((await testHarness.verify(request({ pin: '123456' }, { forwardedProto: 'http' }))).statusCode, 403);
+  assert.equal((await testHarness.verify(request({ pin: '123456' }, { origin: undefined, fetchSite: 'same-origin' }))).statusCode, 403);
   assert.equal((await testHarness.verify(request({ pin: '123456' }, { origin: 'https://attacker.example.test' }))).statusCode, 403);
   assert.equal((await testHarness.verify(request({ pin: '123456', ownerUid: OWNER_UID }))).statusCode, 400);
   assert.equal(testHarness.calls.reserved, 0);
@@ -299,6 +300,16 @@ test('status requires authenticated same-origin GET and fails closed on storage 
   assert.equal((await failedStorage.status(statusRequest())).statusCode, 503);
 });
 
+test('status accepts missing Origin only for same-origin HTTPS GET and rejects cross-origin or ambiguous requests', async () => {
+  const testHarness = harness();
+  assert.equal((await testHarness.status(statusRequest({ origin: undefined, fetchSite: 'same-origin' }))).statusCode, 200);
+  assert.equal((await testHarness.status(statusRequest({ origin: undefined }))).statusCode, 403);
+  assert.equal((await testHarness.status(statusRequest({ origin: undefined, fetchSite: 'cross-site' }))).statusCode, 403);
+  assert.equal((await testHarness.status(statusRequest({ origin: undefined, fetchSite: 'same-site' }))).statusCode, 403);
+  assert.equal((await testHarness.status(statusRequest({ origin: 'https://attacker.example.test', fetchSite: 'same-origin' }))).statusCode, 403);
+  assert.equal((await testHarness.status(statusRequest({ origin: undefined, fetchSite: 'same-origin', forwardedProto: 'http' }))).statusCode, 403);
+});
+
 test('uses a salted scrypt verifier and rejects wrong PINs, peppers, and malformed verifier material', async () => {
   const pepper = 'unit-test-only-pepper-material-at-least-32-bytes';
   const verifier = await createAccountPinVerifier('123456', pepper);
@@ -316,7 +327,7 @@ test('Firebase Admin runtime refuses production and any non-staging branch/proje
   const { createStagingAccountPinRuntime } = await import('./accountPinFirebaseAdmin.ts');
   const sharedPreviewEnv = {
     VERCEL_ENV: 'preview',
-    VERCEL_GIT_COMMIT_REF: 'cue/firebase-stabilization',
+    VERCEL_GIT_COMMIT_REF: 'cue/ar-crm-operational-features',
     VITE_FIREBASE_TARGET: 'staging',
     ACCOUNT_PIN_ENABLED: 'true',
     ACCOUNT_PIN_OWNER_UID: 'test-owner',

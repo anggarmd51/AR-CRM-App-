@@ -72,13 +72,15 @@ service cloud.firestore {
           'ownerId', 'role', 'created_at', 'updated_at'
         ])
         && data.keys().hasOnly([
-          'company_name', 'contact_person', 'phone', 'industry', 'city',
+          'company_name', 'contact_person', 'email', 'phone', 'address', 'industry', 'city',
           'pipeline_stage', 'deal_value', 'next_followup_date', 'lead_score',
           'ownerId', 'role', 'created_at', 'updated_at'
         ])
         && data.company_name is string && data.company_name.size() > 0 && data.company_name.size() <= 200
         && data.contact_person is string && data.contact_person.size() > 0 && data.contact_person.size() <= 200
+        && (!data.keys().hasAny(['email']) || (data.email is string && data.email.size() <= 320))
         && data.phone is string
+        && (!data.keys().hasAny(['address']) || (data.address is string && data.address.size() <= 500))
         && data.industry is string && data.industry.size() <= 120
         && data.city is string && data.city.size() <= 120
         && validStage(data.pipeline_stage)
@@ -172,6 +174,11 @@ service cloud.firestore {
         return !exists(archivePath) && wonLeadHasMatchingArchive(leadId, leadData);
       }
 
+      function leadHasNoWonArchive(leadId) {
+        let archivePath = /databases/$(database)/documents/workspaces/$(workspaceId)/wonDealArchives/$(leadId);
+        return !exists(archivePath);
+      }
+
       allow get: if ownerMembership(workspaceId);
       allow list, create, update, delete: if false;
 
@@ -201,10 +208,14 @@ service cloud.firestore {
             || resource.data.pipeline_stage == 'Closing Won'
             || wonLeadHasMatchingArchive(leadId, request.resource.data))
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            'pipeline_stage', 'next_followup_date', 'phone', 'contact_person',
-            'deal_value', 'lead_score', 'updated_at'
+            'company_name', 'contact_person', 'email', 'phone', 'address', 'industry', 'city',
+            'pipeline_stage', 'next_followup_date', 'deal_value', 'lead_score', 'updated_at'
           ]);
-        allow delete: if false;
+        allow delete: if ownerMembership(workspaceId)
+          && resource.data.ownerId == request.auth.uid
+          && resource.data.role == 'owner'
+          && resource.data.pipeline_stage != 'Closing Won'
+          && leadHasNoWonArchive(leadId);
       }
 
       match /activities/{activityId} {

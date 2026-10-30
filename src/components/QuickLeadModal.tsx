@@ -16,7 +16,9 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
 }) => {
   const [companyName, setCompanyName] = useState('');
   const [contactPerson, setContactPerson] = useState('');
+  const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
+  const [address, setAddress] = useState('');
   const [industry, setIndustry] = useState('');
   const [city, setCity] = useState('');
   const [pipelineStage, setPipelineStage] = useState<PipelineStage>('Prospect');
@@ -32,7 +34,9 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
     if (isOpen) return;
     setCompanyName('');
     setContactPerson('');
+    setEmail('');
     setPhone('');
+    setAddress('');
     setIndustry('');
     setCity('');
     setPipelineStage('Prospect');
@@ -54,7 +58,9 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
       await onAddLead({
         company_name: companyName.trim(),
         contact_person: contactPerson.trim(),
+        email: email.trim(),
         phone: phone.trim(),
+        ...(address.trim() ? { address: address.trim() } : {}),
         industry,
         city,
         pipeline_stage: pipelineStage,
@@ -159,6 +165,16 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
                 className="w-full bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] px-3 py-2 text-[#1f1f1f] placeholder-[#6b665c] focus:outline-none focus:bg-[#fcfcfa]"
               />
             </div>
+          </div>
+
+          <div className="space-y-1">
+            <label htmlFor="quick-lead-email" className="text-[#1f1f1f] font-semibold">Email</label>
+            <input id="quick-lead-email" type="email" maxLength={320} placeholder="contoh: sales@perusahaan.id" value={email} onChange={(event) => setEmail(event.target.value)} className="w-full bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] px-3 py-2 text-[#1f1f1f] placeholder-[#6b665c] focus:outline-none focus:bg-[#fcfcfa]" />
+          </div>
+
+          <div className="space-y-1">
+            <label htmlFor="quick-lead-address" className="text-[#1f1f1f] font-semibold">Alamat</label>
+            <textarea id="quick-lead-address" maxLength={500} rows={2} placeholder="Alamat usaha atau kantor" value={address} onChange={(event) => setAddress(event.target.value)} className="w-full resize-y bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] px-3 py-2 text-[#1f1f1f] placeholder-[#6b665c] focus:outline-none focus:bg-[#fcfcfa]" />
           </div>
 
           {/* Industry */}

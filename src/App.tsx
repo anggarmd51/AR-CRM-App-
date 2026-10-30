@@ -7,19 +7,20 @@ import React, { lazy, Suspense, useState, useEffect, useCallback, useRef } from 
 import { TopAppBar } from './components/TopAppBar.tsx';
 import { BottomNavBar, NavTab } from './components/BottomNavBar.tsx';
 import { AndroidFrame } from './components/AndroidFrame.tsx';
-import { Lead, Activity, GlobalLead, LeadCorrection, PipelineStage, ActivityGpsLocation, ActivitySummarySource, WonDealArchiveRecord } from './types/crm.ts';
+import { Lead, Activity, LeadCorrection, PipelineStage, ActivityGpsLocation, ActivitySummarySource, WonDealArchiveRecord } from './types/crm.ts';
 import { filterFollowUps, formatNumber } from './utils/crmCalculations.ts';
 import { downloadLeadsCsv } from './utils/exportCsv.ts';
+import { downloadLeadsExcel } from './utils/exportExcel.ts';
 import { downloadLocalCrmExport } from './utils/exportJson.ts';
 import { SecurityVault } from './utils/securityLock.ts';
 import { CheckCircle2 } from 'lucide-react';
 import { firebaseTarget, getFirebaseAuth, workspaceId } from './firebase.ts';
 import { shouldUseLocalSecurityVault } from './localSecurityPolicy.ts';
-import { createActivity, createLead, subscribeToActivities, subscribeToLeads, subscribeToWonDealArchives, updateLeadDetails, updateLeadStage } from './firebaseRepository.ts';
-import { createImportedLeadDocumentId, normalizeImportedCompanyName } from './utils/leadImportIdentity.ts';
+import { createActivity, createLead, deleteLead, subscribeToActivities, subscribeToLeads, subscribeToWonDealArchives, updateLeadDetails, updateLeadStage } from './firebaseRepository.ts';
 import { OptimisticLeadStageOverlay, type LeadSnapshotState } from './utils/optimisticLeadStages.ts';
 import { firestoreWriteQueue, type SyncQueueSnapshot } from './utils/offlineWriteQueue.ts';
 import { reconcileDocumentSyncStatuses } from './utils/syncStatus.ts';
+import { storeActivityPhoto } from './utils/activityPhotos.ts';
 import { canonicalizeModalHistoryState, createAppHistoryState, getModalLeadId, readAppHistoryState, type AppHistoryState, type AppModalName } from './utils/appHistory.ts';
 const DashboardView = lazy(() => import('./components/DashboardView.tsx').then(({ DashboardView }) => ({ default: DashboardView })));
 const PipelineKanbanView = lazy(() => import('./components/PipelineKanbanView.tsx').then(({ PipelineKanbanView }) => ({ default: PipelineKanbanView })));
@@ -55,8 +56,6 @@ export default function App() {
   const [wonDealArchives, setWonDealArchives] = useState<WonDealArchiveRecord[]>([]);
   const [snapshotReadiness, setSnapshotReadiness] = useState({ leads: false, activities: false, archives: false });
   const [snapshotCacheState, setSnapshotCacheState] = useState({ leads: true, activities: true, archives: true });
-  const [globalLeads, setGlobalLeads] = useState<GlobalLead[]>([]);
-  const [pendingGlobalLeadNames, setPendingGlobalLeadNames] = useState<Set<string>>(() => new Set());
   const [syncQueueSnapshot, setSyncQueueSnapshot] = useState<SyncQueueSnapshot>(() => firestoreWriteQueue.getSnapshot());
   const [isOnline, setIsOnline] = useState<boolean>(() => typeof navigator === 'undefined' || navigator.onLine);
   const [isPhoneFrame, setIsPhoneFrame] = useState<boolean>(false);
@@ -70,6 +69,8 @@ export default function App() {
   const [isActivityLoggerOpen, setIsActivityLoggerOpen] = useState(false);
   const [activityLead, setActivityLead] = useState<Lead | null>(null);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
+  const [editLeadRequestId, setEditLeadRequestId] = useState<string | null>(null);
+  const [deletingLeadId, setDeletingLeadId] = useState<string | null>(null);
   const [whatsAppLead, setWhatsAppLead] = useState<Lead | null>(null);
   const [hasOpenedQuickLead, setHasOpenedQuickLead] = useState(false);
   const [hasOpenedActivityLogger, setHasOpenedActivityLogger] = useState(false);
@@ -96,7 +97,6 @@ export default function App() {
   const stageOverlayRef = useRef(new OptimisticLeadStageOverlay());
   const latestFirestoreLeadsRef = useRef<Lead[]>([]);
   const latestFirestoreSnapshotStateRef = useRef<LeadSnapshotState>({ fromCache: true, pendingWriteIds: new Set() });
-  const importedGlobalLeadNamesRef = useRef(new Set<string>());
 
   const renderedLeadsRef = useRef(leads);
   renderedLeadsRef.current = leads;
@@ -200,6 +200,7 @@ export default function App() {
       if (next.modalStack.includes('leadDetail')) setHasOpenedLeadDetail(true);
       if (next.modalStack.includes('whatsapp')) setHasOpenedWhatsApp(true);
       if (next.modalStack.includes('securitySettings')) setHasOpenedSecuritySettings(true);
+      if (!next.modalStack.includes('leadDetail')) setEditLeadRequestId(null);
       setIsQuickLeadOpen(next.modalStack.includes('quickLead'));
       setIsActivityLoggerOpen(next.modalStack.includes('activityLogger'));
       setIsSecuritySettingsOpen(next.modalStack.includes('securitySettings'));
@@ -231,7 +232,6 @@ export default function App() {
   useEffect(() => {
     const user = getFirebaseAuth().currentUser;
     if (!user) return;
-    setGlobalLeads([]);
     setSnapshotReadiness({ leads: false, activities: false, archives: false });
     const onError = (error: Error) => showToast(`Firebase gagal memuat data: ${error.message}`);
     const stopLeads = subscribeToLeads(user.uid, (snapshotLeads, snapshotState) => {
@@ -240,11 +240,6 @@ export default function App() {
       setSnapshotReadiness((current) => ({ ...current, leads: true }));
       setSnapshotCacheState((current) => ({ ...current, leads: snapshotState.fromCache }));
       setLeads(stageOverlayRef.current.reconcile(snapshotLeads, snapshotState));
-      const confirmedNames = new Set(snapshotLeads.map((lead) => normalizeImportedCompanyName(lead.company_name)));
-      setPendingGlobalLeadNames((current) => {
-        const next = new Set([...current].filter((name) => !confirmedNames.has(name)));
-        return next.size === current.size ? current : next;
-      });
     }, onError);
     const stopActivities = subscribeToActivities(user.uid, (snapshotActivities, fromCache) => {
       setActivities(snapshotActivities);
@@ -410,6 +405,47 @@ export default function App() {
     }
   };
 
+  const handleDeleteLead = async (lead: Lead) => {
+    if (deletingLeadId) return;
+    if (!snapshotReadiness.leads || !snapshotReadiness.activities || !snapshotReadiness.archives
+      || snapshotCacheState.leads || snapshotCacheState.activities || snapshotCacheState.archives) {
+      showToast('Penghapusan ditahan sampai Lead, Activity, dan arsip selesai dimuat dari server.');
+      return;
+    }
+    if (lead._syncStatus && lead._syncStatus !== 'synced') {
+      showToast('Lead dengan perubahan sinkronisasi tertunda tidak dapat dihapus. Sinkronkan atau selesaikan antrean lebih dahulu.');
+      return;
+    }
+    if (activities.some((activity) => activity.lead_id === lead.id)) {
+      showToast('Lead ini memiliki riwayat Activity; penghapusan diblokir agar histori tetap utuh.');
+      return;
+    }
+    if (wonDealArchives.some((archive) => archive.lead_id === lead.id) || lead.pipeline_stage === 'Closing Won') {
+      showToast('Lead Closing Won/berarsip tidak dapat dihapus.');
+      return;
+    }
+    const confirmed = window.confirm(
+      `Hapus Lead "${lead.company_name}" secara permanen? Aksi ini tidak dapat dibatalkan. Lead dengan Activity atau arsip Won selalu ditolak.`,
+    );
+    if (!confirmed) return;
+    const ownerId = getFirebaseAuth().currentUser?.uid;
+    if (!ownerId) {
+      showToast('Sesi owner tidak tersedia; Lead tidak dihapus.');
+      return;
+    }
+    setDeletingLeadId(lead.id);
+    try {
+      await deleteLead(ownerId, lead.id);
+      setLeads((current) => current.filter((item) => item.id !== lead.id));
+      setSelectedLead((current) => current?.id === lead.id ? null : current);
+      showToast(`Lead "${lead.company_name}" berhasil dihapus.`);
+    } catch (error) {
+      showToast(`Lead gagal dihapus: ${error instanceof Error ? error.message : 'periksa koneksi dan izin.'}`);
+    } finally {
+      setDeletingLeadId(null);
+    }
+  };
+
   // Add Activity / Check-In
   const handleSaveActivity = async (activityData: {
     lead_id: string;
@@ -418,53 +454,22 @@ export default function App() {
     ai_summary?: string;
     ai_summary_source?: ActivitySummarySource;
     location_gps?: ActivityGpsLocation;
+    photo?: Blob;
   }) => {
     try {
-      await createActivity(getFirebaseAuth().currentUser!.uid, activityData);
+      const { photo, ...activityDataForFirestore } = activityData;
+      const receipt = await createActivity(getFirebaseAuth().currentUser!.uid, activityDataForFirestore);
       showToast('Aktivitas menunggu konfirmasi Firestore.');
+      if (photo && receipt.id) {
+        try {
+          await storeActivityPhoto(receipt.id, photo);
+          showToast('Aktivitas tersimpan; foto hanya tersedia di browser ini dan tidak tersinkron.');
+        } catch {
+          showToast('Aktivitas tersimpan, tetapi foto gagal disimpan lokal. Foto tidak diunggah ke cloud.');
+        }
+      }
     } catch (error) {
       showToast(`Aktivitas gagal disimpan: ${(error as Error).message}`);
-      throw error;
-    }
-  };
-
-  // Import Global Lead
-  const handleImportGlobalLead = async (globalLead: GlobalLead) => {
-    const ownerId = getFirebaseAuth().currentUser?.uid;
-    const companyKey = normalizeImportedCompanyName(globalLead.company_name);
-    if (!ownerId) throw new Error('Sesi owner tidak tersedia.');
-    if (leads.some((lead) => normalizeImportedCompanyName(lead.company_name) === companyKey)
-      || importedGlobalLeadNamesRef.current.has(companyKey)) {
-      showToast(`"${globalLead.company_name}" sudah ada di CRM atau sedang diimpor.`);
-      return;
-    }
-    importedGlobalLeadNamesRef.current.add(companyKey);
-    try {
-      const documentId = await createImportedLeadDocumentId(ownerId, workspaceId, globalLead.company_name);
-      const receipt = await createLead(ownerId, {
-        company_name: globalLead.company_name,
-        contact_person: globalLead.contact_person.trim() || 'Belum ditemukan',
-        phone: globalLead.phone,
-        industry: globalLead.industry,
-        city: globalLead.city,
-        pipeline_stage: 'Prospect',
-        deal_value: Number(globalLead.estimated_value) || 0,
-        next_followup_date: '',
-        lead_score: 'Unrated',
-      }, { documentId });
-      setPendingGlobalLeadNames((current) => new Set(current).add(companyKey));
-      void receipt.acknowledged.catch(() => {
-        importedGlobalLeadNamesRef.current.delete(companyKey);
-        setPendingGlobalLeadNames((current) => {
-          const next = new Set(current);
-          next.delete(companyKey);
-          return next;
-        });
-      });
-      showToast(`"${globalLead.company_name}" menunggu konfirmasi Firestore.`);
-    } catch (error) {
-      importedGlobalLeadNamesRef.current.delete(companyKey);
-      showToast(`Lead gagal diimpor: ${(error as Error).message}`);
       throw error;
     }
   };
@@ -478,6 +483,15 @@ export default function App() {
     }
     const filename = downloadLeadsCsv(currentLeads);
     showToast(`Laporan rekapitulasi ${formatNumber(currentLeads.length)} prospek berhasil diunduh (${filename})!`);
+  }, [leads, showToast]);
+
+  const handleExportExcel = useCallback(() => {
+    if (leads.length === 0) {
+      showToast('Tidak ada data prospek untuk diekspor.');
+      return;
+    }
+    const filename = downloadLeadsExcel(leads);
+    showToast(`Laporan Excel ${formatNumber(leads.length)} Lead diunduh (${filename}).`);
   }, [leads, showToast]);
 
   const handleExportSnapshot = useCallback(() => {
@@ -548,8 +562,9 @@ export default function App() {
     openModalWithHistory(() => setIsActivityLoggerOpen(true), 'activityLogger', lead?.id);
   };
 
-  const openLeadDetail = (lead: Lead) => {
+  const openLeadDetail = (lead: Lead, startEditing = false) => {
     setHasOpenedLeadDetail(true);
+    setEditLeadRequestId(startEditing ? lead.id : null);
     openModalWithHistory(() => setSelectedLead(lead), 'leadDetail', lead.id);
   };
 
@@ -588,6 +603,7 @@ export default function App() {
           onOpenSecurity={useLocalSecurityVault ? openSecuritySettings : undefined}
           isSecurityActive={useLocalSecurityVault && SecurityVault.isSecurityEnabled()}
           onExportCsv={handleExportCsv}
+          onExportExcel={handleExportExcel}
           onExportSnapshot={handleExportSnapshot}
         />
 
@@ -604,7 +620,6 @@ export default function App() {
                 onOpenWhatsApp={openWhatsApp}
                 onNavigateToPipeline={() => changeTabWithHistory('pipeline')}
                 onNavigateToFinder={() => changeTabWithHistory('leads_finder')}
-                onExportCsv={handleExportCsv}
               />
             </Suspense>
           )}
@@ -615,23 +630,17 @@ export default function App() {
                 leads={leads}
                 onUpdateLeadStage={handleUpdateLeadStage}
                 onSelectLead={openLeadDetail}
+                onEditLead={(lead) => openLeadDetail(lead, true)}
+                onDeleteLead={(lead) => { void handleDeleteLead(lead); }}
+                deletingLeadId={deletingLeadId}
                 onOpenQuickLead={openQuickLead}
-                onOpenWhatsApp={openWhatsApp}
-                onExportCsv={handleExportCsv}
               />
             </Suspense>
           )}
 
           {currentTab === 'leads_finder' && (
             <Suspense fallback={<AppChunkFallback />}>
-              <GlobalLeadsView
-                personalLeads={leads}
-                globalLeads={globalLeads}
-                pendingImportedCompanyNames={pendingGlobalLeadNames}
-                aiSearchEnabled={import.meta.env.VITE_AI_LEAD_FINDER_ENABLED === 'true'}
-                onImportGlobalLead={handleImportGlobalLead}
-                onNavigateToPipeline={() => changeTabWithHistory('pipeline')}
-              />
+              <GlobalLeadsView />
             </Suspense>
           )}
 
@@ -699,10 +708,11 @@ export default function App() {
 
         {hasOpenedLeadDetail && (
           <Suspense fallback={<ModalChunkFallback />}>
-            <LeadDetailModal
-              isOpen={!!selectedLead}
-              onClose={() => closeModalWithHistory('leadDetail', () => setSelectedLead(null))}
-              lead={selectedLead}
+              <LeadDetailModal
+                isOpen={!!selectedLead}
+              onClose={() => closeModalWithHistory('leadDetail', () => { setSelectedLead(null); setEditLeadRequestId(null); })}
+                lead={selectedLead}
+                startEditing={Boolean(selectedLead && editLeadRequestId === selectedLead.id)}
               activities={activities}
               onUpdateStage={handleUpdateLeadStage}
               onUpdateLeadDetails={handleUpdateLeadDetails}

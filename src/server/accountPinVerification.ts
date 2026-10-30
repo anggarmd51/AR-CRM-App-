@@ -78,6 +78,7 @@ export interface PinVerificationRequest {
   origin?: string | string[];
   host?: string;
   forwardedProto?: string | string[];
+  fetchSite?: string | string[];
   body?: unknown;
 }
 
@@ -122,11 +123,19 @@ function singleHeader(value: string | string[] | undefined): string | undefined 
   return typeof value === 'string' ? value : undefined;
 }
 
-function originIsSameSecureOrigin(request: PinVerificationRequest): boolean {
+function originIsSameSecureOrigin(
+  request: PinVerificationRequest,
+  allowMissingOriginForSameOriginGet = false,
+): boolean {
   const origin = singleHeader(request.origin);
   const host = request.host?.trim().toLowerCase();
   const forwardedProto = singleHeader(request.forwardedProto)?.split(',')[0]?.trim().toLowerCase();
-  if (!origin || !host || forwardedProto !== 'https') return false;
+  if (!host || forwardedProto !== 'https') return false;
+  if (!origin) {
+    return allowMissingOriginForSameOriginGet
+      && request.method === 'GET'
+      && singleHeader(request.fetchSite)?.trim().toLowerCase() === 'same-origin';
+  }
   try {
     const parsed = new URL(origin);
     return parsed.protocol === 'https:' && parsed.host.toLowerCase() === host;
@@ -161,9 +170,15 @@ function isEnrollmentBody(value: unknown): value is { pin: string; confirmPin: s
     && typeof value.confirmPin === 'string' && value.confirmPin.length <= 1_024;
 }
 
-function requestFailure(request: PinVerificationRequest, method: 'GET' | 'POST'): PinVerificationResponse | undefined {
+function requestFailure(
+  request: PinVerificationRequest,
+  method: 'GET' | 'POST',
+  allowMissingOriginForSameOriginGet = false,
+): PinVerificationResponse | undefined {
   if (request.method !== method) return result(405, { code: 'method_not_allowed', error: 'Method not allowed.' }, { allow: method });
-  if (!originIsSameSecureOrigin(request)) return result(403, { code: 'forbidden', error: 'Forbidden.' });
+  if (!originIsSameSecureOrigin(request, allowMissingOriginForSameOriginGet)) {
+    return result(403, { code: 'forbidden', error: 'Forbidden.' });
+  }
   return undefined;
 }
 
@@ -333,7 +348,7 @@ export function createAccountPinStatusService(
   const now = dependencies.now ?? (() => new Date());
 
   return async (request: PinVerificationRequest): Promise<PinVerificationResponse> => {
-    const failedRequest = requestFailure(request, 'GET');
+    const failedRequest = requestFailure(request, 'GET', true);
     if (failedRequest) return failedRequest;
     const authentication = await authenticateOwner(request, dependencies);
     if ('response' in authentication) return authentication.response;

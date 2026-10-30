@@ -47,6 +47,7 @@ export function accountPinRequest(request: AccountPinHttpRequest): PinVerificati
     origin: request.headers.origin,
     host: request.headers.host,
     forwardedProto: request.headers['x-forwarded-proto'],
+    fetchSite: request.headers['sec-fetch-site'],
     body: request.body,
   };
 }

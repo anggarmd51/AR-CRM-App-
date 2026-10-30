@@ -10,15 +10,18 @@ import {
   MessageCircle,
   Clock,
   Sparkles,
+  Mail,
 } from 'lucide-react';
 import { Lead, Activity, LeadCorrection, LeadScore, PipelineStage, PIPELINE_STAGES, STAGE_CONFIG } from '../types/crm.ts';
 import { formatCurrency, formatDateDisplay, formatNumber } from '../utils/crmCalculations.ts';
 import { useModalAccessibility } from '../utils/useModalAccessibility.ts';
+import { createEmailComposeHref, createTelHref, detectMobileEmailHandler } from '../utils/leadContact.ts';
 
 interface LeadDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
   lead: Lead | null;
+  startEditing?: boolean;
   activities: Activity[];
   onUpdateStage: (leadId: string, stage: PipelineStage, nextFollowupDate?: string) => void;
   onUpdateLeadDetails: (leadId: string, changes: LeadCorrection) => Promise<void>;
@@ -30,6 +33,7 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
   isOpen,
   onClose,
   lead,
+  startEditing = false,
   activities,
   onUpdateStage,
   onUpdateLeadDetails,
@@ -40,9 +44,15 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
   const [isSaving, setIsSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [editValues, setEditValues] = useState({
+    company_name: '',
     contact_person: '',
+    email: '',
     phone: '',
+    address: '',
+    industry: '',
+    city: '',
     deal_value: 0,
+    next_followup_date: '',
     lead_score: 'Unrated' as LeadScore,
   });
 
@@ -50,17 +60,40 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
   const { dialogRef } = useModalAccessibility({ isOpen: isOpen && Boolean(lead), onClose: close, titleId: 'lead-detail-modal-title' });
 
   useEffect(() => {
-    setIsEditing(false);
     setEditError(null);
-  }, [lead?.id]);
+    if (startEditing && lead) {
+      setEditValues({
+        company_name: lead.company_name,
+        contact_person: lead.contact_person,
+        email: lead.email ?? '',
+        phone: lead.phone,
+        address: lead.address ?? '',
+        industry: lead.industry,
+        city: lead.city,
+        deal_value: lead.deal_value,
+        next_followup_date: lead.next_followup_date,
+        lead_score: lead.lead_score,
+      });
+      setIsEditing(true);
+    } else {
+      setIsEditing(false);
+    }
+  }, [lead?.id, startEditing]);
 
   if (!isOpen || !lead) return null;
 
   const beginEditing = () => {
+    if (!lead) return;
     setEditValues({
+      company_name: lead.company_name,
       contact_person: lead.contact_person,
+      email: lead.email ?? '',
       phone: lead.phone,
+      address: lead.address ?? '',
+      industry: lead.industry,
+      city: lead.city,
       deal_value: lead.deal_value,
+      next_followup_date: lead.next_followup_date,
       lead_score: lead.lead_score,
     });
     setEditError(null);
@@ -74,9 +107,15 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
     setEditError(null);
     try {
       await onUpdateLeadDetails(lead.id, {
+        company_name: editValues.company_name.trim(),
         contact_person: editValues.contact_person.trim(),
+        email: editValues.email.trim(),
         phone: editValues.phone.trim(),
+        ...(editValues.address.trim() !== (lead.address ?? '') ? { address: editValues.address.trim() } : {}),
+        industry: editValues.industry.trim(),
+        city: editValues.city.trim(),
         deal_value: Number(editValues.deal_value),
+        next_followup_date: editValues.next_followup_date,
         lead_score: editValues.lead_score,
       });
       setIsEditing(false);
@@ -89,6 +128,10 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
 
   const leadActivities = activities.filter((a) => a.lead_id === lead.id);
   const stageCfg = STAGE_CONFIG[lead.pipeline_stage];
+  const isWonArchiveLocked = lead.pipeline_stage === 'Closing Won';
+  const mobileEmail = typeof navigator !== 'undefined' && detectMobileEmailHandler(navigator.userAgent);
+  const callHref = createTelHref(lead.phone);
+  const emailHref = createEmailComposeHref(lead.email, mobileEmail);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#1f1f1f]/50 backdrop-blur-xs overflow-y-auto" role="presentation">
@@ -109,12 +152,12 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
             {!isEditing && (
               <button
                 onClick={beginEditing}
-                aria-label="Koreksi data"
-                title="Koreksi telepon, PIC, nilai deal, atau skor"
+                aria-label="Edit Lead"
+                title="Edit data Lead"
                 className="min-h-11 min-w-11 flex items-center justify-center gap-1 rounded-[8px] border border-[#1f1f1f] px-2 py-1.5 text-[11px] font-semibold hover:bg-[#eae4d5]"
               >
                 <Pencil className="h-3.5 w-3.5 text-[#ff4800]" />
-                <span className="hidden sm:inline">Koreksi data</span>
+                <span className="hidden sm:inline">Edit</span>
               </button>
             )}
             <button
@@ -149,30 +192,52 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
           {isEditing && (
             <form onSubmit={saveLeadDetails} className="space-y-3 rounded-[16px] border border-[#1f1f1f] bg-[#fff8f3] p-3.5">
               <div>
-                <h4 className="font-bold text-sm text-[#1f1f1f]">Koreksi data Lead</h4>
-                <p className="mt-0.5 text-[11px] leading-4 text-[#6b665c]">Hanya telepon, PIC, nilai deal, dan skor yang dapat dikoreksi di sini.</p>
+                <h4 className="font-bold text-sm text-[#1f1f1f]">Edit data Lead</h4>
+                <p className="mt-0.5 text-[11px] leading-4 text-[#6b665c]">Perubahan disimpan ke Firestore; histori aktivitas tetap dipertahankan.{isWonArchiveLocked ? ' Field identitas/nilai terkunci untuk menjaga arsip Won.' : ''}</p>
               </div>
               {editError && <p role="alert" className="rounded-[8px] border border-[#9b2c2c]/30 bg-white p-2 text-[11px] text-[#9b2c2c]">{editError}</p>}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <label className="space-y-1 font-semibold text-[#1f1f1f]">
+                  <span>Nama perusahaan *</span>
+                  <input required maxLength={200} disabled={isWonArchiveLocked} value={editValues.company_name} onChange={(event) => setEditValues((current) => ({ ...current, company_name: event.target.value }))} className="w-full rounded-[8px] border border-[#1f1f1f] bg-white px-3 py-2 font-normal disabled:bg-[#eae4d5]" />
+                </label>
                 <label className="space-y-1 font-semibold text-[#1f1f1f]">
                   <span>PIC / Contact Person *</span>
                   <input
                     required
                     maxLength={200}
+                    disabled={isWonArchiveLocked}
                     value={editValues.contact_person}
                     onChange={(event) => setEditValues((current) => ({ ...current, contact_person: event.target.value }))}
                     className="w-full rounded-[8px] border border-[#1f1f1f] bg-white px-3 py-2 font-normal"
                   />
                 </label>
                 <label className="space-y-1 font-semibold text-[#1f1f1f]">
+                  <span>Email</span>
+                  <input type="email" maxLength={320} value={editValues.email} onChange={(event) => setEditValues((current) => ({ ...current, email: event.target.value }))} className="w-full rounded-[8px] border border-[#1f1f1f] bg-white px-3 py-2 font-normal" />
+                </label>
+                <label className="space-y-1 font-semibold text-[#1f1f1f]">
                   <span>Telepon / WhatsApp</span>
                   <input
                     type="tel"
                     maxLength={200}
+                    disabled={isWonArchiveLocked}
                     value={editValues.phone}
                     onChange={(event) => setEditValues((current) => ({ ...current, phone: event.target.value }))}
                     className="w-full rounded-[8px] border border-[#1f1f1f] bg-white px-3 py-2 font-mono font-normal"
                   />
+                </label>
+                <label className="space-y-1 font-semibold text-[#1f1f1f]">
+                  <span>Industri</span>
+                  <input maxLength={120} disabled={isWonArchiveLocked} value={editValues.industry} onChange={(event) => setEditValues((current) => ({ ...current, industry: event.target.value }))} className="w-full rounded-[8px] border border-[#1f1f1f] bg-white px-3 py-2 font-normal disabled:bg-[#eae4d5]" />
+                </label>
+                <label className="space-y-1 font-semibold text-[#1f1f1f]">
+                  <span>Kota</span>
+                  <input maxLength={120} disabled={isWonArchiveLocked} value={editValues.city} onChange={(event) => setEditValues((current) => ({ ...current, city: event.target.value }))} className="w-full rounded-[8px] border border-[#1f1f1f] bg-white px-3 py-2 font-normal disabled:bg-[#eae4d5]" />
+                </label>
+                <label className="space-y-1 font-semibold text-[#1f1f1f] sm:col-span-2">
+                  <span>Alamat</span>
+                  <textarea maxLength={500} rows={2} disabled={isWonArchiveLocked} value={editValues.address} onChange={(event) => setEditValues((current) => ({ ...current, address: event.target.value }))} className="w-full resize-y rounded-[8px] border border-[#1f1f1f] bg-white px-3 py-2 font-normal disabled:bg-[#eae4d5]" />
                 </label>
                 <label className="space-y-1 font-semibold text-[#1f1f1f]">
                   <span>Nilai deal (IDR) *</span>
@@ -181,10 +246,15 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
                     type="number"
                     min="0"
                     step="any"
+                    disabled={isWonArchiveLocked}
                     value={editValues.deal_value}
                     onChange={(event) => setEditValues((current) => ({ ...current, deal_value: Number(event.target.value) }))}
                     className="w-full rounded-[8px] border border-[#1f1f1f] bg-white px-3 py-2 font-mono font-normal"
                   />
+                </label>
+                <label className="space-y-1 font-semibold text-[#1f1f1f]">
+                  <span>Jadwal tindak lanjut</span>
+                  <input type="date" value={editValues.next_followup_date} onChange={(event) => setEditValues((current) => ({ ...current, next_followup_date: event.target.value }))} className="w-full rounded-[8px] border border-[#1f1f1f] bg-white px-3 py-2 font-normal" />
                 </label>
                 <label className="space-y-1 font-semibold text-[#1f1f1f]">
                   <span>Lead Score</span>
@@ -200,17 +270,17 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
               <div className="flex justify-end gap-2 border-t border-[#1f1f1f]/10 pt-2">
                 <button type="button" disabled={isSaving} onClick={() => { setIsEditing(false); setEditError(null); }} className="rounded-[8px] px-3 py-2 font-semibold text-[#6b665c] disabled:opacity-50">Batal</button>
                 <button type="submit" disabled={isSaving} className="flex items-center gap-1.5 rounded-[8px] border border-[#1f1f1f] bg-[#ff4800] px-3 py-2 font-bold text-white disabled:opacity-50">
-                  <Check className="h-4 w-4" />{isSaving ? 'Menyimpan…' : 'Simpan koreksi'}
+                  <Check className="h-4 w-4" />{isSaving ? 'Menyimpan…' : 'Simpan perubahan'}
                 </button>
               </div>
             </form>
           )}
 
           {/* Quick Contact & Action Buttons: 8px radius */}
-          <div className="grid grid-cols-3 gap-2">
-            {lead.phone ? (
+          <div className="grid grid-cols-2 min-[380px]:grid-cols-4 gap-2">
+            {callHref ? (
               <a
-                href={`tel:${lead.phone}`}
+                href={callHref}
                 className="py-2.5 px-3 rounded-[8px] bg-[#f8f5ee] hover:bg-[#eae4d5] text-[#1f1f1f] border border-[#1f1f1f] flex flex-col items-center justify-center gap-1 font-semibold transition-all"
               >
                 <Phone className="w-4 h-4 text-[#ff4800]" />
@@ -242,6 +312,13 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
                 <MessageCircle className="w-4 h-4" />
                 <span>WhatsApp</span>
               </button>
+            )}
+
+            {emailHref && (
+              <a href={emailHref} className="py-2.5 px-3 rounded-[8px] bg-[#f8f5ee] hover:bg-[#eae4d5] text-[#1f1f1f] border border-[#1f1f1f] flex flex-col items-center justify-center gap-1 font-semibold transition-all">
+                <Mail className="w-4 h-4 text-[#ff4800]" />
+                <span>Email</span>
+              </a>
             )}
 
             <button
@@ -287,6 +364,10 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
               <span>City:</span>
               <span className="text-[#1f1f1f] font-semibold">{lead.city}</span>
             </div>
+            {lead.address && <div className="flex items-start justify-between gap-3 text-[#6b665c]">
+              <span className="shrink-0">Alamat:</span>
+              <span className="text-right font-semibold text-[#1f1f1f] break-words">{lead.address}</span>
+            </div>}
             <div className="flex items-center justify-between text-[#6b665c]">
               <span>Lead Score:</span>
               <span className="text-[#ff4800] font-bold flex items-center gap-1">

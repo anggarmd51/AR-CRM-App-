@@ -10,27 +10,32 @@ import {
   ArrowLeft,
   Building2,
   MapPin,
-  FileSpreadsheet,
+  Mail,
+  Pencil,
+  Trash2,
 } from 'lucide-react';
 import { Lead, PipelineStage, PIPELINE_STAGES, STAGE_CONFIG } from '../types/crm.ts';
 import { formatCurrency, formatDateDisplay, formatNumber } from '../utils/crmCalculations.ts';
+import { createEmailComposeHref, createTelHref, createWhatsAppHref, detectMobileEmailHandler } from '../utils/leadContact.ts';
 
 interface PipelineKanbanViewProps {
   leads: Lead[];
   onUpdateLeadStage: (leadId: string, newStage: PipelineStage, nextFollowupDate?: string) => void;
   onSelectLead: (lead: Lead) => void;
+  onEditLead: (lead: Lead) => void;
+  onDeleteLead: (lead: Lead) => void;
+  deletingLeadId?: string | null;
   onOpenQuickLead: () => void;
-  onOpenWhatsApp: (lead: Lead) => void;
-  onExportCsv?: () => void;
 }
 
 export const PipelineKanbanView: React.FC<PipelineKanbanViewProps> = ({
   leads,
   onUpdateLeadStage,
   onSelectLead,
+  onEditLead,
+  onDeleteLead,
+  deletingLeadId = null,
   onOpenQuickLead,
-  onOpenWhatsApp,
-  onExportCsv,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedScore, setSelectedScore] = useState<string>('all');
@@ -42,12 +47,14 @@ export const PipelineKanbanView: React.FC<PipelineKanbanViewProps> = ({
       lead.company_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       lead.contact_person.toLowerCase().includes(searchQuery.toLowerCase()) ||
       lead.city.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (lead.address ?? '').toLowerCase().includes(searchQuery.toLowerCase()) ||
       lead.industry.toLowerCase().includes(searchQuery.toLowerCase());
 
     const matchesScore = selectedScore === 'all' || lead.lead_score === selectedScore;
 
     return matchesSearch && matchesScore;
   });
+  const mobileEmail = typeof navigator !== 'undefined' && detectMobileEmailHandler(navigator.userAgent);
 
   return (
     <div className="space-y-4 pb-24">
@@ -86,17 +93,6 @@ export const PipelineKanbanView: React.FC<PipelineKanbanViewProps> = ({
               List View
             </button>
           </div>
-
-          {onExportCsv && (
-            <button
-              onClick={onExportCsv}
-              title="Download Rekapitulasi CSV"
-              className="bg-[#f8f5ee] hover:bg-[#f2ede4] text-[#1f1f1f] text-xs font-semibold px-3 py-2 rounded-[8px] border border-[#1f1f1f] flex items-center gap-1.5 transition-all active:scale-95"
-            >
-              <FileSpreadsheet className="w-4 h-4 text-[#ff4800]" />
-              <span className="hidden sm:inline">Export CSV</span>
-            </button>
-          )}
 
           <button
             onClick={onOpenQuickLead}
@@ -179,8 +175,10 @@ export const PipelineKanbanView: React.FC<PipelineKanbanViewProps> = ({
                         key={lead.id}
                         lead={lead}
                         onSelect={() => onSelectLead(lead)}
+                        onEdit={() => onEditLead(lead)}
+                        onDelete={() => onDeleteLead(lead)}
+                        isDeleting={deletingLeadId === lead.id}
                         onStageChange={(newStage) => onUpdateLeadStage(lead.id, newStage)}
-                        onOpenWhatsApp={() => onOpenWhatsApp(lead)}
                       />
                     ))
                   )}
@@ -192,11 +190,14 @@ export const PipelineKanbanView: React.FC<PipelineKanbanViewProps> = ({
       ) : (
         /* LIST VIEW */
         <div className="space-y-2.5">
-          {filteredLeads.map((lead) => (
-            <div
+          {filteredLeads.map((lead) => {
+            const callHref = createTelHref(lead.phone);
+            const whatsappHref = createWhatsAppHref(lead.phone);
+            const emailHref = createEmailComposeHref(lead.email, mobileEmail);
+            return <div
               key={lead.id}
               onClick={() => onSelectLead(lead)}
-              className="bg-[#f8f5ee] hover:bg-[#f2ede4] border border-[#1f1f1f] p-4 rounded-[16px] flex items-center justify-between gap-3 cursor-pointer transition-all"
+              className="bg-[#f8f5ee] hover:bg-[#f2ede4] border border-[#1f1f1f] p-4 rounded-[16px] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 cursor-pointer transition-all"
             >
               <div className="min-w-0 space-y-1">
                 <div className="flex items-center gap-2 flex-wrap">
@@ -220,16 +221,19 @@ export const PipelineKanbanView: React.FC<PipelineKanbanViewProps> = ({
                 </div>
               </div>
 
-              <div className="text-right shrink-0">
-                <div className="text-sm font-bold text-[#1f1f1f] font-mono">
-                  {formatCurrency(lead.deal_value)}
+              <div className="flex w-full sm:w-auto flex-wrap items-center justify-end gap-1.5">
+                <div className="text-right">
+                  <div className="text-sm font-bold text-[#1f1f1f] font-mono">{formatCurrency(lead.deal_value)}</div>
+                  <div className="text-[11px] text-[#6b665c]">{formatDateDisplay(lead.next_followup_date)}</div>
                 </div>
-                <div className="text-[11px] text-[#6b665c]">
-                  {formatDateDisplay(lead.next_followup_date)}
-                </div>
+                {callHref && <a href={callHref} aria-label={`Call ${lead.contact_person}`} title="Call" onClick={(event) => event.stopPropagation()} className="min-h-11 min-w-11 rounded-[8px] border border-[#1f1f1f] bg-[#fcfcfa] flex items-center justify-center"><Phone className="h-4 w-4" /></a>}
+                {whatsappHref && <a href={whatsappHref} target="_blank" rel="noopener noreferrer" aria-label={`WhatsApp ${lead.contact_person}`} title="WhatsApp" onClick={(event) => event.stopPropagation()} className="min-h-11 min-w-11 rounded-[8px] border border-[#1f1f1f] bg-[#edf7f1] text-[#155e3c] flex items-center justify-center"><MessageCircle className="h-4 w-4" /></a>}
+                {emailHref && <a href={emailHref} aria-label={`Email ${lead.contact_person}`} title="Email via Gmail" onClick={(event) => event.stopPropagation()} className="min-h-11 min-w-11 rounded-[8px] border border-[#1f1f1f] bg-[#fcfcfa] flex items-center justify-center"><Mail className="h-4 w-4" /></a>}
+                <button type="button" aria-label={`Edit ${lead.company_name}`} title="Edit Lead" onClick={(event) => { event.stopPropagation(); onEditLead(lead); }} className="min-h-11 min-w-11 rounded-[8px] border border-[#1f1f1f] bg-[#fcfcfa] flex items-center justify-center"><Pencil className="h-4 w-4 text-[#ff4800]" /></button>
+                <button type="button" aria-label={`Hapus ${lead.company_name}`} title="Hapus Lead" disabled={deletingLeadId === lead.id} onClick={(event) => { event.stopPropagation(); onDeleteLead(lead); }} className="min-h-11 min-w-11 rounded-[8px] border border-[#1f1f1f] bg-[#fff5f5] text-[#9b2c2c] flex items-center justify-center disabled:opacity-50"><Trash2 className="h-4 w-4" /></button>
               </div>
             </div>
-          ))}
+          })}
         </div>
       )}
     </div>
@@ -239,19 +243,27 @@ export const PipelineKanbanView: React.FC<PipelineKanbanViewProps> = ({
 interface LeadKanbanCardProps {
   lead: Lead;
   onSelect: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  isDeleting: boolean;
   onStageChange: (newStage: PipelineStage) => void;
-  onOpenWhatsApp: () => void;
 }
 
 const LeadKanbanCard: React.FC<LeadKanbanCardProps> = ({
   lead,
   onSelect,
+  onEdit,
+  onDelete,
+  isDeleting,
   onStageChange,
-  onOpenWhatsApp,
 }) => {
   const currentIndex = PIPELINE_STAGES.indexOf(lead.pipeline_stage);
   const canMoveBack = currentIndex > 0;
   const canMoveForward = currentIndex < PIPELINE_STAGES.length - 1;
+  const mobileEmail = typeof navigator !== 'undefined' && detectMobileEmailHandler(navigator.userAgent);
+  const callHref = createTelHref(lead.phone);
+  const whatsappHref = createWhatsAppHref(lead.phone);
+  const emailHref = createEmailComposeHref(lead.email, mobileEmail);
 
   return (
     <div className="bg-[#fcfcfa] hover:bg-white border border-[#1f1f1f] rounded-[12px] p-3 transition-all">
@@ -302,12 +314,12 @@ const LeadKanbanCard: React.FC<LeadKanbanCardProps> = ({
       </div>
 
       {/* Actions & Stage Mover: Mobile Ergonomic Touch Targets (min 36x36px) */}
-      <div className="flex items-center justify-between gap-1.5 pt-2 border-t border-[#1f1f1f]/10">
+      <div className="flex flex-col gap-1.5 pt-2 border-t border-[#1f1f1f]/10">
         {/* Quick Phone & WhatsApp */}
-        <div className="flex items-center gap-1.5">
-          {lead.phone && (
+        <div className="flex items-center justify-end gap-1.5">
+          {callHref && (
             <a
-              href={`tel:${lead.phone}`}
+              href={callHref}
               title={`Call ${lead.contact_person}`}
               onClick={(e) => e.stopPropagation()}
               className="min-w-[36px] min-h-[36px] p-2 flex items-center justify-center rounded-[8px] bg-[#f8f5ee] hover:bg-[#eae4d5] text-[#1f1f1f] border border-[#1f1f1f] transition-all active:scale-95"
@@ -315,23 +327,25 @@ const LeadKanbanCard: React.FC<LeadKanbanCardProps> = ({
               <Phone className="w-3.5 h-3.5" />
             </a>
           )}
-          {lead.phone && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onOpenWhatsApp();
-              }}
+          {whatsappHref && (
+            <a
+              href={whatsappHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
               title={`WhatsApp message to ${lead.contact_person}`}
               className="min-w-[36px] min-h-[36px] p-2 flex items-center justify-center rounded-[8px] bg-[#f8f5ee] hover:bg-[#eae4d5] text-[#155e3c] border border-[#1f1f1f] transition-all active:scale-95"
             >
               <MessageCircle className="w-3.5 h-3.5" />
-            </button>
+            </a>
           )}
+          {emailHref && <a href={emailHref} onClick={(e) => e.stopPropagation()} title={`Email ${lead.contact_person}`} aria-label={`Email ${lead.contact_person}`} className="min-w-[36px] min-h-[36px] p-2 flex items-center justify-center rounded-[8px] bg-[#f8f5ee] hover:bg-[#eae4d5] text-[#1f1f1f] border border-[#1f1f1f] transition-all active:scale-95"><Mail className="w-3.5 h-3.5" /></a>}
+          <button type="button" onClick={(event) => { event.stopPropagation(); onEdit(); }} title="Edit Lead" aria-label={`Edit ${lead.company_name}`} className="min-w-[36px] min-h-[36px] p-2 flex items-center justify-center rounded-[8px] bg-[#f8f5ee] border border-[#1f1f1f]"><Pencil className="w-3.5 h-3.5 text-[#ff4800]" /></button>
+          <button type="button" onClick={(event) => { event.stopPropagation(); onDelete(); }} disabled={isDeleting} title="Hapus Lead" aria-label={`Hapus ${lead.company_name}`} className="min-w-[36px] min-h-[36px] p-2 flex items-center justify-center rounded-[8px] bg-[#fff5f5] text-[#9b2c2c] border border-[#1f1f1f] disabled:opacity-50"><Trash2 className="w-3.5 h-3.5" /></button>
         </div>
 
         {/* Stage Progressors */}
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center justify-end gap-1.5">
           {canMoveBack && (
             <button
               type="button"

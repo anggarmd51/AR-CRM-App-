@@ -6,6 +6,7 @@ import {
   ACCOUNT_PIN_PRODUCTION_WIF_POOL_ID,
   ACCOUNT_PIN_PRODUCTION_WIF_PROVIDER_ID,
   ACCOUNT_PIN_STAGING_PROJECT_ID,
+  isAccountPinApprovedStagingBranch,
   resolveProductionAccountPinOwnerUid,
 } from './accountPinFirebaseAdmin.ts';
 import { isAccountPinEnrollmentFlagEnabled } from './accountPinEnrollmentPolicy.ts';
@@ -47,7 +48,7 @@ function hasProductionConfig(environment: AccountPinEnvironment): boolean {
 
 function hasStagingConfig(environment: AccountPinEnvironment): boolean {
   if (environment.VERCEL_ENV !== 'preview'
-    || environment.VERCEL_GIT_COMMIT_REF !== ACCOUNT_PIN_APPROVED_RELEASE_BRANCH
+    || !isAccountPinApprovedStagingBranch(environment.VERCEL_GIT_COMMIT_REF)
     || environment.VITE_FIREBASE_TARGET !== 'staging'
     || environment.ACCOUNT_PIN_ENABLED !== 'true'
     || environment.FIREBASE_ADMIN_PROJECT_ID !== ACCOUNT_PIN_STAGING_PROJECT_ID

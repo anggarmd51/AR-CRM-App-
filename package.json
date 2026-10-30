@@ -8,9 +8,11 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
+    "postinstall": "node scripts/patch-jwks-rsa-esm.cjs",
     "lint": "tsc --noEmit",
     "test": "tsx --test src/*.test.ts src/**/*.test.ts",
     "test:firestore": "firebase emulators:exec --project demo-ar-crm-rules --only firestore \"tsx --test firestore.rules.test.ts tests/accountPinFirestore.emulator.test.ts\"",
+    "test:backup-restore": "firebase emulators:exec --project demo-ar-crm-rules --only firestore \"tsx scripts/backup-restore-drill.ts --project-id demo-ar-crm-rules\"",
     "test:firestore:staging": "node scripts/run-firestore-staging.mjs"
   },
   "dependencies": {

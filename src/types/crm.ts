@@ -14,7 +14,9 @@ export interface Lead {
   id: string;
   company_name: string;
   contact_person: string;
+  email?: string;
   phone: string;
+  address?: string;
   industry: string;
   city: string;
   pipeline_stage: PipelineStage;
@@ -26,7 +28,10 @@ export interface Lead {
   _syncStatus?: 'synced' | 'pending_insert' | 'pending_update' | 'error';
 }
 
-export type LeadCorrection = Partial<Pick<Lead, 'contact_person' | 'phone' | 'deal_value' | 'lead_score'>>;
+export type LeadCorrection = Partial<Pick<Lead,
+  'company_name' | 'contact_person' | 'email' | 'phone' | 'address' | 'industry' | 'city'
+  | 'deal_value' | 'next_followup_date' | 'lead_score'
+>>;
 
 export interface Activity {
   id: string;
@@ -53,6 +58,7 @@ export interface GlobalLead {
   decision_maker_title?: string;
   email?: string;
   ai_match_score?: number;
+  ai_verification_status?: 'needs_manual_verification';
   ai_source_urls?: string[];
   intent_level?: 'High Intent' | 'In-Market' | 'Strong Fit' | 'Surge Intent';
   company_initials?: string;

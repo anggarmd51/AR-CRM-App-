@@ -364,7 +364,9 @@ export async function createLead(
     payload: {
       company_name: lead.company_name,
       contact_person: lead.contact_person,
+      ...(lead.email !== undefined ? { email: lead.email } : {}),
       phone: String(lead.phone ?? ''),
+      ...(lead.address !== undefined ? { address: lead.address } : {}),
       industry: lead.industry,
       city: lead.city,
       pipeline_stage: lead.pipeline_stage,
@@ -419,6 +421,31 @@ export async function updateLeadDetails(
   const receipt = enqueueDurable(ownerId, durable);
   await receipt.accepted;
   return { operationId, state: 'queued-locally', acknowledged: receipt.acknowledged };
+}
+
+/** Online-only hard delete; callers must first ensure there is no linked activity history. */
+export async function deleteLead(ownerId: string, leadId: string): Promise<void> {
+  requireOwner(ownerId);
+  if (!leadId.trim() || leadId.length > 150 || leadId.includes('/')) {
+    throw new Error('Identitas Lead tidak valid untuk dihapus.');
+  }
+  const db = getFirebaseDb();
+  const leadRef = doc(db, 'workspaces', requireWorkspace(), 'leads', leadId);
+  const archiveRef = doc(db, 'workspaces', requireWorkspace(), 'wonDealArchives', leadId);
+  await runTransaction(db, async (transaction) => {
+    const [leadSnapshot, archiveSnapshot] = await Promise.all([
+      transaction.get(leadRef),
+      transaction.get(archiveRef),
+    ]);
+    if (!leadSnapshot.exists() || leadSnapshot.data().ownerId !== ownerId) {
+      throw Object.assign(new Error('Lead tidak ditemukan pada workspace owner.'), { code: 'not-found' });
+    }
+    if (leadSnapshot.data().pipeline_stage === 'Closing Won' || archiveSnapshot.exists()) {
+      throw Object.assign(new Error('Lead Won/berarsip tidak dapat dihapus.'), { code: 'failed-precondition' });
+    }
+    requireOwner(ownerId);
+    transaction.delete(leadRef);
+  });
 }
 
 export async function createActivity(

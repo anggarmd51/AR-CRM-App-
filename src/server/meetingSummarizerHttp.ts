@@ -72,7 +72,7 @@ export function createMeetingSummarizerHttpHandler(dependencies: {
         return;
       }
 
-      // One five-request daily ceiling is shared by Lead Finder and meeting summaries to cap provider cost.
+      // The active server-side AI request is capped at five per owner per UTC day.
       const permitted = await runtime.reserveAiUsage(AI_DAILY_LIMIT);
       if (!permitted) {
         sendJson(response, 429, { code: 'daily_limit_reached', error: 'Batas penggunaan AI harian sudah tercapai. Coba lagi besok.' }, { 'retry-after': '3600' });

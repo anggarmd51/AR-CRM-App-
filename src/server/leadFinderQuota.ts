@@ -14,7 +14,7 @@ export async function reserveAiUsage(
   }
   const dayKey = now.toISOString().slice(0, 10);
   const documentId = createHash('sha256').update(`${ownerUid}:${dayKey}`).digest('hex');
-  // Keep the legacy document prefix so an existing day's shared quota is not reset during this rename.
+  // Preserve the legacy document prefix so existing usage counters are not orphaned.
   const ref = firestore.collection('accountPinApiUsage').doc(`lead-finder-${documentId}`);
 
   return firestore.runTransaction(async (transaction) => {

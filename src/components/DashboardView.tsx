@@ -15,7 +15,6 @@ import {
   AlertCircle,
   Building2,
   Sparkles,
-  FileSpreadsheet,
 } from 'lucide-react';
 import { Lead, Activity, STAGE_CONFIG, PipelineStage } from '../types/crm.ts';
 import {
@@ -35,7 +34,6 @@ interface DashboardViewProps {
   onOpenWhatsApp: (lead: Lead) => void;
   onNavigateToPipeline: () => void;
   onNavigateToFinder: () => void;
-  onExportCsv?: () => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -47,7 +45,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onOpenWhatsApp,
   onNavigateToPipeline,
   onNavigateToFinder,
-  onExportCsv,
 }) => {
   const metrics = calculatePipelineMetrics(leads);
   const followUps = filterFollowUps(leads);
@@ -67,16 +64,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {onExportCsv && (
-              <button
-                onClick={onExportCsv}
-                title="Download CSV Rekapitulasi Leads"
-                className="text-xs font-semibold text-[#1f1f1f] hover:text-[#ff4800] flex items-center gap-1.5 px-3 py-1.5 bg-[#f8f5ee] hover:bg-[#f2ede4] border border-[#1f1f1f] rounded-[8px] transition-all active:scale-95"
-              >
-                <FileSpreadsheet className="w-3.5 h-3.5 text-[#ff4800]" />
-                <span className="hidden sm:inline">Export CSV</span>
-              </button>
-            )}
             <button
               onClick={onNavigateToPipeline}
               className="text-xs font-semibold text-[#1f1f1f] hover:text-[#ff4800] flex items-center gap-1 group transition-colors px-3 py-1.5 bg-[#f8f5ee] hover:bg-[#f2ede4] border border-[#1f1f1f] rounded-[8px]"

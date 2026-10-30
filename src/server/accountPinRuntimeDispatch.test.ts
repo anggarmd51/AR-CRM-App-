@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   ACCOUNT_PIN_APPROVED_RELEASE_BRANCH,
+  ACCOUNT_PIN_APPROVED_STAGING_BRANCHES,
   ACCOUNT_PIN_PRODUCTION_GCP_PROJECT_NUMBER,
   ACCOUNT_PIN_PRODUCTION_PROJECT_ID,
   ACCOUNT_PIN_PRODUCTION_SERVICE_ACCOUNT_ID,
@@ -35,7 +36,7 @@ const productionEnvironment = {
 
 const stagingEnvironment = {
   VERCEL_ENV: 'preview',
-  VERCEL_GIT_COMMIT_REF: ACCOUNT_PIN_APPROVED_RELEASE_BRANCH,
+  VERCEL_GIT_COMMIT_REF: ACCOUNT_PIN_APPROVED_STAGING_BRANCHES[1],
   VITE_FIREBASE_TARGET: 'staging',
   ACCOUNT_PIN_ENABLED: 'true',
   FIREBASE_ADMIN_PROJECT_ID: ACCOUNT_PIN_STAGING_PROJECT_ID,
@@ -88,7 +89,7 @@ test('Production route dispatch fails closed for wrong project, service account,
   assert.equal(factoryCalls, 0);
 });
 
-test('non-Production Preview deploys only the staging runtime on the approved branch', () => {
+test('non-Production Preview deploys only the staging runtime on explicitly approved staging branches', () => {
   const calls = { production: 0, staging: 0 };
   const factories = {
     production() { calls.production += 1; return 'production-runtime'; },
@@ -99,9 +100,14 @@ test('non-Production Preview deploys only the staging runtime on the approved br
   assert.equal(createConfiguredAccountPinRuntime(stagingEnvironment, factories), 'staging-runtime');
   assert.deepEqual(calls, { production: 0, staging: 1 });
 
+  const existingStagingBranch = { ...stagingEnvironment, VERCEL_GIT_COMMIT_REF: ACCOUNT_PIN_APPROVED_STAGING_BRANCHES[0] };
+  assert.equal(getAccountPinRuntimeTarget(existingStagingBranch), 'staging');
+
   const wrongBranch = { ...stagingEnvironment, VERCEL_GIT_COMMIT_REF: 'feature/other' };
   assert.equal(getAccountPinRuntimeTarget(wrongBranch), undefined);
   assert.equal(createConfiguredAccountPinRuntime(wrongBranch, factories), undefined);
+  const stagingBranchOnProduction = { ...productionEnvironment, VERCEL_GIT_COMMIT_REF: ACCOUNT_PIN_APPROVED_STAGING_BRANCHES[1] };
+  assert.equal(getAccountPinRuntimeTarget(stagingBranchOnProduction), undefined);
   assert.deepEqual(calls, { production: 0, staging: 1 });
 });
 

@@ -28,7 +28,14 @@ export const ACCOUNT_PIN_PRODUCTION_WIF_AUDIENCE = 'https://iam.googleapis.com/p
 const STAGING_ADMIN_APP_NAME = 'ar-crm-account-pin-staging';
 const PRODUCTION_ADMIN_APP_NAME = 'ar-crm-account-pin-production-wif';
 export const ACCOUNT_PIN_APPROVED_RELEASE_BRANCH = 'cue/firebase-stabilization';
-export const ALLOWED_PREVIEW_BRANCH = ACCOUNT_PIN_APPROVED_RELEASE_BRANCH;
+export const ACCOUNT_PIN_APPROVED_STAGING_BRANCHES = [
+  'cue/firebase-stabilization',
+  'cue/ar-crm-operational-features',
+] as const;
+
+export function isAccountPinApprovedStagingBranch(branch: string | undefined): boolean {
+  return ACCOUNT_PIN_APPROVED_STAGING_BRANCHES.some((approvedBranch) => approvedBranch === branch);
+}
 
 export interface AccountPinRuntime {
   verify(request: PinVerificationRequest): Promise<PinVerificationResponse>;
@@ -304,7 +311,7 @@ function createAccountPinRuntime(
 
 export function createStagingAccountPinRuntime(environment: Environment = process.env): AccountPinRuntime {
   if (environment.VERCEL_ENV !== 'preview'
-    || environment.VERCEL_GIT_COMMIT_REF !== ALLOWED_PREVIEW_BRANCH
+    || !isAccountPinApprovedStagingBranch(environment.VERCEL_GIT_COMMIT_REF)
     || environment.VITE_FIREBASE_TARGET !== 'staging'
     || environment.ACCOUNT_PIN_ENABLED !== 'true') {
     throw new Error('Account PIN endpoint is disabled outside the approved staging Preview.');

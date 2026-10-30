@@ -881,14 +881,19 @@ test('stage mutation keeps follow-up date optional instead of clearing it', () =
   });
 });
 
-test('lead detail correction allowlist keeps only valid contact and deal fields', () => {
+test('lead detail correction allowlist keeps only valid editable company/contact/deal fields', () => {
   const sanitized = allowlistedMutation({
     kind: 'update-lead-details',
     payload: {
       lead_id: 'lead-safe',
+      company_name: 'Synthetic Company',
       phone: '+628111222333',
       contact_person: 'Synthetic Contact',
+      email: 'contact@example.id',
+      industry: 'Construction',
+      city: 'Bandung',
       deal_value: 85000000,
+      next_followup_date: '2026-10-31',
       lead_score: 'Hot',
       ownerId: 'must-not-persist',
     },
@@ -897,18 +902,28 @@ test('lead detail correction allowlist keeps only valid contact and deal fields'
     kind: 'update-lead-details',
     payload: {
       lead_id: 'lead-safe',
+      company_name: 'Synthetic Company',
       phone: '+628111222333',
       contact_person: 'Synthetic Contact',
+      email: 'contact@example.id',
+      industry: 'Construction',
+      city: 'Bandung',
       deal_value: 85000000,
+      next_followup_date: '2026-10-31',
       lead_score: 'Hot',
     },
   });
 
   for (const payload of [
     { lead_id: 'lead-safe', contact_person: '' },
+    { lead_id: 'lead-safe', company_name: '' },
+    { lead_id: 'lead-safe', email: 'x'.repeat(321) },
     { lead_id: 'lead-safe', phone: 812345678 },
+    { lead_id: 'lead-safe', industry: 'x'.repeat(121) },
+    { lead_id: 'lead-safe', city: 'x'.repeat(121) },
     { lead_id: 'lead-safe', deal_value: -1 },
     { lead_id: 'lead-safe', deal_value: Number.NaN },
+    { lead_id: 'lead-safe', next_followup_date: 'not-a-date' },
     { lead_id: 'lead-safe', lead_score: 'Invalid' },
     { lead_id: 'lead-safe' },
   ]) {

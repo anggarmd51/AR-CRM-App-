@@ -6,7 +6,9 @@ export type DurableMutation =
       payload: {
         company_name: string;
         contact_person: string;
+        email?: string;
         phone: string;
+        address?: string;
         industry: string;
         city: string;
         pipeline_stage: PipelineStage;
@@ -28,9 +30,15 @@ export type DurableMutation =
       kind: 'update-lead-details';
       payload: {
         lead_id: string;
+        company_name?: string;
         contact_person?: string;
+        email?: string;
         phone?: string;
+        address?: string;
+        industry?: string;
+        city?: string;
         deal_value?: number;
+        next_followup_date?: string;
         lead_score?: LeadScore;
       };
     }
@@ -203,7 +211,9 @@ export function allowlistedMutation(mutation: DurableMutation): DurableMutation 
         payload: {
           company_name: assertText(payload.company_name, 200, false),
           contact_person: assertText(payload.contact_person, 200, false),
+          ...(payload.email === undefined ? {} : { email: assertText(payload.email, 320) }),
           phone: assertText(payload.phone, 200),
+          ...(payload.address === undefined ? {} : { address: assertText(payload.address, 500) }),
           industry: assertText(payload.industry, 120),
           city: assertText(payload.city, 120),
           pipeline_stage: payload.pipeline_stage as PipelineStage,
@@ -237,11 +247,17 @@ export function allowlistedMutation(mutation: DurableMutation): DurableMutation 
       };
     }
     case 'update-lead-details': {
+      const companyName = payload.company_name === undefined ? undefined : assertText(payload.company_name, 200, false);
       const contactPerson = payload.contact_person === undefined
         ? undefined
         : assertText(payload.contact_person, 200, false);
+      const email = payload.email === undefined ? undefined : assertText(payload.email, 320);
       const phone = payload.phone === undefined ? undefined : assertText(payload.phone, 200);
+      const address = payload.address === undefined ? undefined : assertText(payload.address, 500);
+      const industry = payload.industry === undefined ? undefined : assertText(payload.industry, 120);
+      const city = payload.city === undefined ? undefined : assertText(payload.city, 120);
       const dealValue = payload.deal_value;
+      const nextFollowupDate = payload.next_followup_date === undefined ? undefined : assertCalendarDate(payload.next_followup_date);
       const leadScore = payload.lead_score;
       if (dealValue !== undefined && (typeof dealValue !== 'number' || !Number.isFinite(dealValue) || dealValue < 0)) {
         throw new Error('Offline operation data failed local validation.');
@@ -249,16 +265,24 @@ export function allowlistedMutation(mutation: DurableMutation): DurableMutation 
       if (leadScore !== undefined && !ALLOWED_SCORES.has(leadScore as LeadScore)) {
         throw new Error('Offline operation data failed local validation.');
       }
-      if (contactPerson === undefined && phone === undefined && dealValue === undefined && leadScore === undefined) {
+      if (companyName === undefined && contactPerson === undefined && email === undefined && phone === undefined
+        && address === undefined && industry === undefined && city === undefined && dealValue === undefined
+        && nextFollowupDate === undefined && leadScore === undefined) {
         throw new Error('Offline operation data failed local validation.');
       }
       return {
         kind: mutation.kind,
         payload: {
           lead_id: assertId(payload.lead_id),
+          ...(companyName !== undefined ? { company_name: companyName } : {}),
           ...(contactPerson !== undefined ? { contact_person: contactPerson } : {}),
+          ...(email !== undefined ? { email } : {}),
           ...(phone !== undefined ? { phone } : {}),
+          ...(address !== undefined ? { address } : {}),
+          ...(industry !== undefined ? { industry } : {}),
+          ...(city !== undefined ? { city } : {}),
           ...(dealValue !== undefined ? { deal_value: dealValue } : {}),
+          ...(nextFollowupDate !== undefined ? { next_followup_date: nextFollowupDate } : {}),
           ...(leadScore !== undefined ? { lead_score: leadScore as LeadScore } : {}),
         },
       };

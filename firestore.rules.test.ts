@@ -282,13 +282,13 @@ test('clients cannot create or alter workspace ownership or membership/role reco
   await assertFails(updateDoc(doc(db, 'workspaces', workspace, 'members', ownerUid), { role: 'member' }));
 });
 
-test('owner identity and role cannot be changed on a lead', async () => {
+test('owner identity and role cannot be changed while editable company data can be corrected', async () => {
   const db = ownerWithActivePinSession();
   const lead = doc(db, 'workspaces', workspace, 'leads', 'owned-lead');
   await assertFails(updateDoc(lead, { ownerId: 'changed-owner' }));
   await assertFails(updateDoc(lead, { role: 'member' }));
   await assertFails(updateDoc(lead, { created_at: updatedAt }));
-  await assertFails(updateDoc(lead, { company_name: 'tampered name' }));
+  await assertSucceeds(updateDoc(lead, { company_name: 'Corrected Company', updated_at: serverTimestamp() }));
   await assertSucceeds(updateDoc(lead, { pipeline_stage: 'Meeting', updated_at: serverTimestamp() }));
 });
 
@@ -299,6 +299,11 @@ test('owner can correct only allowlisted lead details with a server timestamp', 
 
   await assertSucceeds(updateDoc(lead, { phone: '+628111222333', updated_at: serverTimestamp() }));
   await assertSucceeds(updateDoc(lead, { contact_person: 'Corrected Contact', updated_at: serverTimestamp() }));
+  await assertSucceeds(updateDoc(lead, { company_name: 'Corrected Company', updated_at: serverTimestamp() }));
+  await assertSucceeds(updateDoc(lead, { email: 'contact@example.id', updated_at: serverTimestamp() }));
+  await assertSucceeds(updateDoc(lead, { industry: 'Corrected Industry', city: 'Bandung', updated_at: serverTimestamp() }));
+  await assertSucceeds(updateDoc(lead, { address: 'Jl. Melati No. 7, Bandung', updated_at: serverTimestamp() }));
+  await assertSucceeds(updateDoc(lead, { next_followup_date: '2026-10-31', updated_at: serverTimestamp() }));
   await assertSucceeds(updateDoc(lead, { deal_value: 125000000, updated_at: serverTimestamp() }));
   await assertSucceeds(updateDoc(lead, { lead_score: 'Hot', updated_at: serverTimestamp() }));
 
@@ -306,7 +311,9 @@ test('owner can correct only allowlisted lead details with a server timestamp', 
   await assertFails(updateDoc(lead, { contact_person: '', updated_at: serverTimestamp() }));
   await assertFails(updateDoc(lead, { deal_value: -1, updated_at: serverTimestamp() }));
   await assertFails(updateDoc(lead, { lead_score: 'Invalid', updated_at: serverTimestamp() }));
-  await assertFails(updateDoc(lead, { industry: 'Not allowlisted', updated_at: serverTimestamp() }));
+  await assertFails(updateDoc(lead, { email: 'x'.repeat(321), updated_at: serverTimestamp() }));
+  await assertFails(updateDoc(lead, { industry: 'I'.repeat(121), updated_at: serverTimestamp() }));
+  await assertFails(updateDoc(lead, { address: 'A'.repeat(501), updated_at: serverTimestamp() }));
   await assertSucceeds(updateDoc(lead, { phone: 'valid phone', updated_at: updatedAt }));
 });
 
@@ -321,10 +328,19 @@ test('activity parent lookup is workspace-scoped and requires a valid lead schem
   await assertFails(updateDoc(doc(db, 'workspaces', workspace, 'activities', 'existing-activity'), { notes: 'cannot edit activity' }));
 });
 
-test('client deletions are denied even to the designated owner', async () => {
+test('owner can delete eligible leads but cannot delete Won leads or activity history', async () => {
   const db = ownerWithActivePinSession();
-  await assertFails(deleteDoc(doc(db, 'workspaces', workspace, 'leads', 'owned-lead')));
+  const eligible = doc(db, 'workspaces', workspace, 'leads', 'eligible-for-delete');
+  await assertSucceeds(setDoc(eligible, validLead()));
+  await assertSucceeds(deleteDoc(eligible));
+  const wonLead = doc(db, 'workspaces', workspace, 'leads', 'won-cannot-delete');
+  await env.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), 'workspaces', workspace, 'leads', 'won-cannot-delete'), { ...validLead(), pipeline_stage: 'Closing Won' });
+    await setDoc(doc(context.firestore(), 'workspaces', workspace, 'wonDealArchives', 'won-cannot-delete'), validWonArchive('won-cannot-delete'));
+  });
+  await assertFails(deleteDoc(wonLead));
   await assertFails(deleteDoc(doc(db, 'workspaces', workspace, 'activities', 'existing-activity')));
+  await assertFails(deleteDoc(doc(env.authenticatedContext(otherUid).firestore(), 'workspaces', workspace, 'leads', 'owned-lead')));
 });
 
 test('lead and activity schemas reject tampered ownership, role, type, malformed GPS, summary provenance and unknown fields', async () => {
@@ -369,8 +385,9 @@ test('activity accepts bounded summary provenance and explicitly captured GPS on
 
 test('won archive requires a new closing-won transition and cannot be created twice', async () => {
   const db = ownerWithActivePinSession();
-  const archive = doc(db, 'workspaces', workspace, 'wonDealArchives', 'owned-lead');
-  await assertFails(setDoc(archive, validWonArchive('owned-lead')));
+  const lead = doc(db, 'workspaces', workspace, 'leads', 'archive-transition-lead');
+  const archive = doc(db, 'workspaces', workspace, 'wonDealArchives', 'archive-transition-lead');
+  await assertFails(setDoc(archive, validWonArchive('archive-transition-lead')));
 
   await env.withSecurityRulesDisabled(async (context) => {
     await setDoc(doc(context.firestore(), 'workspaces', workspace, 'leads', 'already-won-lead'), {
@@ -383,12 +400,12 @@ test('won archive requires a new closing-won transition and cannot be created tw
     validWonArchive('already-won-lead'),
   ));
 
-  const lead = doc(db, 'workspaces', workspace, 'leads', 'owned-lead');
+  await assertSucceeds(setDoc(lead, validLead()));
   await assertSucceeds(runTransaction(db, async (transaction) => {
     const leadSnapshot = await transaction.get(lead);
     assert.equal(leadSnapshot.exists(), true);
     transaction.update(lead, { pipeline_stage: 'Closing Won', updated_at: updatedAt });
-    transaction.set(archive, { ...validWonArchive('owned-lead'), archived_at: serverTimestamp() });
+    transaction.set(archive, { ...validWonArchive('archive-transition-lead'), archived_at: serverTimestamp() });
   }));
   await assertSucceeds(getDoc(archive));
   await assertFails(setDoc(archive, { ...validWonArchive('owned-lead'), archived_at: serverTimestamp() }));

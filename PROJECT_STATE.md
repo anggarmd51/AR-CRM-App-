@@ -2,15 +2,35 @@
 ## AR Personal CRM Enterprise (Solo Account Manager Edition)
 
 > **Document Version:** 2.4.1 (local Rules and PWA hardening)
-> **Status:** Commit aplikasi terbaru yang tercatat pada branch `cue/firebase-stabilization` adalah `f06647a` (`f06647ac9e2447e37c0100c555b66d355f7365fd`); verifikasi lokal tercantum pada snapshot terbaru di bawah. Hasil tes lokal bukan verifikasi hosted dan tidak mengubah gate Production: hosted sign-in/CRUD, runtime PIN, serta backup/restore belum diverifikasi.
+> **Status:** Branch kerja saat ini `cue/ar-crm-operational-features`, HEAD `70ee0122c610b583b3627f65fce38c868230364f`; perubahan operasional dan persiapan staging masih uncommitted. Uji lokal lulus, tetapi env/deployment Preview branch ini belum tersedia dan aktivasi hosted ditahan. Tidak ada perubahan Production.
 > **Production terakhir diperiksa baca-saja melalui metadata Vercel (28 Okt 2026; tidak diperiksa ulang pada pembaruan ini):** project `arcrm-app`, alias [https://arcrmapp.vercel.app/](https://arcrmapp.vercel.app/) READY pada commit `f010c46f6358fa57fe2b0957e8f049058acb0b7d`, branch `cue/firebase-stabilization`; ditandai Vercel sebagai rollback candidate. Metadata deployment terkonfirmasi saat itu, tetapi prosedur dan keberhasilan rollback belum diuji.
-> **Preview staging:** [https://arcrm-4sv1mj6xw-anggaramadhan538-8607.vercel.app](https://arcrm-4sv1mj6xw-anggaramadhan538-8607.vercel.app) — status dari catatan terdahulu; tidak diperiksa ulang pada pembaruan ini.
+> **Preview staging lama:** [https://arcrm-4sv1mj6xw-anggaramadhan538-8607.vercel.app](https://arcrm-4sv1mj6xw-anggaramadhan538-8607.vercel.app) — akses tanpa sesi pada 30 Okt diarahkan ke SSO Vercel; bukan deployment branch operasional dan tidak dipakai sebagai bukti hosted CRUD/PIN.
 > **Author & Architect:** Lead Full-Stack Software Architect & UI/UX State Specialist  
-> **Last Updated:** 29 Oktober 2026, 11:06 WIB
+> **Last Updated:** 30 Oktober 2026, 11:54 WIB
 > **Target Platform:** Responsive Progressive Web App (PWA) untuk browser laptop dan ponsel; tidak ada native Android app pada source ini.
 > **Catatan sumber kebenaran:** bagian “Status operasional terbaru” di bawah menjadi ringkasan saat ini. Bagian bertanggal setelahnya adalah snapshot historis pada waktu masing-masing dan tidak boleh mengalahkan bukti yang lebih baru. Branch `cue/firebase-stabilization` memakai Firebase Auth/Firestore untuk Leads/Activities dan tidak mengimpor data lama otomatis. Data operasional belum dimigrasikan; jangan memakai spreadsheet lama yang dikosongkan sebagai sumber.
 
-## Status operasional terbaru — 29 Oktober 2026, 11:06 WIB
+## Status operasional terbaru — 30 Oktober 2026, 11:54 WIB
+
+Owner menyetujui pengecualian PIN **khusus staging** untuk `cue/ar-crm-operational-features`. Allowlist staging kini mencakup branch ini dan `cue/firebase-stabilization`; guard branch Production tetap terpisah dan tidak diperluas. Konfigurasi client staging dipulihkan dari Console project staging ke `.env.staging.local`, dan kandidat `firestore.staging.rules` mengikat owner/workspace staging saja. Kedua file mode `0600` dan ignored Git; tidak ada credential Admin, pepper, atau secret Make di client env. Source Rules staging yang sedang dipublikasikan dipertahankan sebagai salinan privat terpisah, bukan ditimpa kandidat.
+
+| Verifikasi sesi ini | Hasil |
+| --- | --- |
+| Tes PIN staging/dispatcher/Production terfokus | 29/29 lulus |
+| Rules staging-bound pada `demo-ar-crm-staging-rules` | 25/25 lulus |
+| Tes webhook mapper/guard/writer | 17/17 lulus |
+| Satu prospek sintetis via HTTP loopback pada `demo-ar-crm-make-webhook` | create 201; retry 200, ID sama; tepat satu Lead; Lead/root/member fixture dibersihkan |
+| TypeScript/lint dan `git diff --check` | lulus |
+
+Persiapan 25 variabel Vercel yang seluruhnya hanya `preview` + branch operasional dicoba dalam keadaan PIN/enrollment/webhook/AI **false** serta GAS kosong. API menolak seluruh batch dengan HTTP 400; readback setelahnya memastikan **nol** variabel branch dibuat dan metadata/value scope lain tidak berubah. Exact branch juga belum ada di remote menurut `git ls-remote`; tidak ada commit, push, atau deployment. Jangan mem-push branch untuk mengatasi ini sebelum snapshot ditinjau dan risiko auto-deploy dengan general Preview yang berbagi binding Production dihilangkan. General Preview dan semua variabel Production tidak diubah.
+
+Rules staging live ternyata lebih lama: belum memiliki gate sesi PIN, optional email/address, AI/GPS Activity, dan arsip Won dari branch operasional, serta tetap menolak semua delete Lead. Kandidat lokal yang diuji menambahkan kebijakan fitur saat ini (termasuk delete non-Won tanpa arsip), sehingga **bukan** salinan perilaku live dan belum dipublikasikan. Publikasi Rules staging memerlukan review/persetujuan tersendiri, bukan sekadar melengkapi file yang hilang.
+
+Aktivasi hosted tetap ditahan: pepper PIN staging lama bersifat write-only di Vercel dan belum tersedia sebagai secret tersimpan; permintaan input secret telah dikirim, tanpa membuat pepper pengganti atau reset credential. Domain Auth/reCAPTCHA Preview dan pengujian hosted sign-in/PIN/CRUD juga belum dilakukan. Firebase staging terlihat tetap Spark/no-cost; tidak ada billing/Blaze, enforcement App Check, Rules/data cloud, scenario Make, panggilan AI berbayar, atau Production yang diubah. Tes lokal bukan bukti hosted/Production ready.
+
+Catatan re-run: kandidat privat `firestore.staging.rules` sekarang sengaja dipertahankan. Runner `npm run test:firestore:staging` menolak file yang sudah ada; jangan menghapus kandidat/backup secara otomatis. Untuk menguji kandidat yang dipertahankan, gunakan Firestore Emulator dengan `--project demo-ar-crm-staging-rules --config firebase.staging.json --only firestore` dan `FIRESTORE_RULES_TARGET=staging`, setelah mengosongkan environment credential/project cloud seperti pada runner.
+
+## Snapshot operasional sebelumnya — 29 Oktober 2026, 11:06 WIB
 
 ### Commit aplikasi dan verifikasi lokal
 
@@ -294,7 +314,7 @@ Di lapangan, Account Manager B2B menghadapi tantangan operasional krusial:
 
 ## 2. ARSITEKTUR SISTEM & TECH STACK
 
-Arsitektur pada branch saat ini memisahkan PWA, identitas, penyimpanan cloud, dan endpoint AI. Diagram ini menerangkan source yang ada, bukan bukti bahwa endpoint/deployment hosted terbaru sudah aktif.
+Arsitektur pada branch saat ini memisahkan PWA, identitas, penyimpanan cloud, direktori sampel lokal, dan endpoint AI Meeting Summarizer. Direktori Lead Finder hanya memakai penyimpanan browser dan tidak terhubung ke CRM.
 
 ```
 PWA React/Vite (browser laptop & ponsel)
@@ -302,8 +322,8 @@ PWA React/Vite (browser laptop & ponsel)
   ├─ Firestore realtime: workspace Leads, Activities, wonDealArchives
   ├─ Firestore Rules: owner/workspace dan sesi PIN untuk jalur hosted
   ├─ Encrypted IndexedDB: hanya operasi tulis pending, per owner/workspace
+  ├─ Direktori Prospek Lokal → sampel fiktif + localStorage khusus browser
   └─ Vercel serverless AI (default-off; secret server-only)
-       ├─ /api/ai/lead-finder → Gemini Search grounding + citations
        └─ /api/ai/summarize-notes → opt-in notes + PIN/session/quota
 
 Laporan Google Sheets, bila diaktifkan, adalah ekspor terpisah—bukan sumber CRM.
@@ -334,10 +354,10 @@ Local development wajib menggunakan Firebase Auth/Firestore Emulator.
 - **Kanban/List lima tahap:** Perubahan memakai quick-advance dan pemilih tahap; UI optimistik dengan rollback khusus jika mutasi ditolak. Tanggal follow-up tetap opsional.
 - **Auto-Archive Closing Won:** Perubahan stage dan pembuatan `wonDealArchives/{leadId}` terjadi dalam transaksi Firestore; aturan membuat arsip immutable. Belum ada browser hosted test atau layar khusus untuk menelusuri daftar arsip.
 
-### 4.3 AI Lead Finder & Enrichment
-- **Pencarian publik:** Kriteria kategori, kota, dan profil opsional; paling banyak lima kandidat berbasis Gemini/Search grounding dengan `fit_score` tervalidasi 0–100 dan citation HTTPS.
-- **Provenance:** Saran ditandai belum diverifikasi dan tidak mencantumkan kontak pribadi. Jika sumber/API tidak tersedia, UI tidak membuat prospek pengganti atau data palsu.
-- **Import ke Pipeline:** Tombol satu klik menyimpan kandidat ke Firestore tanpa mengarang kontak, nilai deal, tanggal follow-up, atau score manual.
+### 4.3 Direktori Prospek Lokal (pengganti Lead Finder AI)
+- **Mode saat ini:** Direktori sampel fiktif lokal dengan pencarian, tambah, edit, dan hapus di browser; tidak ada panggilan Gemini atau request ke endpoint eksternal.
+- **Provenance dan isolasi:** Semua sampel berlabel fiktif dan **Perlu Verifikasi Manual**. Catatan yang dibuat pengguna juga bukan data terverifikasi atau siap operasional; semuanya terpisah dari pipeline.
+- **Penyimpanan:** Satu key localStorage khusus browser; tidak disinkronkan ke Firebase/CRM dan dapat hilang jika penyimpanan browser dibersihkan. Endpoint lama `/api/ai/lead-finder` selalu mengembalikan HTTP 410.
 
 ### 4.4 Field Activities, GPS Check-In & AI Summarizer
 - **GPS Check-In:** Koordinat opsional diminta sekali setelah pengguna menekan tombol dan memberi izin; tidak ada background tracking.
@@ -385,6 +405,8 @@ Local development wajib menggunakan Firebase Auth/Firestore Emulator.
 | `created_at` | String | Timestamp aktivitas (ISO 8601) |
 
 #### 3. Sheet `Global_Leads`
+> Skema ini adalah artefak legacy; Direktori Prospek Lokal saat ini tidak membaca atau menulis sheet ini maupun Firebase/CRM.
+
 | Kolom | Tipe Data | Deskripsi |
 |---|---|---|
 | `id` | String | ID direktori prospek (`GLOB-xxx`) |
@@ -444,13 +466,14 @@ Modul `src/data/androidKotlinCode.ts` menyertakan implementasi native Android le
 
 ---
 
-## 8. PEMBERSIHAN DATA DUMMY & HARDENING INTEGRASI GOOGLE SHEETS
+## 8. PEMBERSIHAN DATA DUMMY CRM & HARDENING INTEGRASI GOOGLE SHEETS
 
 Pada pembaruan v2.2.0 ini, sistem telah dibersihkan secara menyeluruh dari seluruh residu data tiruan/mock:
 
 1. **Penghapusan Total Mock Seeds (`SEED_LEADS`, `SEED_ACTIVITIES`, `GLOBAL_LEADS_CATALOG`):**
    - Array data dummy statis telah dihapus dari kode sumber `src/utils/syncQueue.ts`.
    - `CrmStorage.getLeads()` dan `CrmStorage.getActivities()` kini mengembalikan array kosong `[]` pada inisialisasi awal murni tanpa menyuntikkan data dummy ke dalam `localStorage`.
+   - Sampel Direktori Prospek Lokal saat ini berada pada key browser terpisah dan tidak termasuk data CRM operasional.
 2. **Auto-Purge Sanitizer untuk Residu LocalStorage:**
    - Ditambahkan filter sanitasi otomatis pada `CrmStorage` yang mendeteksi dan menghapus ID dummy lama (`LEAD-101` s/d `LEAD-104`, `ACT-201` s/d `ACT-202`, `GL-1` s/d `GL-5`) dari penyimpanan browser pengguna lama secara instan saat aplikasi dimuat.
 3. **Sinkronisasi Penuh Database Cloud Google Sheets:**
@@ -482,8 +505,8 @@ Pengujian otomatis menggunakan test runner native `node:test` (`npm run test`):
 - `exportCsv.test.ts`: **PASSED** (Validasi format CSV RFC-4180, sanitasi formula injection untuk `=`, `+`, `-`, `@`, dan *escaping* karakter khusus).
 - `securityLock.test.ts`: **PASSED** (Validasi hashing PIN SHA-256 tersalt, verifikasi PIN dinamis 4, 5, dan 6 digit, verifikasi lockout rate-limiting setelah 5 kali gagal, status timeout, dan reset).
 - `crmCalculations.test.ts`: **PASSED** (Kalkulasi Total Pipeline, Closed Won, Weighted Probability, win rate, kategorisasi tanggal follow-up, serta pembersihan nomor telepon WhatsApp internasional).
-- `aiLeadEnrichment.test.ts`: **PASSED** (Pencarian token industri, boost relevansi geografis, dan sintesis prospek dinamis).
-- **Hasil Akhir:** **20 dari 20 Unit Tests Lulus 100% (Green)**.
+- `localProspectDirectory.test.ts` dan `leadFinderLocalOnlyBoundary.test.ts`: **PASSED** (Sampel fiktif, pencarian/CRUD browser, status verifikasi manual, dan tidak ada jalur eksternal atau impor CRM).
+- **Hasil verifikasi terbaru:** `npm test` **181 lulus, 0 gagal, 1 dilewati** (182 total); `npm run lint`, `npm run build`, dan `git diff --check` lulus.
 
 ---
 

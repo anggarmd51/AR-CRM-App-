@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
+import makeLeadWebhookHandler from './api/webhooks/make/leads.ts';
 
 dotenv.config();
 
@@ -12,7 +13,10 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
-// Parse JSON bodies
+// The webhook has its own small parser cap; keep existing body limits elsewhere.
+app.all('/api/webhooks/make/leads', express.json({ limit: '32kb' }), (req, res) => {
+  void makeLeadWebhookHandler(req, res);
+});
 app.use(express.json({ limit: '256kb' }));
 
 // Server-side Gemini initialization

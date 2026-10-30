@@ -22,6 +22,7 @@ interface TopAppBarProps {
   onOpenSecurity?: () => void;
   isSecurityActive?: boolean;
   onExportCsv?: () => void;
+  onExportExcel?: () => void;
   onExportSnapshot?: () => void;
 }
 
@@ -43,11 +44,15 @@ export const TopAppBar: React.FC<TopAppBarProps> = ({
   onOpenSecurity,
   isSecurityActive = false,
   onExportCsv,
+  onExportExcel,
   onExportSnapshot,
 }) => {
   const [isSyncQueueOpen, setIsSyncQueueOpen] = useState(false);
+  const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
   const syncButtonRef = useRef<HTMLButtonElement>(null);
   const queuePanelRef = useRef<HTMLElement>(null);
+  const exportButtonRef = useRef<HTMLButtonElement>(null);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
   const [queuePosition, setQueuePosition] = useState<CSSProperties>({ left: 12, top: 80 });
   useEffect(() => {
     if (!isSyncQueueOpen) return;
@@ -72,6 +77,29 @@ export const TopAppBar: React.FC<TopAppBarProps> = ({
       document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape);
     };
   }, [isSyncQueueOpen]);
+
+  useEffect(() => {
+    if (!isExportMenuOpen) return;
+    const outside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !exportButtonRef.current?.contains(event.target) && !exportMenuRef.current?.contains(event.target)) {
+        setIsExportMenuOpen(false);
+      }
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        setIsExportMenuOpen(false);
+        exportButtonRef.current?.focus();
+      }
+    };
+    document.addEventListener('pointerdown', outside);
+    document.addEventListener('keydown', escape);
+    return () => {
+      document.removeEventListener('pointerdown', outside);
+      document.removeEventListener('keydown', escape);
+    };
+  }, [isExportMenuOpen]);
 
   return (
     <header className="sticky top-0 z-30 bg-[#fcfcfa] border-b border-[#1f1f1f] px-4 py-3 [&_button]:min-h-11">
@@ -133,7 +161,7 @@ export const TopAppBar: React.FC<TopAppBarProps> = ({
           <div className="relative">
             <button
               ref={syncButtonRef}
-              onClick={() => setIsSyncQueueOpen((open) => !open)}
+              onClick={() => { setIsExportMenuOpen(false); setIsSyncQueueOpen((open) => !open); }}
               aria-label="Buka status dan antrean sinkronisasi Firestore"
               aria-expanded={isSyncQueueOpen}
               aria-controls="firestore-sync-queue"
@@ -238,29 +266,35 @@ export const TopAppBar: React.FC<TopAppBarProps> = ({
             </button>
           )}
 
-          {/* Export CSV Rekapitulasi */}
-          {onExportCsv && (
-            <button
-              onClick={onExportCsv}
-              title="Unduh CSV Lead saja"
-              aria-label="Unduh CSV Lead saja"
-              className="flex items-center gap-1.5 bg-[#f8f5ee] hover:bg-[#f2ede4] text-[#1f1f1f] border border-[#1f1f1f] px-3 py-1.5 rounded-[8px] text-xs font-semibold transition-all active:scale-95"
-            >
-              <FileSpreadsheet className="w-3.5 h-3.5 text-[#ff4800]" />
-              <span className={isPhoneFrame ? 'hidden' : 'hidden xl:inline'}>Export CSV</span>
-            </button>
-          )}
-
-          {onExportSnapshot && (
-            <button
-              onClick={onExportSnapshot}
-              title="Ekspor JSON lengkap Lead, aktivitas, dan arsip Won"
-              aria-label="Ekspor JSON lengkap CRM"
-              className="flex items-center gap-1.5 bg-[#fff8f3] hover:bg-[#fff0e8] text-[#1f1f1f] border border-[#1f1f1f] px-3 py-1.5 rounded-[8px] text-xs font-semibold transition-all active:scale-95"
-            >
-              <Download className="w-3.5 h-3.5 text-[#ff4800]" />
-              <span className={isPhoneFrame ? 'hidden' : 'hidden xl:inline'}>Ekspor Lengkap</span>
-            </button>
+          {(onExportCsv || onExportExcel || onExportSnapshot) && (
+            <div className="relative">
+              <button
+                ref={exportButtonRef}
+                type="button"
+                onClick={() => { setIsSyncQueueOpen(false); setIsExportMenuOpen((open) => !open); }}
+                aria-label="Pilih format ekspor"
+                aria-haspopup="menu"
+                aria-expanded={isExportMenuOpen}
+                aria-controls="crm-export-menu"
+                title="Unduh Lead sebagai CSV atau Excel, atau ekspor snapshot lokal"
+                className="flex min-h-11 items-center gap-1.5 rounded-[8px] border border-[#1f1f1f] bg-[#f8f5ee] px-3 py-1.5 text-xs font-semibold text-[#1f1f1f] hover:bg-[#f2ede4]"
+              >
+                <Download className="h-3.5 w-3.5 text-[#ff4800]" />
+                <span>Ekspor</span>
+              </button>
+              {isExportMenuOpen && (
+                <div ref={exportMenuRef} id="crm-export-menu" role="menu" aria-label="Format ekspor CRM" className="absolute right-0 top-full z-[80] mt-2 w-64 rounded-[12px] border border-[#1f1f1f] bg-[#fcfcfa] p-2 shadow-lg">
+                  <p className="px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-[#6b665c]">Lead</p>
+                  {onExportCsv && <button type="button" role="menuitem" onClick={() => { setIsExportMenuOpen(false); onExportCsv(); }} className="flex min-h-11 w-full items-center gap-2 rounded-[8px] px-2 text-left text-xs font-semibold hover:bg-[#f8f5ee]"><FileSpreadsheet className="h-4 w-4 text-[#ff4800]" />CSV (.csv)</button>}
+                  {onExportExcel && <button type="button" role="menuitem" onClick={() => { setIsExportMenuOpen(false); onExportExcel(); }} className="flex min-h-11 w-full items-center gap-2 rounded-[8px] px-2 text-left text-xs font-semibold hover:bg-[#f8f5ee]"><FileSpreadsheet className="h-4 w-4 text-[#155e3c]" />Excel (.xls)</button>}
+                  {onExportSnapshot && <>
+                    <div className="my-1 border-t border-[#1f1f1f]/10" />
+                    <button type="button" role="menuitem" onClick={() => { setIsExportMenuOpen(false); onExportSnapshot(); }} className="flex min-h-11 w-full items-center gap-2 rounded-[8px] px-2 text-left text-xs font-semibold hover:bg-[#fff8f3]"><Download className="h-4 w-4 text-[#ff4800]" />Snapshot lokal (.json)</button>
+                  </>}
+                  <p className="px-2 pb-1 text-[10px] leading-4 text-[#6b665c]">CSV dan Excel berisi Lead. Snapshot JSON lokal mencakup aktivitas/GPS dan memerlukan konfirmasi.</p>
+                </div>
+              )}
+            </div>
           )}
 
           {/* Security PIN Lock Settings */}

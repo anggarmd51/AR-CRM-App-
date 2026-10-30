@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { History, Plus, Search, Calendar, Building2, MapPin, Sparkles } from 'lucide-react';
 import { Activity, Lead } from '../types/crm.ts';
 import { formatDateTimeDisplay } from '../utils/crmCalculations.ts';
+import { loadActivityPhoto } from '../utils/activityPhotos.ts';
 
 interface ActivitiesListViewProps {
   activities: Activity[];
@@ -18,6 +19,33 @@ export const ActivitiesListView: React.FC<ActivitiesListViewProps> = ({
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedType, setSelectedType] = useState('all');
+  const [photoUrls, setPhotoUrls] = useState<Map<string, string>>(() => new Map());
+
+  useEffect(() => {
+    let cancelled = false;
+    const createdUrls: string[] = [];
+    void Promise.all(activities.map(async (activity) => {
+      try {
+        const photo = await loadActivityPhoto(activity.id);
+        if (!photo) return undefined;
+        const url = URL.createObjectURL(photo);
+        createdUrls.push(url);
+        return [activity.id, url] as const;
+      } catch {
+        return undefined;
+      }
+    })).then((entries) => {
+      if (cancelled) {
+        createdUrls.forEach((url) => URL.revokeObjectURL(url));
+        return;
+      }
+      setPhotoUrls(new Map(entries.filter((entry): entry is readonly [string, string] => Boolean(entry))));
+    });
+    return () => {
+      cancelled = true;
+      createdUrls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [activities]);
 
   const filtered = activities.filter((act) => {
     const matchedLead = leads.find((l) => l.id === act.lead_id);
@@ -123,6 +151,10 @@ export const ActivitiesListView: React.FC<ActivitiesListViewProps> = ({
                 </div>
 
                 <p className="text-xs text-[#1f1f1f] leading-relaxed whitespace-pre-wrap">{act.notes}</p>
+                {photoUrls.has(act.id) && <figure className="space-y-1">
+                  <img src={photoUrls.get(act.id)} alt={`Dokumentasi lokal untuk ${act.activity_type}`} loading="lazy" className="max-h-64 rounded-[8px] border border-[#1f1f1f] object-contain" />
+                  <figcaption className="text-[10px] text-[#6b665c]">Foto lokal pada browser ini; tidak tersinkron antarperangkat.</figcaption>
+                </figure>}
                 {act.ai_summary && (
                   <div className="rounded-[8px] border border-[#1f1f1f]/30 bg-[#fcfcfa] p-3 space-y-1">
                     <div className="flex items-center gap-1.5 text-[10px] font-bold text-[#1f1f1f]"><Sparkles className="w-3 h-3 text-[#ff4800]" />Ringkasan {act.ai_summary_source === 'gemini' ? 'Gemini' : 'lokal'}</div>

@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Check, MapPin, Sparkles, X } from 'lucide-react';
+import { Camera, Check, MapPin, Sparkles, X } from 'lucide-react';
 import { getFirebaseAuth } from '../firebase.ts';
 import { formatMeetingSummary, summarizeMeetingNotesLocally } from '../meetingSummary.ts';
 import type { MeetingSummary } from '../meetingSummary.ts';
 import type { ActivityGpsLocation, ActivitySummarySource, Lead } from '../types/crm.ts';
 import { useModalAccessibility } from '../utils/useModalAccessibility.ts';
+import { compressActivityPhoto, MAX_ACTIVITY_PHOTO_BYTES } from '../utils/activityPhotos.ts';
 
 interface ActivityLoggerModalProps {
   isOpen: boolean;
@@ -19,6 +20,7 @@ interface ActivityLoggerModalProps {
     ai_summary?: string;
     ai_summary_source?: ActivitySummarySource;
     location_gps?: ActivityGpsLocation;
+    photo?: Blob;
   }) => Promise<void>;
 }
 
@@ -44,7 +46,12 @@ export const ActivityLoggerModal: React.FC<ActivityLoggerModalProps> = ({
   const [location, setLocation] = useState<ActivityGpsLocation | undefined>();
   const [locationMessage, setLocationMessage] = useState('');
   const [isCapturingLocation, setIsCapturingLocation] = useState(false);
+  const [photo, setPhoto] = useState<Blob | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [photoMessage, setPhotoMessage] = useState('');
+  const [isCompressingPhoto, setIsCompressingPhoto] = useState(false);
   const locationRequestId = useRef(0);
+  const photoRequestId = useRef(0);
   const closeModal = () => { if (!isSubmitting) { locationRequestId.current += 1; onClose(); } };
   const { dialogRef } = useModalAccessibility({ isOpen, onClose: closeModal, titleId: 'activity-logger-modal-title' });
 
@@ -62,7 +69,11 @@ export const ActivityLoggerModal: React.FC<ActivityLoggerModalProps> = ({
       setLocation(undefined);
       setLocationMessage('');
       setIsCapturingLocation(false);
+      setPhoto(null);
+      setPhotoMessage('');
+      setIsCompressingPhoto(false);
       locationRequestId.current += 1;
+      photoRequestId.current += 1;
       return;
     }
     setSelectedLeadId(initialLead?.id ?? '');
@@ -74,8 +85,21 @@ export const ActivityLoggerModal: React.FC<ActivityLoggerModalProps> = ({
     setSummaryMessage('');
     setLocation(undefined);
     setLocationMessage('');
+    setPhoto(null);
+    setPhotoMessage('');
     locationRequestId.current += 1;
+    photoRequestId.current += 1;
   }, [isOpen, initialLead?.id]);
+
+  useEffect(() => {
+    if (!photo) {
+      setPhotoPreview(null);
+      return;
+    }
+    const url = URL.createObjectURL(photo);
+    setPhotoPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [photo]);
 
   if (!isOpen) return null;
 
@@ -182,6 +206,24 @@ export const ActivityLoggerModal: React.FC<ActivityLoggerModalProps> = ({
     );
   };
 
+  const handlePhotoSelection = async (file: File | undefined) => {
+    const requestId = ++photoRequestId.current;
+    setPhoto(null);
+    setPhotoMessage('');
+    if (!file) return;
+    setIsCompressingPhoto(true);
+    try {
+      const compressed = await compressActivityPhoto(file);
+      if (requestId !== photoRequestId.current) return;
+      setPhoto(compressed);
+      setPhotoMessage(`Foto diperkecil menjadi ${Math.max(1, Math.round(compressed.size / 1024))} KB dan hanya disimpan di browser ini.`);
+    } catch (error) {
+      if (requestId === photoRequestId.current) setPhotoMessage(error instanceof Error ? error.message : 'Foto tidak dapat diproses.');
+    } finally {
+      if (requestId === photoRequestId.current) setIsCompressingPhoto(false);
+    }
+  };
+
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!selectedLeadId || !notes.trim() || isSubmitting || isSummarizing) return;
@@ -193,6 +235,7 @@ export const ActivityLoggerModal: React.FC<ActivityLoggerModalProps> = ({
         notes: notes.trim(),
         ...(aiSummary.trim() && summarySource ? { ai_summary: aiSummary.trim(), ai_summary_source: summarySource } : {}),
         ...(location ? { location_gps: location } : {}),
+        ...(photo ? { photo } : {}),
       });
       close();
     } catch {
@@ -249,6 +292,18 @@ export const ActivityLoggerModal: React.FC<ActivityLoggerModalProps> = ({
             </div>
             {locationMessage && <p role="status" className="text-[10px] text-[#6b665c]">{locationMessage}</p>}
             {location && <p className="font-mono text-[10px] text-[#1f1f1f]">{location.latitude.toFixed(5)}, {location.longitude.toFixed(5)}</p>}
+          </section>
+
+          <section className="rounded-[12px] border border-[#1f1f1f]/35 bg-[#f8f5ee] p-3 space-y-2.5">
+            <div className="flex items-center gap-2 font-bold text-[#1f1f1f]"><Camera className="w-3.5 h-3.5 text-[#ff4800]" />Foto site visit (opsional)</div>
+            <p className="text-[10px] text-[#6b665c]">Kamera dibuka hanya setelah tombol ditekan. Foto dikompres, maksimal {Math.round(MAX_ACTIVITY_PHOTO_BYTES / 1024)} KB, dan disimpan lokal di browser ini—tidak diunggah ke Firebase.</p>
+            <input id="activity-camera-file" type="file" accept="image/*" capture="environment" disabled={isCompressingPhoto || isSubmitting} onChange={(event) => { void handlePhotoSelection(event.target.files?.[0]); event.currentTarget.value = ''; }} className="sr-only" />
+            <div className="flex flex-wrap items-center gap-2">
+              <label htmlFor="activity-camera-file" className={`inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-[8px] border border-[#1f1f1f] bg-[#fcfcfa] px-3 py-2 font-semibold text-[#1f1f1f] ${isCompressingPhoto || isSubmitting ? 'pointer-events-none opacity-50' : ''}`}><Camera className="h-4 w-4" />{isCompressingPhoto ? 'Memproses foto…' : photo ? 'Ambil foto lain' : 'Buka kamera / pilih foto'}</label>
+              {photo && <button type="button" onClick={() => { setPhoto(null); setPhotoMessage('Foto dihapus; tidak akan disimpan.'); }} className="min-h-11 px-2 font-semibold text-[#9b2c2c]">Hapus foto</button>}
+            </div>
+            {photoPreview && <img src={photoPreview} alt="Pratinjau foto aktivitas" className="max-h-48 w-auto rounded-[8px] border border-[#1f1f1f] object-contain" />}
+            {photoMessage && <p role="status" className="text-[10px] text-[#6b665c]">{photoMessage}</p>}
           </section>
 
           <section className="rounded-[12px] border border-[#1f1f1f]/35 bg-[#f8f5ee] p-3 space-y-2.5">

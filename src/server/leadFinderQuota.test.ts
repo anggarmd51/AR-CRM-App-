@@ -51,17 +51,17 @@ test('shared daily AI quota is transaction-safe and resets on the next UTC day',
   assert.equal(records.size, 2);
 });
 
-test('Lead Finder daily quota rejects invalid limits before any Firestore access', async () => {
+test('daily quota rejects invalid limits before any Firestore access', async () => {
   const { firestore, records } = makeFakeFirestore();
   await assert.rejects(reserveAiUsage(firestore, 'owner', 0), /limit configuration/);
   assert.equal(records.size, 0);
 });
 
-test('Lead Finder and meeting summaries consume the same five-request daily budget', async () => {
+test('daily quota enforces the configured five-request budget', async () => {
   const { firestore } = makeFakeFirestore();
   const ownerUid = 'synthetic-owner-shared-ai-budget';
   const now = new Date('2026-10-28T12:00:00.000Z');
-  const requests = ['lead-finder', 'summarizer', 'lead-finder', 'summarizer', 'lead-finder'];
+  const requests = ['request-1', 'request-2', 'request-3', 'request-4', 'request-5'];
 
   for (const _feature of requests) assert.equal(await reserveAiUsage(firestore, ownerUid, AI_DAILY_LIMIT, now), true);
   assert.equal(await reserveAiUsage(firestore, ownerUid, AI_DAILY_LIMIT, now), false);

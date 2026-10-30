@@ -19,6 +19,15 @@ test('app history removes nested modals in LIFO order without losing the parent'
   assert.equal(getModalLeadId(destination, 'leadDetail'), 'lead-1');
 });
 
+test('mobile Back from an open form keeps its current tab and consumes only the modal entry', () => {
+  const formOpen = createAppHistoryState('pipeline', ['quickLead']);
+  const previous = createAppHistoryState('pipeline');
+  assert.equal(previous.tab, formOpen.tab);
+  assert.deepEqual(getClosedModalNames(formOpen, previous), ['quickLead']);
+  assert.deepEqual(previous.modalStack, []);
+  assert.notEqual(previous.tab, 'dashboard');
+});
+
 test('app history closes multiple removed modal layers from child to parent', () => {
   const previous = createAppHistoryState('dashboard', ['leadDetail', 'whatsapp', 'securitySettings'], ['lead-1', 'lead-1', null]);
   const destination = createAppHistoryState('dashboard');
