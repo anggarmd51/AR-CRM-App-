@@ -15,7 +15,6 @@ import {
   AlertCircle,
   Building2,
   Sparkles,
-  FileSpreadsheet,
 } from 'lucide-react';
 import { Lead, Activity, STAGE_CONFIG, PipelineStage } from '../types/crm.ts';
 import {
@@ -23,6 +22,7 @@ import {
   filterFollowUps,
   formatCurrency,
   formatDateDisplay,
+  formatNumber,
 } from '../utils/crmCalculations.ts';
 
 interface DashboardViewProps {
@@ -34,7 +34,6 @@ interface DashboardViewProps {
   onOpenWhatsApp: (lead: Lead) => void;
   onNavigateToPipeline: () => void;
   onNavigateToFinder: () => void;
-  onExportCsv?: () => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -46,7 +45,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onOpenWhatsApp,
   onNavigateToPipeline,
   onNavigateToFinder,
-  onExportCsv,
 }) => {
   const metrics = calculatePipelineMetrics(leads);
   const followUps = filterFollowUps(leads);
@@ -55,9 +53,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     <div className="space-y-6 pb-24">
       {/* 1. FINANCIAL METRICS HERO */}
       <section className="space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className="text-xl font-bold text-[#1f1f1f] tracking-tight flex items-center gap-2 font-serif-heading">
+            <h2 className="flex min-w-0 items-start gap-2 break-words text-xl font-bold text-[#1f1f1f] tracking-tight flex items-center gap-2 font-serif-heading">
               <TrendingUp className="w-5 h-5 text-[#ff4800]" />
               Financial & Pipeline Forecast
             </h2>
@@ -65,17 +63,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               Real-time revenue forecast and pipeline health across active deals
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            {onExportCsv && (
-              <button
-                onClick={onExportCsv}
-                title="Download CSV Rekapitulasi Leads"
-                className="text-xs font-semibold text-[#1f1f1f] hover:text-[#ff4800] flex items-center gap-1.5 px-3 py-1.5 bg-[#f8f5ee] hover:bg-[#f2ede4] border border-[#1f1f1f] rounded-[8px] transition-all active:scale-95"
-              >
-                <FileSpreadsheet className="w-3.5 h-3.5 text-[#ff4800]" />
-                <span className="hidden sm:inline">Export CSV</span>
-              </button>
-            )}
+          <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={onNavigateToPipeline}
               className="text-xs font-semibold text-[#1f1f1f] hover:text-[#ff4800] flex items-center gap-1 group transition-colors px-3 py-1.5 bg-[#f8f5ee] hover:bg-[#f2ede4] border border-[#1f1f1f] rounded-[8px]"
@@ -94,11 +82,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <span className="text-[11px] font-semibold uppercase tracking-wider">Total Pipeline</span>
               <DollarSign className="w-4 h-4 text-[#ff4800]" />
             </div>
-            <div className="text-lg md:text-xl font-extrabold text-[#1f1f1f]">
+            <div className="break-words text-[15px] sm:text-lg md:text-xl font-extrabold text-[#1f1f1f]">
               {formatCurrency(metrics.totalPipelineValue)}
             </div>
             <div className="text-[11px] text-[#6b665c] mt-0.5">
-              {metrics.totalLeads} accounts registered
+              {formatNumber(metrics.totalLeads)} accounts registered
             </div>
           </div>
 
@@ -108,11 +96,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <span className="text-[11px] font-semibold uppercase tracking-wider">Closed Won</span>
               <CheckCircle2 className="w-4 h-4 text-[#ff4800]" />
             </div>
-            <div className="text-lg md:text-xl font-extrabold text-[#1f1f1f]">
+            <div className="break-words text-[15px] sm:text-lg md:text-xl font-extrabold text-[#1f1f1f]">
               {formatCurrency(metrics.wonValue)}
             </div>
             <div className="text-[11px] text-[#6b665c] mt-0.5 font-medium">
-              Win Rate: {metrics.winRatePercentage}%
+              Win Rate: {formatNumber(metrics.winRatePercentage, { maximumFractionDigits: 1 })}%
             </div>
           </div>
 
@@ -122,11 +110,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <span className="text-[11px] font-semibold uppercase tracking-wider">Active Deals</span>
               <Briefcase className="w-4 h-4 text-[#1f1f1f]" />
             </div>
-            <div className="text-lg md:text-xl font-extrabold text-[#1f1f1f]">
+            <div className="break-words text-[15px] sm:text-lg md:text-xl font-extrabold text-[#1f1f1f]">
               {formatCurrency(metrics.activeValue)}
             </div>
             <div className="text-[11px] text-[#6b665c] mt-0.5">
-              In Prospect / Negot.
+              Prospect / Meeting / Negotiation
             </div>
           </div>
 
@@ -136,7 +124,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <span className="text-[11px] font-semibold uppercase tracking-wider">Weighted Prob.</span>
               <Sparkles className="w-4 h-4 text-[#ff4800]" />
             </div>
-            <div className="text-lg md:text-xl font-extrabold text-[#1f1f1f]">
+            <div className="break-words text-[15px] sm:text-lg md:text-xl font-extrabold text-[#1f1f1f]">
               {formatCurrency(metrics.weightedPipelineValue)}
             </div>
             <div className="text-[11px] text-[#6b665c] mt-0.5 font-medium">
@@ -148,15 +136,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* 2. TODAY'S FOLLOW-UP REMINDERS & ALERTS */}
       <section className="space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex items-center gap-2">
             <CalendarClock className="w-5 h-5 text-[#ff4800]" />
-            <h2 className="text-lg font-bold text-[#1f1f1f] tracking-tight font-serif-heading">
+            <h2 className="break-words text-lg font-bold text-[#1f1f1f] tracking-tight font-serif-heading">
               Action Required: Follow-up Reminders
             </h2>
           </div>
-          <span className="px-2.5 py-0.5 rounded-[4px] text-xs font-bold bg-[#f8f5ee] text-[#1f1f1f] border border-[#1f1f1f]">
-            {followUps.dueToday.length + followUps.overdue.length} Items Due
+          <span className="shrink-0 rounded-[4px] border border-[#1f1f1f] bg-[#f8f5ee] px-2.5 py-0.5 text-xs font-bold">
+            {formatNumber(followUps.dueToday.length + followUps.overdue.length)} Items Due
           </span>
         </div>
 
@@ -165,7 +153,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div className="bg-[#f8f5ee] border border-[#1f1f1f] border-l-4 border-l-[#ff4800] rounded-[16px] p-3.5 flex items-start gap-3">
             <AlertCircle className="w-5 h-5 text-[#ff4800] shrink-0 mt-0.5" />
             <div className="text-xs text-[#1f1f1f]">
-              <span className="font-bold">{followUps.overdue.length} overdue follow-up(s)</span> requiring immediate outreach. Contact these prospects to keep negotiations active.
+              <span className="font-bold">{formatNumber(followUps.overdue.length)} overdue follow-up(s)</span> requiring immediate outreach. Contact these prospects to keep negotiations active.
             </div>
           </div>
         )}
@@ -176,7 +164,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <CheckCircle2 className="w-8 h-8 text-[#ff4800] mx-auto mb-2" />
             <h4 className="text-sm font-bold text-[#1f1f1f] font-serif-heading">All caught up for today</h4>
             <p className="text-xs text-[#6b665c] mt-1 max-w-sm mx-auto">
-              No follow-ups due right now. Next scheduled client touchpoints will trigger automated reminders here.
+              No follow-ups are due right now. Follow-up dates recorded for a lead will appear here when they are due.
             </p>
           </div>
         ) : (
@@ -211,8 +199,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         </span>
                       )}
                       {lead._syncStatus && lead._syncStatus !== 'synced' && (
-                        <span className="text-[10px] bg-[#1f1f1f] text-[#fcfcfa] px-1.5 py-0.5 rounded-[4px] font-mono">
-                          Offline Sync Pending
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded-[4px] font-mono ${lead._syncStatus === 'error' ? 'bg-[#fff5f5] text-[#9b2c2c] border border-[#9b2c2c]/30' : 'bg-[#f8f5ee] text-[#6b3a00] border border-[#d8d1c4]'}`}>
+                          {lead._syncStatus === 'error' ? 'Sync Failed — Review Queue' : 'Awaiting Firestore Ack'}
                         </span>
                       )}
                     </div>
@@ -258,10 +246,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       </button>
                     )}
 
-                    {/* Quick GPS Check-In / Log Activity (Sprout Orange CTA) */}
+                    {/* Quick check-in / log activity (Sprout Orange CTA) */}
                     <button
                       onClick={() => onOpenActivityLogger(lead)}
-                      title="Log Meeting Check-In with GPS"
+                      title="Log Meeting Check-In"
                       className="px-3 py-1.5 rounded-[8px] bg-[#ff4800] hover:bg-[#e03f00] text-white text-xs font-bold flex items-center gap-1.5 transition-all border border-[#1f1f1f]"
                     >
                       <MapPin className="w-3.5 h-3.5" />
@@ -281,7 +269,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <h3 className="text-base font-bold text-[#1f1f1f] tracking-tight font-serif-heading">
             Pipeline Stage Distribution
           </h3>
-          <span className="text-xs text-[#6b665c] font-medium">{metrics.totalLeads} total accounts</span>
+          <span className="text-xs text-[#6b665c] font-medium">{formatNumber(metrics.totalLeads)} total accounts</span>
         </div>
 
         <div className="space-y-3">
@@ -296,8 +284,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     <span>{stage}</span>
                   </div>
                   <div className="flex items-center gap-2 text-[#6b665c]">
-                    <span className="font-bold text-[#1f1f1f]">{count}</span>
-                    <span className="text-[11px]">({pct.toFixed(0)}%)</span>
+                    <span className="font-bold text-[#1f1f1f]">{formatNumber(count)}</span>
+                    <span className="text-[11px]">({formatNumber(pct, { maximumFractionDigits: 0 })}%)</span>
                   </div>
                 </div>
                 <div className="w-full h-2 bg-[#eae4d5] border border-[#1f1f1f]/20 rounded-full overflow-hidden">
@@ -316,10 +304,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* 4. RECENT ACTIVITIES FEED */}
       <section className="space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex items-center gap-2">
             <Clock className="w-5 h-5 text-[#ff4800]" />
-            <h3 className="text-lg font-bold text-[#1f1f1f] tracking-tight font-serif-heading">
+            <h3 className="break-words text-lg font-bold text-[#1f1f1f] tracking-tight font-serif-heading">
               Recent Field Activities & Check-Ins
             </h3>
           </div>
@@ -334,7 +322,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
         {activities.length === 0 ? (
           <div className="bg-[#f8f5ee] border border-[#1f1f1f] rounded-[16px] p-5 text-center text-xs text-[#6b665c]">
-            No field activities logged yet. Tap "New Log" or "Check-In" on any lead to record GPS coordinates and AI notes.
+            No field activities logged yet. Tap "New Log" or "Check-In" on any lead to record notes.
           </div>
         ) : (
           <div className="space-y-2.5">
@@ -352,23 +340,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         <span className="text-[#6b665c] font-medium">• {matchedLead.company_name}</span>
                       )}
                     </div>
-                    {act.location_gps && (
-                      <span className="flex items-center gap-1 font-mono text-[10px] text-[#1f1f1f] bg-[#fcfcfa] border border-[#1f1f1f] px-2.5 py-0.5 rounded-[4px]">
-                        <MapPin className="w-3 h-3 text-[#ff4800]" />
-                        {act.location_gps}
-                      </span>
-                    )}
                   </div>
                   <p className="text-[#1f1f1f] leading-relaxed">{act.notes}</p>
-                  {act.ai_summary && (
-                    <div className="bg-[#fcfcfa] border border-[#1f1f1f] rounded-[8px] p-3 text-[#1f1f1f] text-[11px] whitespace-pre-line">
-                      <span className="font-bold text-[#ff4800] flex items-center gap-1 mb-1">
-                        <Sparkles className="w-3.5 h-3.5" />
-                        AI Action Items:
-                      </span>
-                      {act.ai_summary}
-                    </div>
-                  )}
                 </div>
               );
             })}

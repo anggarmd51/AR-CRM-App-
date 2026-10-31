@@ -1,0 +1,57 @@
+# Firebase staging, backup, dan App Check
+
+**Status 27 Oktober 2026, sekitar 13:52 WIB: owner/workspace dan Rules staging terpisah sudah diprovisikan; App Check/Auth loopback, CRUD sintetis, dan Firestore SDK offline/reload/reconnect/replay sudah terverifikasi.** Seluruh empat dokumen CRM sintetis sudah dibersihkan; root/member owner tetap ada. Hosted Preview, backup/restore, App Check production, production CRUD, dan cutover belum disetujui/diverifikasi; ini bukan production ready. Project production `ar-crm-73222` tidak disentuh. Staging adalah [`ar-crm-staging-angga-20261027`](https://console.firebase.google.com/project/ar-crm-staging-angga-20261027/overview), Firestore `(default)` Standard/Native di `asia-southeast1`. Paket Spark/no-cost telah diverifikasi pada provisioning; metadata akhir `freeTier=true`, PITR disabled. Tidak mengaktifkan billing, Blaze, atau free trial.
+
+Web App ID staging: `1:622108535247:web:b94a1d19f319ec7f200aba`. Rules staging privat mengikat hanya identitas Auth staging dan workspace `ar-crm-staging-owner`, dengan validasi ketat serta delete/membership client tetap ditolak. Root/member dibuat melalui admin create-only, bukan client. Dua indeks query staging sudah READY; Rules/config production repo tidak berubah. Google provider **Enabled** dengan public name `AR CRM Staging`; Authorized Domains tetap `localhost`, `ar-crm-staging-angga-20261027.firebaseapp.com`, dan `ar-crm-staging-angga-20261027.web.app`. Tidak ada custom DNS hostname/hosted deployment. Vercel Preview variables/deployment masih memerlukan persetujuan eksplisit.
+
+**Pembaruan verifikasi:** App Check key `AR CRM Staging Local UID` tetap Web score-based, domain `localhost` saja, domain verification **ENABLED**, AMP/challenges/fixed testing/WAF **OFF**, dan terdaftar pada `AR CRM Staging Web` dengan label **Fraud Defense — Registered**. Public key/UID tidak dicatat. `.env.staging.local` ignored Git, mode `0600`, memakai hanya staging; `.env.local` tidak dibaca/disentuh. Build sanitasi di salinan privat mengecualikan `.env*`/`.npmrc` sumber dan membersihkan environment proses dengan `env -i`; build exit 0 dengan warning chunk. App Check preflight dan Auth owner membuka CRM melalui server loopback-only. Satu pasangan Lead–Activity online dibuat lewat UI, satu pasangan lagi melalui repository asli saat Firestore SDK offline. Reload memulihkan dua operasi, reconnect/readback/replay lulus, timestamp immutable tetap, dan queue berakhir 0 pending/syncing/failed. Ini bukan pemutusan seluruh jaringan browser atau hosted Preview. Admin memverifikasi setiap marker tepat satu sebelum menghapus empat ID fixture dengan precondition `updateTime`; koleksi CRM staging kemudian kosong. Detail sinkronisasi harness dan hasil lokal ada di [status integrasi](FIREBASE_MIGRATION_STATUS.md).
+
+## 1. Staging terpisah dan pencegahan salah arah
+
+Aplikasi lokal tetap memakai Auth dan Firestore Emulator. Pemilihan target fail-closed: development hanya menerima target `local`; Vercel Preview wajib menyatakan `VITE_FIREBASE_TARGET=staging`, project ID staging harus mengikuti pola `ar-crm-staging-<suffix>` dan harus cocok persis dengan `VITE_FIREBASE_STAGING_PROJECT_ID_ALLOWLIST`; known production project `ar-crm-73222` ditolak. Target `production` hanya diterima pada Vercel Production dan hanya dengan project ID `ar-crm-73222`. Guard ini melindungi jalur Firebase Web SDK; ia bukan pengganti pemeriksaan konfigurasi deployment atau kebijakan akses.
+
+Template yang disertakan:
+
+- [`.env.staging.example`](../.env.staging.example) berisi placeholder variabel Firebase dan site key. Vercel Preview Environment tetap memerlukan persetujuan eksplisit sebelum diisi; jangan commit file env berisi nilai aktual.
+- [`.firebaserc.example`](../.firebaserc.example) hanya memiliki alias `staging` placeholder—tidak ada alias default/production. File `.firebaserc` aktif sengaja tidak dibuat.
+- [`firebase.json`](../firebase.json) tetap mengatur rules/indexes lokal dan emulators saja; tidak ditambahkan target hosting atau project production.
+
+Project, Web App, database, Google Auth, App Check localhost, root/member, dan Rules staging tersendiri sudah disiapkan serta diuji. Source mempertahankan binding production dan menyediakan guard workspace staging tetap dengan UID non-production; exact UID staging hanya diikat oleh Rules privat dan env lokal. Jangan men-deploy `firestore.rules` production sebagai Rules staging. Hosted Preview masih memerlukan domain/key yang sesuai serta persetujuan environment/deployment tersendiri. Gunakan data sintetis, bukan salinan production. Semua `VITE_*` dapat masuk ke bundle browser; jangan menaruh private key/service-account, token, atau kredensial di sana.
+
+Variabel minimal staging ditunjukkan di template: `VITE_FIREBASE_TARGET=staging`, konfigurasi Web App staging, exact ID `ar-crm-staging-angga-20261027` di `VITE_FIREBASE_PROJECT_ID` dan `VITE_FIREBASE_STAGING_PROJECT_ID_ALLOWLIST`, `VITE_FIREBASE_WORKSPACE_ID`, `VITE_FIREBASE_OWNER_UID`, dan key publik reCAPTCHA Enterprise. Template tetap placeholder; nilai owner aktual hanya pada env privat yang ignored. Jangan menyalin UID/workspace production. Isi Preview settings hanya setelah otorisasi yang sesuai, bukan pada Production. Jangan menjalankan deploy Vercel Preview sebelum persetujuan eksplisit.
+
+Untuk deployment Production berikutnya, pemilik perlu memastikan `VITE_FIREBASE_TARGET=production` disetel hanya pada environment Vercel Production dan konfigurasi project cocok dengan `ar-crm-73222`; guard akan menolak build hosted jika target tidak eksplisit atau tidak cocok. Pengaturan Production itu belum diubah di sini.
+
+Endpoint cron Firestore-to-Sheets yang sudah ada memiliki target production tetap; guard server-side kini mengembalikan 404 kecuali `VERCEL_ENV=production`. Jangan menyalin secret cron atau service account ke Preview, dan jangan membuat cron staging pada tahap ini.
+
+## 2. Backup dan restore: pilihan realistis di Spark
+
+### Yang tidak tersedia sebagai backup terkelola di Spark
+
+Firestore scheduled backups dan managed export/import memerlukan paket Blaze. Managed export/import juga memerlukan bucket Cloud Storage yang lokasinya sesuai/dekat dengan database. Operasi membaca satu dokumen untuk setiap dokumen yang diekspor dan menulis satu dokumen untuk setiap dokumen yang diimpor. Restore dari scheduled backup membuat database Firestore baru, bukan menimpa database sumber secara langsung. Periksa biaya dan batasan terkini sebelum mengaktifkan Blaze.
+
+Rujukan resmi: [Firestore backups](https://firebase.google.com/docs/firestore/backups) dan [export/import data](https://firebase.google.com/docs/firestore/manage-data/export-import).
+
+### Mitigasi sementara tanpa mengklaim “backup teruji”
+
+Di Spark, ekspor manual yang dimulai pemilik dari aplikasi dapat dipertimbangkan sebagai salinan portabilitas terbatas—hanya untuk dokumen yang dapat dibaca oleh client dan Rules/query yang dipakai. Repo ini belum memiliki backup aplikasi JSON atau jalur restore yang terverifikasi; ekspor manual semacam itu masih rekomendasi, bukan fitur yang sudah disiapkan. Jika kelak dibuat, ekspor itu tetap bukan snapshot atomik terjamin atau backup seluruh project. Rules lokal membatasi data ke workspace tertentu; client juga tidak dapat memulihkan dokumen workspace root atau membership yang hanya boleh diprovisikan melalui jalur administratif. Karena itu, jangan menghapus atau mengubah sumber hanya karena file ekspor berhasil dibuat.
+
+Jika pemilik memilih mitigasi manual: buat ekspor sesudah freeze/catatan waktu yang jelas; catat cakupan koleksi, versi schema, jumlah record, checksum, dan tanggal; simpan file dengan enkripsi kuat pada media privat yang aksesnya dibatasi; lindungi/kelola kunci secara terpisah; tetapkan retensi dan hapus salinan sementara dengan aman. Jangan kirim ekspor berisi data CRM lewat email/chat atau log. Sebelum menyebut ekspor sebagai pemulihan, siapkan prosedur restore terpisah dan uji menggunakan fixture sintetis di Emulator/staging—uji tersebut belum dilakukan di sini.
+
+Google Sheets export yang ada adalah fitur pelaporan/portabilitas, bukan backup: cakupan, tipe data, relasi, metadata, dan kemampuan restore tidak dijamin lengkap. Jangan jadikan Sheets sebagai satu-satunya salinan pemulihan.
+
+### Rekomendasi jangka panjang
+
+Jika kebutuhan pemulihan bisnis memerlukan backup otomatis, evaluasi upgrade Blaze terlebih dahulu, lalu gunakan scheduled Firestore backups atau managed export terjadwal ke bucket privat dengan lokasi sesuai, akses least-privilege, retensi/lifecycle, pemantauan keberhasilan, dan uji restore berkala ke database baru. Siapkan runbook rekonsiliasi dan persetujuan cutover sebelum mengalihkan aplikasi. Backup data Firestore tidak dengan sendirinya memulihkan seluruh Firebase project: Auth users, Rules/indexes, konfigurasi App Check/Auth, dan variabel Vercel perlu inventaris/proteksi terpisah. Jangan mengaktifkan jalur administratif atau menyimpan service-account credential di client.
+
+## 3. App Check staging dalam monitoring saja
+
+Kode memakai `ReCaptchaEnterpriseProvider` hanya untuk target staging. `verifyFirebaseStartup()` membuat provider dan meminta token App Check sebelum Auth/Firestore dapat dibuat. Missing/invalid site key, exception provider, atau token kosong ditangkap sebagai pesan startup yang terkendali dan memblokir request Auth/Firestore; kode tidak fallback dengan melewati App Check. Site key dibaca dari `VITE_FIREBASE_RECAPTCHA_ENTERPRISE_SITE_KEY`; ini key publik, tetapi harus terdaftar untuk project staging dan domain Preview yang digunakan. Tidak ada debugger token atau secret di kode.
+
+**Enforcement tidak dapat dimatikan/diaktifkan oleh kode client ini.** Setelah provider dan key staging disiapkan, pemilik harus membiarkan enforcement Firestore/Auth (atau produk terkait) tetap OFF di Firebase Console, kemudian memantau metrik verifikasi di Console untuk traffic staging terlebih dahulu. Periksa token valid/invalid dan traffic yang belum terverifikasi; jangan mengaktifkan enforcement sampai penyebab request yang tidak terverifikasi dipahami dan pemilik menyetujui perubahan terpisah. Kode sengaja tidak menginisialisasi App Check untuk local atau production.
+
+Rujukan resmi: [App Check web dengan reCAPTCHA Enterprise](https://firebase.google.com/docs/app-check/web/recaptcha-enterprise-provider), [memantau metrik](https://firebase.google.com/docs/app-check/monitor-metrics), dan [mengaktifkan enforcement](https://firebase.google.com/docs/app-check/enable-enforcement).
+
+## Perubahan lokal dan hal yang belum dilakukan
+
+Guard target dan policy App Check berada di `src/firebaseDeploymentGuard.ts`, `src/firebaseAppCheckPolicy.ts`, dan `src/firebase.ts`. Tes sintetis mencakup allowlist/pattern, missing/invalid key, exception provider, token preflight, dan urutan inisialisasi. Suite sesi ini 83/83, lint/TypeScript, Rules Emulator 12/12, smoke Rules staging privat, serta build staging sanitasi lulus. Cloud Firestore dan Authentication tetap **Unenforced**; tidak ada enforcement toggle yang diubah atau metrik monitoring menyeluruh yang diklaim. UID/Rules staging privat, root/member tersedia, dan semua fixture CRM sudah dibersihkan. Vercel Preview/environment, backup/restore, full-browser offline, App Check production, production CRUD, cutover, serta perbaikan dependency High masih menjadi gate. Tidak ada deployment Vercel, perubahan production/`main`, push, merge, migrasi, atau upgrade dependency. Semua perubahan lokal tetap uncommitted.

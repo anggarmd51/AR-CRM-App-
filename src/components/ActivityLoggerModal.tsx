@@ -1,388 +1,335 @@
-import React, { useState, useEffect } from 'react';
-import {
-  X,
-  MapPin,
-  Sparkles,
-  Navigation,
-  Check,
-  Loader2,
-  AlertCircle,
-} from 'lucide-react';
-import { Lead } from '../types/crm.ts';
+import React, { useEffect, useRef, useState } from 'react';
+import { Camera, Check, MapPin, Sparkles, X } from 'lucide-react';
+import { getFirebaseAuth } from '../firebase.ts';
+import { formatMeetingSummary, summarizeMeetingNotesLocally } from '../meetingSummary.ts';
+import type { MeetingSummary } from '../meetingSummary.ts';
+import type { ActivityGpsLocation, ActivitySummarySource, Lead } from '../types/crm.ts';
+import { useModalAccessibility } from '../utils/useModalAccessibility.ts';
+import { compressActivityPhoto, MAX_ACTIVITY_PHOTO_BYTES } from '../utils/activityPhotos.ts';
 
 interface ActivityLoggerModalProps {
   isOpen: boolean;
   onClose: () => void;
   leads: Lead[];
   initialLead?: Lead | null;
+  aiSummarizerEnabled?: boolean;
   onSaveActivity: (activityData: {
     lead_id: string;
     activity_type: string;
     notes: string;
-    ai_summary: string;
-    location_gps: string;
+    ai_summary?: string;
+    ai_summary_source?: ActivitySummarySource;
+    location_gps?: ActivityGpsLocation;
+    photo?: Blob;
   }) => Promise<void>;
 }
+
+const EMPTY_SUMMARY: MeetingSummary = { summary: '', decisions: [], action_items: [] };
 
 export const ActivityLoggerModal: React.FC<ActivityLoggerModalProps> = ({
   isOpen,
   onClose,
   leads,
   initialLead,
+  aiSummarizerEnabled = false,
   onSaveActivity,
 }) => {
-  const [selectedLeadId, setSelectedLeadId] = useState<string>('');
-  const [activityType, setActivityType] = useState<string>('Meeting Check-In');
-  const [notes, setNotes] = useState<string>('');
-  const [aiSummary, setAiSummary] = useState<string>('');
-  const [locationGps, setLocationGps] = useState<string>('');
-  const [isCapturingGps, setIsCapturingGps] = useState(false);
-  const [gpsAccuracy, setGpsAccuracy] = useState<string | null>(null);
-  const [isGeneratingAi, setIsGeneratingAi] = useState(false);
-  const [aiError, setAiError] = useState<string | null>(null);
+  const [selectedLeadId, setSelectedLeadId] = useState('');
+  const [activityType, setActivityType] = useState('Meeting Check-In');
+  const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [aiConsent, setAiConsent] = useState(false);
+  const [aiSummary, setAiSummary] = useState('');
+  const [summarySource, setSummarySource] = useState<ActivitySummarySource | undefined>();
+  const [summaryMessage, setSummaryMessage] = useState('');
+  const [isSummarizing, setIsSummarizing] = useState(false);
+  const [location, setLocation] = useState<ActivityGpsLocation | undefined>();
+  const [locationMessage, setLocationMessage] = useState('');
+  const [isCapturingLocation, setIsCapturingLocation] = useState(false);
+  const [photo, setPhoto] = useState<Blob | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [photoMessage, setPhotoMessage] = useState('');
+  const [isCompressingPhoto, setIsCompressingPhoto] = useState(false);
+  const locationRequestId = useRef(0);
+  const photoRequestId = useRef(0);
+  const closeModal = () => { if (!isSubmitting) { locationRequestId.current += 1; onClose(); } };
+  const { dialogRef } = useModalAccessibility({ isOpen, onClose: closeModal, titleId: 'activity-logger-modal-title' });
 
   useEffect(() => {
-    if (initialLead) {
-      setSelectedLeadId(initialLead.id);
-    } else if (leads.length > 0 && !selectedLeadId) {
-      setSelectedLeadId(leads[0].id);
+    if (!isOpen) {
+      setSelectedLeadId('');
+      setActivityType('Meeting Check-In');
+      setNotes('');
+      setIsSubmitting(false);
+      setAiConsent(false);
+      setAiSummary('');
+      setSummarySource(undefined);
+      setSummaryMessage('');
+      setIsSummarizing(false);
+      setLocation(undefined);
+      setLocationMessage('');
+      setIsCapturingLocation(false);
+      setPhoto(null);
+      setPhotoMessage('');
+      setIsCompressingPhoto(false);
+      locationRequestId.current += 1;
+      photoRequestId.current += 1;
+      return;
     }
-  }, [initialLead, leads]);
+    setSelectedLeadId(initialLead?.id ?? '');
+    setActivityType('Meeting Check-In');
+    setNotes('');
+    setAiConsent(false);
+    setAiSummary('');
+    setSummarySource(undefined);
+    setSummaryMessage('');
+    setLocation(undefined);
+    setLocationMessage('');
+    setPhoto(null);
+    setPhotoMessage('');
+    locationRequestId.current += 1;
+    photoRequestId.current += 1;
+  }, [isOpen, initialLead?.id]);
 
-  // Auto capture GPS on open if not captured yet
   useEffect(() => {
-    if (isOpen && !locationGps) {
-      captureLocation();
+    if (!photo) {
+      setPhotoPreview(null);
+      return;
     }
-  }, [isOpen]);
+    const url = URL.createObjectURL(photo);
+    setPhotoPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [photo]);
 
   if (!isOpen) return null;
 
-  const currentSelectedLead = leads.find((l) => l.id === selectedLeadId) || initialLead;
-
-  // Real GPS Capture using HTML5 Geolocation API
-  const captureLocation = () => {
-    setIsCapturingGps(true);
-    setGpsAccuracy(null);
-
-    if (typeof navigator !== 'undefined' && 'geolocation' in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const lat = position.coords.latitude.toFixed(6);
-          const lng = position.coords.longitude.toFixed(6);
-          setLocationGps(`${lat}, ${lng}`);
-          setGpsAccuracy(`Accurate within ±${Math.round(position.coords.accuracy)}m`);
-          setIsCapturingGps(false);
-        },
-        (err) => {
-          console.warn('Geolocation failed or permission denied:', err.message);
-          setLocationGps('-6.223150, 106.829120');
-          setGpsAccuracy('Jakarta CBD (Kuningan Tech Hub)');
-          setIsCapturingGps(false);
-        },
-        { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
-      );
-    } else {
-      setLocationGps('-6.208800, 106.845600');
-      setGpsAccuracy('Preset City Hub');
-      setIsCapturingGps(false);
-    }
+  const close = () => {
+    locationRequestId.current += 1;
+    onClose();
   };
 
-  const applyPresetLocation = (name: string, coords: string) => {
-    setLocationGps(coords);
-    setGpsAccuracy(name);
+  const updateNotes = (value: string) => {
+    setNotes(value);
+    setAiConsent(false);
+    setAiSummary('');
+    setSummarySource(undefined);
+    setSummaryMessage('');
   };
 
-  const handleGenerateAiSummary = async () => {
-    if (!notes.trim()) {
-      setAiError('Please enter your field notes first.');
+  const handleLocalSummary = () => {
+    const extracted = summarizeMeetingNotesLocally(notes);
+    if (!extracted) {
+      setSummaryMessage('Tambahkan catatan terlebih dahulu.');
       return;
     }
+    setAiSummary(formatMeetingSummary({ ...EMPTY_SUMMARY, summary: extracted }));
+    setSummarySource('local');
+    setSummaryMessage('Ringkasan lokal ekstraktif: hanya memilih teks yang sudah ada; tidak dikirim ke layanan AI.');
+  };
 
-    setAiError(null);
-    setIsGeneratingAi(true);
-
+  const handleAiSummary = async () => {
+    if (!aiSummarizerEnabled || !aiConsent || !notes.trim() || isSummarizing) return;
+    setIsSummarizing(true);
+    setSummaryMessage('Mengirim catatan yang disetujui ke Gemini untuk diringkas…');
+    setAiSummary('');
+    setSummarySource(undefined);
     try {
+      const currentUser = getFirebaseAuth().currentUser;
+      if (!currentUser) throw new Error('Sesi owner tidak tersedia.');
+      const idToken = await currentUser.getIdToken();
       const response = await fetch('/api/ai/summarize-notes', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          rawNotes: notes,
-          contactPerson: currentSelectedLead?.contact_person,
-          companyName: currentSelectedLead?.company_name,
-          activityType,
-        }),
+        credentials: 'same-origin',
+        cache: 'no-store',
+        referrerPolicy: 'no-referrer',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ notes: notes.trim() }),
       });
-
-      if (!response.ok) {
-        throw new Error(`Failed to generate summary: ${response.statusText}`);
+      const payload = await response.json().catch(() => null) as { summary?: MeetingSummary; error?: string } | null;
+      if (!response.ok || !payload?.summary) {
+        throw new Error(payload?.error || 'Gemini tidak menyediakan ringkasan yang dapat diperiksa.');
       }
-
-      const data = await response.json();
-      const formatted = `${data.summary || ''}\n\nKey Action Items:\n${data.actionItems || ''}`.trim();
+      const formatted = formatMeetingSummary(payload.summary);
+      if (!formatted || formatted.length > 4_000) throw new Error('Ringkasan Gemini berada di luar batas aman.');
       setAiSummary(formatted);
-    } catch (e: any) {
-      console.error('AI summary error:', e);
-      setAiError('Generated offline action items.');
-      setAiSummary(`• Interaction with ${currentSelectedLead?.contact_person || 'client'} completed.\n• Review points: ${notes.slice(0, 120)}...\n• Action Item: Follow up on next scheduled date.`);
+      setSummarySource('gemini');
+      setSummaryMessage('Ringkasan Gemini dibuat dari catatan yang Anda setujui. Periksa atau edit sebelum menyimpan.');
+    } catch {
+      const extracted = summarizeMeetingNotesLocally(notes);
+      if (extracted) {
+        setAiSummary(formatMeetingSummary({ ...EMPTY_SUMMARY, summary: extracted }));
+        setSummarySource('local');
+        setSummaryMessage('Gemini gagal atau tidak diizinkan; ringkasan lokal ekstraktif ditampilkan. Jika layanan sempat dipanggil, catatan mungkin telah dikirim ke Gemini.');
+      } else {
+        setSummaryMessage('Ringkasan AI tidak tersedia dan catatan belum cukup untuk fallback lokal.');
+      }
     } finally {
-      setIsGeneratingAi(false);
+      setIsSummarizing(false);
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedLeadId) return;
+  const handleCaptureLocation = () => {
+    if (!navigator.geolocation) {
+      setLocationMessage('Browser ini tidak menyediakan geolokasi.');
+      return;
+    }
+    const requestId = ++locationRequestId.current;
+    setIsCapturingLocation(true);
+    setLocationMessage('Meminta satu kali lokasi dari browser…');
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        if (requestId !== locationRequestId.current) return;
+        const captured = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracy_m: Math.round(position.coords.accuracy),
+        };
+        setLocation(captured);
+        setLocationMessage(`Lokasi siap disimpan bersama aktivitas ini (akurasi ±${captured.accuracy_m} m).`);
+        setIsCapturingLocation(false);
+      },
+      (error) => {
+        if (requestId !== locationRequestId.current) return;
+        const message = error.code === error.PERMISSION_DENIED
+          ? 'Izin lokasi ditolak; tidak ada koordinat yang disimpan.'
+          : error.code === error.TIMEOUT
+            ? 'Permintaan lokasi timeout; coba lagi jika diperlukan.'
+            : 'Lokasi tidak tersedia; tidak ada koordinat yang disimpan.';
+        setLocation(undefined);
+        setLocationMessage(message);
+        setIsCapturingLocation(false);
+      },
+      { enableHighAccuracy: true, timeout: 15_000, maximumAge: 0 },
+    );
+  };
 
+  const handlePhotoSelection = async (file: File | undefined) => {
+    const requestId = ++photoRequestId.current;
+    setPhoto(null);
+    setPhotoMessage('');
+    if (!file) return;
+    setIsCompressingPhoto(true);
+    try {
+      const compressed = await compressActivityPhoto(file);
+      if (requestId !== photoRequestId.current) return;
+      setPhoto(compressed);
+      setPhotoMessage(`Foto diperkecil menjadi ${Math.max(1, Math.round(compressed.size / 1024))} KB dan hanya disimpan di browser ini.`);
+    } catch (error) {
+      if (requestId === photoRequestId.current) setPhotoMessage(error instanceof Error ? error.message : 'Foto tidak dapat diproses.');
+    } finally {
+      if (requestId === photoRequestId.current) setIsCompressingPhoto(false);
+    }
+  };
+
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!selectedLeadId || !notes.trim() || isSubmitting || isSummarizing) return;
     setIsSubmitting(true);
     try {
       await onSaveActivity({
         lead_id: selectedLeadId,
         activity_type: activityType,
         notes: notes.trim(),
-        ai_summary: aiSummary.trim(),
-        location_gps: locationGps.trim(),
+        ...(aiSummary.trim() && summarySource ? { ai_summary: aiSummary.trim(), ai_summary_source: summarySource } : {}),
+        ...(location ? { location_gps: location } : {}),
+        ...(photo ? { photo } : {}),
       });
-      onClose();
+      close();
+    } catch {
+      // The app-level save handler reports the Firestore/outbox error.
     } finally {
       setIsSubmitting(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#1f1f1f]/50 backdrop-blur-xs overflow-y-auto">
-      {/* 16px radius, warm cream background, 1px hairline border */}
-      <div className="bg-[#fcfcfa] border border-[#1f1f1f] rounded-[16px] w-full max-w-lg overflow-hidden my-8">
-        {/* Header */}
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#1f1f1f]/50 backdrop-blur-xs overflow-y-auto" role="presentation">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="activity-logger-modal-title" tabIndex={-1} className="bg-[#fcfcfa] border border-[#1f1f1f] rounded-[16px] w-full max-w-lg max-h-[calc(100dvh-2rem)] flex flex-col overflow-hidden my-2">
         <div className="px-5 py-4 border-b border-[#1f1f1f] flex items-center justify-between bg-[#f8f5ee]">
           <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-[8px] bg-[#1f1f1f] text-[#ff4800]">
-              <MapPin className="w-5 h-5" />
-            </div>
+            <div className="p-2 rounded-[8px] bg-[#1f1f1f] text-[#ff4800]"><MapPin className="w-5 h-5" /></div>
             <div>
-              <h3 className="font-bold text-[#1f1f1f] text-base font-serif-heading">Activity Logger & Check-In</h3>
-              <p className="text-xs text-[#6b665c]">GPS location capture & AI meeting note summarizer</p>
+              <h3 id="activity-logger-modal-title" className="font-bold text-[#1f1f1f] text-base font-serif-heading">Activity Logger</h3>
+              <p className="text-xs text-[#6b665c]">GPS hanya sekali saat diminta; AI hanya setelah persetujuan.</p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-[8px] hover:bg-[#eae4d5] text-[#1f1f1f] transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <button type="button" onClick={close} disabled={isSubmitting} aria-label="Tutup Activity Logger" className="min-h-11 min-w-11 flex items-center justify-center rounded-[8px] hover:bg-[#eae4d5] text-[#1f1f1f] transition-colors"><X className="w-5 h-5" /></button>
         </div>
 
-        {/* Form Body */}
-        <form onSubmit={handleSubmit} className="p-5 space-y-4 text-xs">
-          {/* Target Lead Selector */}
+        <form onSubmit={handleSubmit} className="p-5 space-y-4 text-xs overflow-y-auto">
           <div className="space-y-1.5">
-            <label className="text-[#1f1f1f] font-semibold block">Select Account / Lead</label>
-            <select
-              value={selectedLeadId}
-              onChange={(e) => setSelectedLeadId(e.target.value)}
-              required
-              className="w-full bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] px-3 py-2.5 text-xs text-[#1f1f1f] font-medium focus:outline-none focus:bg-[#fcfcfa]"
-            >
-              <option value="" disabled>
-                -- Choose Lead --
-              </option>
-              {leads.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.company_name} ({l.contact_person} - {l.city})
-                </option>
-              ))}
+            <label htmlFor="activity-lead" className="text-[#1f1f1f] font-semibold block">Select Account / Lead</label>
+            <select id="activity-lead" value={selectedLeadId} onChange={(event) => setSelectedLeadId(event.target.value)} required className="w-full bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] px-3 py-2.5 text-xs text-[#1f1f1f] font-medium focus:outline-none focus:bg-[#fcfcfa]">
+              <option value="" disabled>-- Choose Lead --</option>
+              {leads.map((lead) => <option key={lead.id} value={lead.id}>{lead.company_name} ({lead.contact_person} - {lead.city})</option>)}
             </select>
           </div>
 
-          {/* Activity Type (8px radius) */}
           <div className="space-y-1.5">
             <label className="text-[#1f1f1f] font-semibold block">Activity Type</label>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
-              {[
-                'Meeting Check-In',
-                'Phone Call',
-                'WhatsApp Message',
-                'Proposal Sent',
-                'Site Visit',
-              ].map((type) => (
-                <button
-                  key={type}
-                  type="button"
-                  onClick={() => setActivityType(type)}
-                  className={`py-2 px-2.5 rounded-[8px] border text-center transition-all ${
-                    activityType === type
-                      ? 'bg-[#1f1f1f] border-[#1f1f1f] text-white font-bold'
-                      : 'bg-[#f8f5ee] border-[#1f1f1f] text-[#1f1f1f] hover:bg-[#eae4d5]'
-                  }`}
-                >
-                  {type}
-                </button>
+              {['Meeting Check-In', 'Phone Call', 'WhatsApp Message', 'Proposal Sent', 'Site Visit'].map((type) => (
+                <button key={type} type="button" onClick={() => setActivityType(type)} className={`py-2 px-2.5 rounded-[8px] border text-center transition-all ${activityType === type ? 'bg-[#1f1f1f] border-[#1f1f1f] text-white font-bold' : 'bg-[#f8f5ee] border-[#1f1f1f] text-[#1f1f1f] hover:bg-[#eae4d5]'}`}>{type}</button>
               ))}
             </div>
           </div>
 
-          {/* GPS Coordinate Capture */}
-          <div className="space-y-2 bg-[#f8f5ee] border border-[#1f1f1f] rounded-[12px] p-3.5">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-2">
-                <span className="text-[#1f1f1f] font-bold flex items-center gap-1.5">
-                  <Navigation className="w-3.5 h-3.5 text-[#ff4800]" />
-                  GPS Location Check-In
-                </span>
-                {locationGps && !isCapturingGps && (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-[4px] bg-[#edf7f1] text-[#155e3c] border border-[#155e3c]/40 font-bold text-[10px] animate-in fade-in">
-                    <Check className="w-3 h-3 stroke-[3]" />
-                    GPS Locked
-                  </span>
-                )}
-              </div>
-              <button
-                type="button"
-                onClick={captureLocation}
-                disabled={isCapturingGps}
-                className="text-[11px] font-bold text-[#1f1f1f] hover:text-[#ff4800] flex items-center gap-1 bg-[#fcfcfa] border border-[#1f1f1f] px-2.5 py-1 rounded-[6px] transition-colors"
-              >
-                {isCapturingGps ? (
-                  <>
-                    <Loader2 className="w-3 h-3 animate-spin text-[#ff4800]" />
-                    <span>Locating...</span>
-                  </>
-                ) : (
-                  <>
-                    <MapPin className="w-3 h-3 text-[#ff4800]" />
-                    <span>Re-capture GPS</span>
-                  </>
-                )}
-              </button>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                placeholder="Latitude, Longitude"
-                value={locationGps}
-                onChange={(e) => setLocationGps(e.target.value)}
-                className="flex-1 bg-[#fcfcfa] border border-[#1f1f1f] rounded-[6px] px-3 py-1.5 text-xs text-[#1f1f1f] font-mono focus:outline-none"
-              />
-            </div>
-
-            {gpsAccuracy && (
-              <div className="text-[10px] text-[#6b665c] flex items-center justify-between font-medium">
-                <span className="flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#155e3c]"></span>
-                  <span>Accuracy: {gpsAccuracy}</span>
-                </span>
-                {locationGps && (
-                  <a
-                    href={`https://maps.google.com/?q=${locationGps}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-[#ff4800] font-semibold underline"
-                  >
-                    View Map
-                  </a>
-                )}
-              </div>
-            )}
-
-            {/* Quick Preset Buttons (4px radius) */}
-            <div className="flex items-center gap-1.5 flex-wrap pt-1">
-              <span className="text-[10px] text-[#6b665c] font-medium">Presets:</span>
-              {[
-                { name: 'SCBD Jakarta', coords: '-6.2241, 106.8093' },
-                { name: 'Kuningan', coords: '-6.2231, 106.8291' },
-                { name: 'Surabaya CBD', coords: '-7.2575, 112.7521' },
-              ].map((preset) => (
-                <button
-                  key={preset.name}
-                  type="button"
-                  onClick={() => applyPresetLocation(preset.name, preset.coords)}
-                  className="text-[10px] bg-[#fcfcfa] hover:bg-[#eae4d5] text-[#1f1f1f] font-semibold px-2 py-0.5 rounded-[4px] border border-[#1f1f1f]"
-                >
-                  {preset.name}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Raw Meeting Notes Input */}
           <div className="space-y-1.5">
-            <label className="text-[#1f1f1f] font-semibold block">Raw Field Notes</label>
-            <textarea
-              rows={3}
-              placeholder="e.g., Met with client VP at office. Reviewed Q4 supply chain pilot. Client liked fleet monitoring, asked for 5% volume discount, wants proposal by Friday."
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              required
-              className="w-full bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] p-3 text-xs text-[#1f1f1f] placeholder-[#6b665c] focus:outline-none focus:bg-[#fcfcfa] resize-none"
-            />
-            {/* Action Bar below Raw Notes: Natural user flow after typing notes */}
-            <div className="flex items-center justify-between pt-1">
-              <span className="text-[11px] text-[#6b665c]">
-                {notes.trim().length > 0 ? `${notes.trim().length} chars entered` : 'Enter notes then trigger AI summarizer'}
-              </span>
-              <button
-                type="button"
-                onClick={handleGenerateAiSummary}
-                disabled={isGeneratingAi || !notes.trim()}
-                className="flex items-center gap-1.5 text-xs font-bold text-[#1f1f1f] bg-[#f8f5ee] hover:bg-[#f2ede4] border border-[#1f1f1f] px-3 py-1.5 rounded-[8px] transition-all disabled:opacity-40 active:scale-95"
-              >
-                {isGeneratingAi ? (
-                  <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin text-[#ff4800]" />
-                    <span>AI Processing...</span>
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-3.5 h-3.5 text-[#ff4800]" />
-                    <span>Generate AI Action Items</span>
-                  </>
-                )}
-              </button>
-            </div>
+            <label htmlFor="activity-notes" className="text-[#1f1f1f] font-semibold block">Field Notes</label>
+            <textarea id="activity-notes" rows={4} maxLength={12_000} placeholder="Masukkan catatan aktivitas untuk record CRM." value={notes} onChange={(event) => updateNotes(event.target.value)} required className="w-full bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] p-3 text-xs text-[#1f1f1f] placeholder-[#6b665c] focus:outline-none focus:bg-[#fcfcfa] resize-none" />
+            <p className="text-[10px] text-[#6b665c]">Catatan asli tersimpan di CRM; Gemini tidak dipanggil otomatis.</p>
           </div>
 
-          {aiError && (
-            <div className="p-2.5 bg-[#fff5f0] border border-[#ff4800]/50 rounded-[8px] text-[#1f1f1f] text-[11px] flex items-center gap-2">
-              <AlertCircle className="w-3.5 h-3.5 text-[#ff4800] shrink-0" />
-              <span>{aiError}</span>
+          <section className="rounded-[12px] border border-[#1f1f1f]/35 bg-[#f8f5ee] p-3 space-y-2.5">
+            <div className="flex items-center gap-2 font-bold text-[#1f1f1f]"><MapPin className="w-3.5 h-3.5 text-[#ff4800]" />Lokasi check-in (opsional)</div>
+            <p className="text-[10px] text-[#6b665c]">Koordinat hanya diambil setelah Anda menekan tombol; tidak ada pelacakan latar belakang. Jika disimpan, lokasi tersimpan pada aktivitas dan dapat dibuka di peta.</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" onClick={handleCaptureLocation} disabled={isCapturingLocation || isSubmitting} className="rounded-[8px] border border-[#1f1f1f] bg-[#fcfcfa] px-3 py-2 font-semibold text-[#1f1f1f] disabled:opacity-50">{isCapturingLocation ? 'Meminta lokasi…' : location ? 'Ambil ulang lokasi' : 'Ambil GPS sekali'}</button>
+              {location && <button type="button" onClick={() => { setLocation(undefined); setLocationMessage('Lokasi dihapus; aktivitas ini tidak menyimpan GPS.'); }} className="rounded-[8px] px-2 py-2 font-semibold text-[#9b2c2c]">Hapus lokasi</button>}
             </div>
-          )}
+            {locationMessage && <p role="status" className="text-[10px] text-[#6b665c]">{locationMessage}</p>}
+            {location && <p className="font-mono text-[10px] text-[#1f1f1f]">{location.latitude.toFixed(5)}, {location.longitude.toFixed(5)}</p>}
+          </section>
 
-          {/* AI-Generated Action Items & Summary Preview */}
-          <div className="space-y-1.5">
-            <label className="text-[#1f1f1f] font-semibold flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-[#ff4800]" />
-              <span>AI Executive Summary & Action Items</span>
-            </label>
-            <textarea
-              rows={3}
-              placeholder="AI summary and concrete action items will appear here after clicking 'Generate AI Action Items'..."
-              value={aiSummary}
-              onChange={(e) => setAiSummary(e.target.value)}
-              className="w-full bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] p-3 text-xs text-[#1f1f1f] placeholder-[#6b665c] focus:outline-none focus:bg-[#fcfcfa] resize-none font-sans"
-            />
-          </div>
+          <section className="rounded-[12px] border border-[#1f1f1f]/35 bg-[#f8f5ee] p-3 space-y-2.5">
+            <div className="flex items-center gap-2 font-bold text-[#1f1f1f]"><Camera className="w-3.5 h-3.5 text-[#ff4800]" />Foto site visit (opsional)</div>
+            <p className="text-[10px] text-[#6b665c]">Kamera dibuka hanya setelah tombol ditekan. Foto dikompres, maksimal {Math.round(MAX_ACTIVITY_PHOTO_BYTES / 1024)} KB, dan disimpan lokal di browser ini—tidak diunggah ke Firebase.</p>
+            <input id="activity-camera-file" type="file" accept="image/*" capture="environment" disabled={isCompressingPhoto || isSubmitting} onChange={(event) => { void handlePhotoSelection(event.target.files?.[0]); event.currentTarget.value = ''; }} className="sr-only" />
+            <div className="flex flex-wrap items-center gap-2">
+              <label htmlFor="activity-camera-file" className={`inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-[8px] border border-[#1f1f1f] bg-[#fcfcfa] px-3 py-2 font-semibold text-[#1f1f1f] ${isCompressingPhoto || isSubmitting ? 'pointer-events-none opacity-50' : ''}`}><Camera className="h-4 w-4" />{isCompressingPhoto ? 'Memproses foto…' : photo ? 'Ambil foto lain' : 'Buka kamera / pilih foto'}</label>
+              {photo && <button type="button" onClick={() => { setPhoto(null); setPhotoMessage('Foto dihapus; tidak akan disimpan.'); }} className="min-h-11 px-2 font-semibold text-[#9b2c2c]">Hapus foto</button>}
+            </div>
+            {photoPreview && <img src={photoPreview} alt="Pratinjau foto aktivitas" className="max-h-48 w-auto rounded-[8px] border border-[#1f1f1f] object-contain" />}
+            {photoMessage && <p role="status" className="text-[10px] text-[#6b665c]">{photoMessage}</p>}
+          </section>
 
-          {/* Action Buttons: 8px radius */}
+          <section className="rounded-[12px] border border-[#1f1f1f]/35 bg-[#f8f5ee] p-3 space-y-2.5">
+            <div className="flex items-center gap-2 font-bold text-[#1f1f1f]"><Sparkles className="w-3.5 h-3.5 text-[#ff4800]" />Ringkasan rapat</div>
+            <p className="text-[10px] text-[#6b665c]">Fallback lokal mengekstrak maksimal tiga kalimat tanpa mengirim data atau memakai kuota. Gemini berbagi batas lima permintaan harian dengan Lead Finder.</p>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={handleLocalSummary} disabled={!notes.trim() || isSummarizing} className="rounded-[8px] border border-[#1f1f1f] bg-[#fcfcfa] px-3 py-2 font-semibold text-[#1f1f1f] disabled:opacity-50">Ringkas lokal</button>
+              {aiSummarizerEnabled && <button type="button" onClick={() => void handleAiSummary()} disabled={!notes.trim() || !aiConsent || isSummarizing} className="rounded-[8px] border border-[#1f1f1f] bg-[#1f1f1f] px-3 py-2 font-semibold text-white disabled:opacity-50">{isSummarizing ? 'Memproses…' : 'Kirim ke Gemini'}</button>}
+            </div>
+            {aiSummarizerEnabled ? (
+              <label className="flex items-start gap-2 text-[10px] text-[#1f1f1f]">
+                <input type="checkbox" checked={aiConsent} onChange={(event) => setAiConsent(event.target.checked)} disabled={isSummarizing} className="mt-0.5" />
+                <span>Saya menyetujui pengiriman catatan saat ini ke Gemini untuk diringkas. Jangan sertakan informasi sensitif yang tidak diperlukan.</span>
+              </label>
+            ) : <p className="text-[10px] text-[#6b665c]">Gemini dinonaktifkan pada deployment ini; ringkasan lokal tetap tersedia.</p>}
+            {summaryMessage && <p role="status" className="text-[10px] text-[#6b665c]">{summaryMessage}</p>}
+            {aiSummary && <div className="space-y-1.5">
+              <label htmlFor="activity-summary" className="text-[10px] font-semibold text-[#1f1f1f]">{summarySource === 'gemini' ? 'Hasil Gemini (dapat diedit)' : 'Hasil lokal (dapat diedit)'}</label>
+              <textarea id="activity-summary" rows={4} maxLength={4_000} value={aiSummary} onChange={(event) => setAiSummary(event.target.value)} className="w-full rounded-[8px] border border-[#1f1f1f] bg-[#fcfcfa] p-2 text-[11px] text-[#1f1f1f]" />
+              <button type="button" onClick={() => { setAiSummary(''); setSummarySource(undefined); }} className="text-[10px] font-semibold text-[#9b2c2c] underline">Jangan simpan ringkasan</button>
+            </div>}
+          </section>
+
           <div className="flex items-center justify-end gap-2 pt-3 border-t border-[#1f1f1f]/10">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 rounded-[8px] text-[#6b665c] hover:text-[#1f1f1f] font-semibold transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isSubmitting || !selectedLeadId || !notes.trim()}
-              className="bg-[#ff4800] hover:bg-[#e03f00] text-white font-bold px-5 py-2.5 rounded-[8px] border border-[#1f1f1f] flex items-center gap-1.5 transition-all disabled:opacity-50"
-            >
-              <Check className="w-4 h-4 stroke-[2.5]" />
-              <span>{isSubmitting ? 'Saving...' : 'Save Check-In'}</span>
-            </button>
+            <button type="button" onClick={close} disabled={isSubmitting} className="px-4 py-2 rounded-[8px] text-[#6b665c] hover:text-[#1f1f1f] font-semibold transition-colors">Cancel</button>
+            <button type="submit" disabled={isSubmitting || isSummarizing || !selectedLeadId || !notes.trim()} className="bg-[#ff4800] hover:bg-[#e03f00] text-white font-bold px-5 py-2.5 rounded-[8px] border border-[#1f1f1f] flex items-center gap-1.5 transition-all disabled:opacity-50"><Check className="w-4 h-4 stroke-[2.5]" /><span>{isSubmitting ? 'Saving…' : 'Save Activity'}</span></button>
           </div>
         </form>
       </div>

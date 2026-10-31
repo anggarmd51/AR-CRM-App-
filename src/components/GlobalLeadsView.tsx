@@ -1,536 +1,244 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
-  Compass,
-  Search,
-  Download,
+  AlertTriangle,
   Building2,
+  HardDrive,
   MapPin,
-  Phone,
-  Mail,
-  CheckCircle2,
-  ArrowRight,
-  Filter,
-  DollarSign,
-  Sparkles,
-  UserCheck,
+  Pencil,
+  Plus,
+  Save,
+  Search,
   ShieldCheck,
-  TrendingUp,
-  RotateCcw,
-  Loader2,
-  Layers,
+  Trash2,
+  X,
 } from 'lucide-react';
-import { GlobalLead, Lead } from '../types/crm.ts';
-import { searchAndEnrichProspects } from '../utils/aiLeadEnrichment.ts';
-import { formatCurrency } from '../utils/crmCalculations.ts';
+import {
+  deleteLocalProspect,
+  readLocalProspects,
+  saveLocalProspect,
+  searchLocalProspects,
+  writeLocalProspects,
+  type LocalProspectInput,
+  type LocalProspectRecord,
+} from '../utils/localProspectDirectory.ts';
 
-interface GlobalLeadsViewProps {
-  personalLeads: Lead[];
-  globalLeads?: GlobalLead[];
-  onImportGlobalLead: (lead: GlobalLead) => void;
-  onNavigateToPipeline: () => void;
-}
+const EMPTY_FORM: LocalProspectInput = {
+  companyName: '',
+  industry: '',
+  city: '',
+  notes: '',
+};
 
-const SAMPLE_AI_QUERIES = [
-  'Manufaktur di Medan',
-  'Klinik Kecantikan Jakarta',
-  'Distributor F&B Surabaya',
-  'Logistik & Cold Chain',
-  'Fintech & Payment Gateway',
-];
+const inputClassName = 'w-full rounded-[8px] border border-[#1f1f1f]/35 bg-white px-3 py-2.5 text-sm text-[#1f1f1f] placeholder:text-[#8b8579] focus:border-[#ff4800] focus:outline-none focus:ring-2 focus:ring-[#ff4800]/20';
 
-export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({
-  personalLeads,
-  globalLeads = [],
-  onImportGlobalLead,
-  onNavigateToPipeline,
-}) => {
-  // Search input state
-  const [aiSearchInput, setAiSearchInput] = useState('');
-  const [activeQuery, setActiveQuery] = useState('');
-  
-  // Loading & View state
-  const [isScanning, setIsScanning] = useState(false);
-  const [scanStepIndex, setScanStepIndex] = useState(0);
-  const [viewSource, setViewSource] = useState<'ai' | 'standard'>('ai');
-  const [enrichedResults, setEnrichedResults] = useState<GlobalLead[]>([]);
-  
-  // Secondary Filters
-  const [selectedIndustry, setSelectedIndustry] = useState<string>('all');
-  const [dealValueFilter, setDealValueFilter] = useState<'all' | '50m' | '100m'>('all');
-  const [importingId, setImportingId] = useState<string | null>(null);
+export const GlobalLeadsView: React.FC = () => {
+  const [prospects, setProspects] = useState<LocalProspectRecord[]>(() => readLocalProspects());
+  const [query, setQuery] = useState('');
+  const [form, setForm] = useState<LocalProspectInput>(EMPTY_FORM);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [storageWarning, setStorageWarning] = useState<string | null>(null);
 
-  // Initialize with initial AI prospect directory
-  useEffect(() => {
-    const initialLeads = searchAndEnrichProspects('');
-    setEnrichedResults(initialLeads);
-  }, []);
-
-  // Names of companies already in personal CRM pipeline
-  const personalCompanyNames = new Set(
-    personalLeads.map((l) => l.company_name.toLowerCase().trim())
+  const visibleProspects = useMemo(
+    () => searchLocalProspects(prospects, query),
+    [prospects, query],
   );
 
-  // Handle AI Search Execution
-  const handleRunAiSearch = (queryToRun?: string) => {
-    const query = (queryToRun !== undefined ? queryToRun : aiSearchInput).trim();
-    if (!query) return;
+  const persist = (next: LocalProspectRecord[]) => {
+    setProspects(next);
+    setStorageWarning(writeLocalProspects(next)
+      ? null
+      : 'Penyimpanan browser tidak tersedia. Perubahan ini hanya bertahan selama halaman masih terbuka.');
+  };
 
-    if (queryToRun !== undefined) {
-      setAiSearchInput(queryToRun);
+  const startAdd = () => {
+    setEditingId(null);
+    setForm({ ...EMPTY_FORM });
+    setFormError(null);
+    setFormOpen(true);
+  };
+
+  const startEdit = (record: LocalProspectRecord) => {
+    setEditingId(record.id);
+    setForm({
+      companyName: record.companyName,
+      industry: record.industry,
+      city: record.city,
+      notes: record.notes,
+    });
+    setFormError(null);
+    setFormOpen(true);
+  };
+
+  const closeForm = () => {
+    setFormOpen(false);
+    setEditingId(null);
+    setFormError(null);
+  };
+
+  const handleSave = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    try {
+      persist(saveLocalProspect(prospects, form, { id: editingId ?? undefined }));
+      closeForm();
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : 'Catatan tidak dapat disimpan.');
     }
-    setActiveQuery(query);
-    setViewSource('ai');
-    setIsScanning(true);
-    setScanStepIndex(0);
-
-    // Realistic scanning phase animations
-    const step1Timer = setTimeout(() => setScanStepIndex(1), 400);
-    const step2Timer = setTimeout(() => setScanStepIndex(2), 850);
-
-    const finishTimer = setTimeout(() => {
-      const results = searchAndEnrichProspects(query);
-      setEnrichedResults(results);
-      setIsScanning(false);
-    }, 1250);
-
-    return () => {
-      clearTimeout(step1Timer);
-      clearTimeout(step2Timer);
-      clearTimeout(finishTimer);
-    };
   };
 
-  const handleResetSearch = () => {
-    setAiSearchInput('');
-    setActiveQuery('');
-    setSelectedIndustry('all');
-    setDealValueFilter('all');
-    setEnrichedResults(searchAndEnrichProspects(''));
+  const handleDelete = (record: LocalProspectRecord) => {
+    if (!window.confirm(`Hapus catatan lokal “${record.companyName}” dari browser ini?`)) return;
+    persist(deleteLocalProspect(prospects, record.id));
+    if (editingId === record.id) closeForm();
   };
-
-  // Determine active dataset based on tab
-  const currentDataset = viewSource === 'ai' ? enrichedResults : globalLeads;
-
-  // Extract unique industries for filter dropdown
-  const industries = [
-    'all',
-    ...Array.from(new Set(currentDataset.map((l) => l.industry))),
-  ];
-
-  // Filter leads based on secondary filters
-  const displayedLeads = currentDataset.filter((lead) => {
-    const matchesIndustry =
-      selectedIndustry === 'all' || lead.industry === selectedIndustry;
-
-    const estimatedVal = Number(lead.estimated_value) || 0;
-    const matchesValue =
-      dealValueFilter === 'all' ||
-      (dealValueFilter === '50m' && estimatedVal >= 50_000_000) ||
-      (dealValueFilter === '100m' && estimatedVal >= 100_000_000);
-
-    return matchesIndustry && matchesValue;
-  });
-
-  const handleImport = async (lead: GlobalLead) => {
-    const targetId = lead.id || lead.company_name;
-    setImportingId(targetId);
-    await onImportGlobalLead(lead);
-    setTimeout(() => {
-      setImportingId(null);
-    }, 600);
-  };
-
-  const scanningSteps = [
-    'AI sedang memindai direktori B2B & profil perusahaan...',
-    'Memperkaya profil decision maker & memverifikasi direct dial/email...',
-    'Menghitung AI Match Score & estimasi potensi nilai deal...',
-  ];
 
   return (
     <div className="space-y-4 pb-24">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#1f1f1f]/10 pb-3">
+      <header className="flex flex-col gap-3 border-b border-[#1f1f1f]/10 pb-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="flex items-center gap-2">
-            <span className="p-1 bg-[#1f1f1f] text-white rounded-[6px]">
-              <Sparkles className="w-4 h-4 text-[#ff4800]" />
+            <span className="rounded-[6px] bg-[#1f1f1f] p-1 text-white">
+              <Search className="h-4 w-4 text-[#ff4800]" />
             </span>
-            <h2 className="text-xl font-bold text-[#1f1f1f] tracking-tight font-serif-heading">
-              AI Lead Finder & Enrichment
+            <h2 className="text-xl font-bold tracking-tight text-[#1f1f1f] font-serif-heading">
+              Direktori Prospek Lokal
             </h2>
           </div>
-          <p className="text-xs text-[#6b665c] mt-0.5">
-            Pindai prospek korporat B2B, temukan pengambil keputusan terverifikasi, dan masukkan ke pipeline dengan 1-click
+          <p className="mt-1 text-xs text-[#6b665c]">
+            Mode demo berbasis sampel fiktif. Pencarian dan perubahan berjalan di browser ini saja.
           </p>
         </div>
-
         <button
-          onClick={onNavigateToPipeline}
-          className="self-start sm:self-auto text-xs font-semibold text-[#1f1f1f] hover:text-[#ff4800] flex items-center gap-1.5 px-3 py-1.5 bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] group transition-all"
+          type="button"
+          onClick={startAdd}
+          className="inline-flex min-h-11 items-center justify-center gap-2 rounded-[8px] border border-[#1f1f1f] bg-[#ff4800] px-4 py-2 text-sm font-bold text-white hover:bg-[#e03f00]"
         >
-          <span>Sales Pipeline ({personalLeads.length})</span>
-          <ArrowRight className="w-3.5 h-3.5 text-[#ff4800] group-hover:translate-x-0.5 transition-transform" />
+          <Plus className="h-4 w-4" />
+          Tambah catatan lokal
         </button>
-      </div>
+      </header>
 
-      {/* AI Prospecting Search Bar (AR CRM Design System) */}
-      <div className="bg-[#f8f5ee] border border-[#1f1f1f] rounded-[16px] p-4 space-y-3 shadow-none">
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-          {/* Text Input with prompt */}
-          <div className="relative flex-1">
-            <Search className="w-4 h-4 absolute left-3 top-3 text-[#6b665c]" />
-            <input
-              type="text"
-              placeholder="Cari industri/niche target (contoh: Manufaktur di Medan, Klinik Kecantikan, Distributor F&B)"
-              value={aiSearchInput}
-              onChange={(e) => setAiSearchInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  handleRunAiSearch();
-                }
-              }}
-              className="w-full bg-[#fcfcfa] border border-[#1f1f1f] rounded-[8px] pl-9 pr-3 py-2.5 text-xs text-[#1f1f1f] placeholder-[#6b665c] focus:outline-none focus:ring-1 focus:ring-[#ff4800]"
-            />
-          </div>
-
-          {/* AI Search CTA Button */}
-          <button
-            onClick={() => handleRunAiSearch()}
-            disabled={isScanning || !aiSearchInput.trim()}
-            className="flex items-center justify-center gap-2 bg-[#ff4800] hover:bg-[#e03f00] disabled:bg-[#ff4800]/50 text-white text-xs font-bold px-4 py-2.5 rounded-[8px] border border-[#1f1f1f] transition-all active:scale-[0.98] shrink-0"
-          >
-            {isScanning ? (
-              <>
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                <span>Memindai AI...</span>
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>Cari Prospek dengan AI</span>
-              </>
-            )}
-          </button>
-        </div>
-
-        {/* Quick Sample Queries / Chips */}
-        <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
-          <span className="text-[11px] font-semibold text-[#6b665c] mr-1">Rekomendasi Niche:</span>
-          {SAMPLE_AI_QUERIES.map((q) => (
-            <button
-              key={q}
-              onClick={() => handleRunAiSearch(q)}
-              className="text-[11px] font-medium bg-[#fcfcfa] hover:bg-[#f2ede4] text-[#1f1f1f] px-2.5 py-1 rounded-[6px] border border-[#1f1f1f]/50 hover:border-[#1f1f1f] transition-all"
-            >
-              {q}
-            </button>
-          ))}
-          {activeQuery && (
-            <button
-              onClick={handleResetSearch}
-              className="text-[11px] text-[#ff4800] hover:underline flex items-center gap-1 ml-auto font-medium"
-            >
-              <RotateCcw className="w-3 h-3" />
-              <span>Reset Pencarian</span>
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* AI Scanning / Enrichment Animation Banner */}
-      {isScanning && (
-        <div className="bg-[#f8f5ee] border border-[#ff4800] rounded-[12px] p-4 flex items-center gap-3.5 animate-pulse">
-          <div className="w-8 h-8 rounded-full bg-[#ff4800] flex items-center justify-center text-white shrink-0">
-            <Sparkles className="w-4 h-4 animate-spin" />
-          </div>
-          <div className="flex-1 space-y-1">
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-bold text-[#1f1f1f]">
-                AI sedang memindai dan memperkaya data prospek...
-              </p>
-              <span className="text-[10px] font-mono font-bold text-[#ff4800]">
-                {scanStepIndex + 1}/3
-              </span>
-            </div>
-            <p className="text-[11px] text-[#6b665c]">
-              {scanningSteps[scanStepIndex]}
+      <section role="note" aria-label="Batasan data direktori lokal" className="space-y-2 rounded-[12px] border border-[#9b2c2c]/35 bg-[#fff5f0] p-4">
+        <div className="flex items-start gap-2">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[#9b2c2c]" />
+          <div className="space-y-1">
+            <p className="text-xs font-bold text-[#1f1f1f]">Data demo, bukan daftar perusahaan nyata atau prospek terverifikasi</p>
+            <p className="text-[11px] leading-4 text-[#6b665c]">
+              Seluruh sampel bersifat fiktif. Catatan yang Anda tambahkan di sini juga hanya catatan lokal untuk latihan; fitur ini tidak menyatakan bahwa data tersebut nyata atau siap dipakai sebagai data prospek operasional.
             </p>
           </div>
         </div>
+        <p className="flex items-start gap-2 text-[11px] leading-4 text-[#6b665c]">
+          <HardDrive className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>Disimpan hanya di penyimpanan browser ini, tidak disinkronkan ke Firebase atau CRM, dan dapat hilang jika penyimpanan browser dibersihkan.</span>
+        </p>
+        {storageWarning && <p role="status" className="text-[11px] font-semibold text-[#9b2c2c]">{storageWarning}</p>}
+      </section>
+
+      <section className="rounded-[12px] border border-[#1f1f1f]/15 bg-[#f8f5ee] p-3 sm:p-4">
+        <label htmlFor="local-prospect-search" className="mb-1.5 block text-xs font-bold text-[#1f1f1f]">Cari dalam direktori lokal</label>
+        <div className="relative">
+          <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#6b665c]" />
+          <input
+            id="local-prospect-search"
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Cari nama contoh, kategori, kota, atau catatan"
+            className={`${inputClassName} pl-9`}
+          />
+        </div>
+        <p className="mt-2 text-[11px] text-[#6b665c]" aria-live="polite">
+          {visibleProspects.length} dari {prospects.length} catatan lokal
+        </p>
+      </section>
+
+      {formOpen && (
+        <section className="rounded-[12px] border border-[#1f1f1f] bg-[#f8f5ee] p-4">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h3 className="text-sm font-bold text-[#1f1f1f]">{editingId ? 'Edit catatan lokal' : 'Tambah catatan lokal'}</h3>
+            <button type="button" onClick={closeForm} aria-label="Tutup formulir" className="grid h-9 w-9 place-items-center rounded-[8px] border border-[#1f1f1f]/20 bg-white text-[#1f1f1f] hover:border-[#ff4800]">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <form onSubmit={handleSave} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <label className="space-y-1 text-xs font-semibold text-[#6b665c]">
+              <span>Nama contoh (fiktif) <span aria-hidden="true">*</span></span>
+              <input required maxLength={120} value={form.companyName} onChange={(event) => setForm((current) => ({ ...current, companyName: event.target.value }))} placeholder="Contoh: Perusahaan Fiktif — Mentari" className={inputClassName} />
+            </label>
+            <label className="space-y-1 text-xs font-semibold text-[#6b665c]">
+              <span>Kategori simulasi <span aria-hidden="true">*</span></span>
+              <input required maxLength={80} value={form.industry} onChange={(event) => setForm((current) => ({ ...current, industry: event.target.value }))} placeholder="Contoh: Simulasi ritel" className={inputClassName} />
+            </label>
+            <label className="space-y-1 text-xs font-semibold text-[#6b665c]">
+              <span>Kota contoh <span aria-hidden="true">*</span></span>
+              <input required maxLength={80} value={form.city} onChange={(event) => setForm((current) => ({ ...current, city: event.target.value }))} placeholder="Contoh: Semarang" className={inputClassName} />
+            </label>
+            <label className="space-y-1 text-xs font-semibold text-[#6b665c] sm:col-span-2">
+              <span>Catatan simulasi</span>
+              <textarea maxLength={300} rows={3} value={form.notes} onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))} placeholder="Opsional; jangan masukkan data CRM atau informasi pribadi." className={`${inputClassName} resize-y`} />
+            </label>
+            <p className="text-[11px] leading-4 text-[#6b665c] sm:col-span-2">
+              Hindari memasukkan data orang, kontak, informasi rahasia, atau data prospek nyata. Status setiap catatan tetap <strong>Perlu Verifikasi Manual</strong>.
+            </p>
+            {formError && <p role="alert" className="text-xs font-semibold text-[#9b2c2c] sm:col-span-2">{formError}</p>}
+            <div className="flex flex-col-reverse gap-2 sm:col-span-2 sm:flex-row sm:justify-end">
+              <button type="button" onClick={closeForm} className="min-h-11 rounded-[8px] border border-[#1f1f1f]/30 bg-white px-4 py-2 text-sm font-semibold text-[#1f1f1f] hover:border-[#1f1f1f]">Batal</button>
+              <button type="submit" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-[8px] border border-[#1f1f1f] bg-[#1f1f1f] px-4 py-2 text-sm font-bold text-white hover:bg-[#393939]">
+                <Save className="h-4 w-4" />
+                Simpan di browser ini
+              </button>
+            </div>
+          </form>
+        </section>
       )}
 
-      {/* Source Selector & Secondary Filters Row */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 pt-1">
-        {/* Dataset Source Toggle */}
-        <div className="flex items-center gap-1 bg-[#f8f5ee] border border-[#1f1f1f] p-1 rounded-[8px] self-start">
-          <button
-            onClick={() => setViewSource('ai')}
-            className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-[6px] transition-all ${
-              viewSource === 'ai'
-                ? 'bg-[#1f1f1f] text-white'
-                : 'text-[#6b665c] hover:text-[#1f1f1f]'
-            }`}
-          >
-            <Sparkles className="w-3 h-3 text-[#ff4800]" />
-            <span>AI Discovered ({enrichedResults.length})</span>
-          </button>
-          <button
-            onClick={() => setViewSource('standard')}
-            className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-[6px] transition-all ${
-              viewSource === 'standard'
-                ? 'bg-[#1f1f1f] text-white'
-                : 'text-[#6b665c] hover:text-[#1f1f1f]'
-            }`}
-          >
-            <Layers className="w-3 h-3" />
-            <span>Sheet Global Leads ({globalLeads.length})</span>
-          </button>
-        </div>
-
-        {/* Secondary Filters: Industry & Deal Value */}
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Industry Filter Dropdown */}
-          <div className="flex items-center gap-1.5 bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] px-2.5 py-1.5">
-            <Filter className="w-3.5 h-3.5 text-[#6b665c]" />
-            <select
-              value={selectedIndustry}
-              onChange={(e) => setSelectedIndustry(e.target.value)}
-              aria-label="Filter by industry"
-              className="bg-transparent text-xs text-[#1f1f1f] font-semibold focus:outline-none cursor-pointer"
-            >
-              <option value="all">Semua Industri</option>
-              {industries.filter((i) => i !== 'all').map((ind) => (
-                <option key={ind} value={ind}>
-                  {ind}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Deal Value Filter Dropdown */}
-          <div className="flex items-center gap-1.5 bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] px-2.5 py-1.5">
-            <DollarSign className="w-3.5 h-3.5 text-[#ff4800]" />
-            <select
-              value={dealValueFilter}
-              onChange={(e) => setDealValueFilter(e.target.value as 'all' | '50m' | '100m')}
-              aria-label="Filter by deal value"
-              className="bg-transparent text-xs text-[#1f1f1f] font-semibold focus:outline-none cursor-pointer"
-            >
-              <option value="all">Semua Nilai</option>
-              <option value="50m">&gt; Rp 50 Juta</option>
-              <option value="100m">&gt; Rp 100 Juta</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      {/* Results Count & Query Notice */}
-      <div className="flex items-center justify-between text-xs text-[#6b665c] px-0.5">
-        <span>
-          Menampilkan <strong className="text-[#1f1f1f]">{displayedLeads.length}</strong> prospek B2B
-          {activeQuery && (
-            <span>
-              {' '}untuk kata kunci &ldquo;<strong className="text-[#1f1f1f]">{activeQuery}</strong>&rdquo;
-            </span>
-          )}
-        </span>
-        <span className="text-[11px] flex items-center gap-1 font-medium text-[#1f1f1f]">
-          <ShieldCheck className="w-3.5 h-3.5 text-[#155e3c]" />
-          Verified Decision Makers
-        </span>
-      </div>
-
-      {/* AR CRM Enriched Lead Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-        {displayedLeads.map((lead) => {
-          const isAlreadyInPipeline = personalCompanyNames.has(
-            lead.company_name.toLowerCase().trim()
-          );
-          const isCurrentlyImporting = importingId === (lead.id || lead.company_name);
-          const initials =
-            lead.company_initials ||
-            lead.company_name
-              .replace(/^(PT|CV|UD)\s+/i, '')
-              .split(' ')
-              .map((w) => w[0])
-              .slice(0, 2)
-              .join('')
-              .toUpperCase();
-
-          return (
-            <div
-              key={lead.id || lead.company_name}
-              className={`border border-[#1f1f1f] rounded-[16px] p-4 flex flex-col justify-between transition-all ${
-                isAlreadyInPipeline
-                  ? 'bg-[#fcfcfa]'
-                  : 'bg-[#f8f5ee] hover:bg-[#f4efe5]'
-              }`}
-            >
+      {visibleProspects.length > 0 ? (
+        <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2">
+          {visibleProspects.map((record) => (
+            <article key={record.id} className="flex min-w-0 flex-col justify-between rounded-[12px] border border-[#1f1f1f]/25 bg-[#fcfcfa] p-4">
               <div className="space-y-3">
-                {/* Company Header with Logo/Initials and AI Score */}
-                <div className="flex items-start justify-between gap-2.5">
-                  <div className="flex items-start gap-2.5">
-                    {/* Company Monogram Badge */}
-                    <div className="w-9 h-9 rounded-[8px] bg-[#fcfcfa] border border-[#1f1f1f] flex items-center justify-center font-bold text-xs text-[#1f1f1f] font-mono shrink-0">
-                      {initials}
-                    </div>
-
-                    <div>
-                      <h3 className="font-bold text-[#1f1f1f] text-sm sm:text-base font-serif-heading leading-tight">
-                        {lead.company_name}
-                      </h3>
-                      <div className="flex items-center gap-2 mt-0.5 text-xs text-[#6b665c]">
-                        <span className="flex items-center gap-1">
-                          <Building2 className="w-3 h-3 text-[#1f1f1f]/50" />
-                          {lead.industry}
-                        </span>
-                        <span>•</span>
-                        <span className="flex items-center gap-1">
-                          <MapPin className="w-3 h-3 text-[#1f1f1f]/50" />
-                          {lead.city}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* AI Match Score Badge (AR CRM Intelligence) */}
-                  {lead.ai_match_score ? (
-                    <div className="flex flex-col items-end shrink-0">
-                      <span className="text-[10px] font-bold text-[#ff4800] bg-[#fff5f0] border border-[#ff4800]/40 px-2 py-0.5 rounded-[4px] flex items-center gap-1">
-                        <TrendingUp className="w-3 h-3" />
-                        {lead.ai_match_score}% {lead.intent_level || 'Match'}
-                      </span>
-                      {lead.employee_count && (
-                        <span className="text-[10px] text-[#6b665c] mt-0.5 font-medium">
-                          {lead.employee_count}
-                        </span>
-                      )}
-                    </div>
-                  ) : (
-                    <span className="text-[10px] font-semibold bg-[#fcfcfa] border border-[#1f1f1f] px-2 py-0.5 rounded-[4px]">
-                      Verified Lead
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 items-start gap-2.5">
+                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[8px] border border-[#1f1f1f]/20 bg-[#f8f5ee]">
+                      <Building2 className="h-4 w-4 text-[#6b665c]" />
                     </span>
-                  )}
-                </div>
-
-                {/* Decision Maker Section (AR CRM Verified Profile) */}
-                <div className="bg-[#fcfcfa] border border-[#1f1f1f] rounded-[8px] p-2.5 space-y-1.5">
-                  <div className="flex items-center justify-between gap-1 flex-wrap">
-                    <div className="flex items-center gap-1.5">
-                      <UserCheck className="w-3.5 h-3.5 text-[#ff4800]" />
-                      <span className="text-xs font-bold text-[#1f1f1f]">
-                        {lead.contact_person}
-                      </span>
+                    <div className="min-w-0">
+                      <h3 className="break-words text-sm font-bold leading-5 text-[#1f1f1f] font-serif-heading">{record.companyName}</h3>
+                      <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[#6b665c]">
+                        <span>{record.industry}</span>
+                        <span aria-hidden="true">·</span>
+                        <span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3" />{record.city}</span>
+                      </p>
                     </div>
-                    {lead.decision_maker_title && (
-                      <span className="text-[10px] font-semibold bg-[#f8f5ee] border border-[#1f1f1f]/60 text-[#1f1f1f] px-2 py-0.5 rounded-[4px]">
-                        {lead.decision_maker_title}
-                      </span>
-                    )}
                   </div>
-
-                  {/* Contact verification row */}
-                  <div className="flex items-center gap-3 text-[11px] text-[#1f1f1f] flex-wrap pt-0.5 border-t border-[#1f1f1f]/10">
-                    <div className="flex items-center gap-1">
-                      <Phone className="w-3 h-3 text-[#155e3c]" />
-                      <span className="font-mono">{lead.phone}</span>
-                    </div>
-
-                    {lead.email && (
-                      <div className="flex items-center gap-1">
-                        <Mail className="w-3 h-3 text-[#ff4800]" />
-                        <span className="font-mono">{lead.email}</span>
-                      </div>
-                    )}
-
-                    <span className="text-[9px] font-bold text-[#155e3c] bg-[#edf7f1] border border-[#155e3c]/30 px-1.5 py-0.2 rounded-[3px] ml-auto">
-                      VERIFIED DIRECT
-                    </span>
-                  </div>
+                  <span className="max-w-28 shrink-0 rounded-[4px] border border-[#1f1f1f]/20 bg-[#f8f5ee] px-2 py-1 text-center text-[10px] font-semibold leading-3 text-[#6b665c]">
+                    {record.origin === 'sample' ? 'Sampel fiktif' : 'Catatan lokal'}
+                  </span>
                 </div>
-
-                {/* AI Intelligence Insights (AR CRM Analytics) */}
-                {lead.insights && (
-                  <p className="text-[11px] text-[#6b665c] italic border-l-2 border-[#ff4800] pl-2 py-0.5 leading-snug">
-                    {lead.insights}
-                  </p>
-                )}
-
-                {/* Deal Value & Tags row */}
-                <div className="flex items-center justify-between gap-2 pt-0.5">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    {lead.tags &&
-                      lead.tags.map((tag) => (
-                        <span
-                          key={tag}
-                          className="text-[10px] font-semibold bg-[#fcfcfa] text-[#1f1f1f] px-2 py-0.5 rounded-[4px] border border-[#1f1f1f]/60"
-                        >
-                          {tag}
-                        </span>
-                      ))}
-                  </div>
-
-                  {lead.estimated_value && (
-                    <div className="text-right shrink-0">
-                      <span className="text-[10px] text-[#6b665c] block uppercase tracking-wider font-semibold">
-                        Est. Deal Size
-                      </span>
-                      <span className="text-xs font-mono font-bold text-[#1f1f1f] bg-[#fcfcfa] border border-[#1f1f1f] px-2 py-0.5 rounded-[4px]">
-                        {formatCurrency(lead.estimated_value)}
-                      </span>
-                    </div>
-                  )}
-                </div>
+                {record.notes && <p className="break-words border-l-2 border-[#ff4800] pl-2 text-[11px] leading-4 text-[#6b665c]">{record.notes}</p>}
+                <p className="inline-flex items-center gap-1.5 rounded-[4px] border border-[#9b2c2c]/25 bg-[#fff5f0] px-2 py-1 text-[10px] font-bold text-[#9b2c2c]">
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  Perlu Verifikasi Manual
+                </p>
               </div>
-
-              {/* Action Button: 8px radius with Sprout Orange */}
-              <div className="pt-3 mt-3 border-t border-[#1f1f1f]/10 flex items-center justify-between">
-                <span className="text-[11px] text-[#6b665c] font-medium">
-                  {isAlreadyInPipeline ? 'Tersimpan di CRM Sales' : 'Siap dikonversi ke pipeline'}
-                </span>
-
-                {isAlreadyInPipeline ? (
-                  <button
-                    disabled
-                    className="flex items-center gap-1.5 bg-[#fcfcfa] border border-[#1f1f1f] text-[#1f1f1f] text-xs font-bold px-3 py-1.5 rounded-[8px] cursor-default opacity-90"
-                  >
-                    <CheckCircle2 className="w-3.5 h-3.5 text-[#ff4800]" />
-                    <span>In Pipeline</span>
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => handleImport(lead)}
-                    disabled={isCurrentlyImporting}
-                    className="flex items-center gap-1.5 bg-[#ff4800] hover:bg-[#e03f00] text-white text-xs font-bold px-4 py-2 rounded-[8px] border border-[#1f1f1f] transition-all active:scale-95 disabled:opacity-50"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    <span>{isCurrentlyImporting ? 'Mengimpor...' : 'Import ke Pipeline'}</span>
-                  </button>
-                )}
+              <div className="mt-4 flex flex-col gap-2 border-t border-[#1f1f1f]/10 pt-3 min-[380px]:flex-row min-[380px]:justify-end">
+                <button type="button" onClick={() => startEdit(record)} className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-[8px] border border-[#1f1f1f]/25 bg-white px-3 py-2 text-xs font-semibold text-[#1f1f1f] hover:border-[#ff4800]">
+                  <Pencil className="h-3.5 w-3.5" /> Edit
+                </button>
+                <button type="button" onClick={() => handleDelete(record)} className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-[8px] border border-[#9b2c2c]/30 bg-white px-3 py-2 text-xs font-semibold text-[#9b2c2c] hover:border-[#9b2c2c]">
+                  <Trash2 className="h-3.5 w-3.5" /> Hapus
+                </button>
               </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Empty State */}
-      {displayedLeads.length === 0 && !isScanning && (
-        <div className="border border-[#1f1f1f] rounded-[16px] bg-[#f8f5ee] p-8 text-center space-y-3">
-          <div className="w-10 h-10 rounded-full bg-[#fcfcfa] border border-[#1f1f1f] flex items-center justify-center mx-auto text-[#6b665c]">
-            <Search className="w-5 h-5" />
-          </div>
-          <div>
-            <h4 className="font-bold text-sm text-[#1f1f1f]">Tidak ada prospek yang sesuai</h4>
-            <p className="text-xs text-[#6b665c] max-w-sm mx-auto mt-1">
-              Coba gunakan kata kunci industri lain atau ubah filter nilai deal di atas.
-            </p>
-          </div>
-          <button
-            onClick={handleResetSearch}
-            className="text-xs font-bold text-[#ff4800] hover:underline"
-          >
-            Tampilkan Semua Prospek Rekomendasi
-          </button>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-[12px] border border-[#1f1f1f]/20 bg-[#f8f5ee] px-5 py-10 text-center">
+          <Search className="mx-auto h-6 w-6 text-[#6b665c]" />
+          <h3 className="mt-3 text-sm font-bold text-[#1f1f1f]">Tidak ada catatan yang cocok</h3>
+          <p className="mt-1 text-xs text-[#6b665c]">Coba kata pencarian lain atau tambahkan catatan simulasi lokal.</p>
         </div>
       )}
     </div>

@@ -6,6 +6,10 @@ import {
   cleanPhoneNumber,
   generateWhatsAppUrl,
   toDateStringOnly,
+  formatCurrency,
+  formatDateDisplay,
+  formatDateTimeDisplay,
+  formatNumber,
 } from './crmCalculations.ts';
 import { Lead } from '../types/crm.ts';
 
@@ -72,10 +76,10 @@ const mockLeads: Lead[] = [
   },
 ];
 
-test('calculatePipelineMetrics computes correct totals, stages and win rate', () => {
+test('calculatePipelineMetrics excludes Closing Lost value and preserves other stage totals', () => {
   const metrics = calculatePipelineMetrics(mockLeads);
   assert.equal(metrics.totalLeads, 5);
-  assert.equal(metrics.totalPipelineValue, 125000); // 10k + 20k + 30k + 50k + 15k
+  assert.equal(metrics.totalPipelineValue, 110000); // 10k + 20k + 30k + 50k; excludes lost 15k
   assert.equal(metrics.wonValue, 50000);
   assert.equal(metrics.activeValue, 60000); // 10k (Prospect) + 20k (Meeting) + 30k (Negotiation)
   // Weighted: 10000*0.2 + 20000*0.5 + 30000*0.8 = 2000 + 10000 + 24000 = 36000
@@ -118,8 +122,34 @@ test('generateWhatsAppUrl builds valid wa.me link with encoded template', () => 
 });
 
 test('toDateStringOnly handles ISO and YYYY-MM-DD correctly', () => {
-  assert.equal(toDateStringOnly('2026-10-24T17:00:00.000Z'), '2026-10-24');
+  assert.equal(toDateStringOnly('2026-10-24T17:00:00.000Z'), '2026-10-25');
   assert.equal(toDateStringOnly('2026-10-25'), '2026-10-25');
   assert.equal(toDateStringOnly(undefined), null);
   assert.equal(toDateStringOnly('invalid-date'), null);
+});
+
+test('calendar dates stay unchanged while timestamps use the Asia/Jakarta calendar day', () => {
+  assert.equal(toDateStringOnly('2026-10-24'), '2026-10-24');
+  assert.equal(toDateStringOnly('2026-10-24T16:30:00.000Z'), '2026-10-24');
+  assert.equal(toDateStringOnly('2026-10-24T17:30:00.000Z'), '2026-10-25');
+  assert.equal(toDateStringOnly('2026-02-30'), null);
+});
+
+test('filterFollowUps compares date-only and timestamp values by Indonesian local day', () => {
+  const boundaryLeads = [
+    { ...mockLeads[0], id: 'timestamp-today', next_followup_date: '2026-10-25T17:30:00.000Z' },
+    { ...mockLeads[1], id: 'calendar-today', next_followup_date: '2026-10-26' },
+    { ...mockLeads[2], id: 'timestamp-overdue', next_followup_date: '2026-10-24T16:30:00.000Z' },
+  ];
+  const categories = filterFollowUps(boundaryLeads, '2026-10-25T18:00:00.000Z');
+
+  assert.deepEqual(categories.dueToday.map((lead) => lead.id), ['timestamp-today', 'calendar-today']);
+  assert.deepEqual(categories.overdue.map((lead) => lead.id), ['timestamp-overdue']);
+});
+
+test('number, currency, and date displays use Indonesian locale formatting', () => {
+  assert.equal(formatNumber(1_234_567.8, { maximumFractionDigits: 1 }), '1.234.567,8');
+  assert.equal(formatCurrency(1_234_567_890), 'Rp\u00a01.234.567.890');
+  assert.equal(formatDateDisplay('2026-10-25'), '25 Okt 2026');
+  assert.equal(formatDateTimeDisplay('2026-10-24T16:30:00.000Z'), '24 Okt 2026, 23.30');
 });

@@ -3,40 +3,65 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { lazy, Suspense, useState, useEffect, useCallback, useRef } from 'react';
 import { TopAppBar } from './components/TopAppBar.tsx';
 import { BottomNavBar, NavTab } from './components/BottomNavBar.tsx';
-import { DashboardView } from './components/DashboardView.tsx';
-import { PipelineKanbanView } from './components/PipelineKanbanView.tsx';
-import { GlobalLeadsView } from './components/GlobalLeadsView.tsx';
-import { ActivitiesListView } from './components/ActivitiesListView.tsx';
-import { AndroidCodeExplorer } from './components/AndroidCodeExplorer.tsx';
-import { QuickLeadModal } from './components/QuickLeadModal.tsx';
-import { ActivityLoggerModal } from './components/ActivityLoggerModal.tsx';
-import { LeadDetailModal } from './components/LeadDetailModal.tsx';
-import { WhatsAppModal } from './components/WhatsAppModal.tsx';
-import { SecurityLockScreen } from './components/SecurityLockScreen.tsx';
-import { SecuritySettingsModal } from './components/SecuritySettingsModal.tsx';
 import { AndroidFrame } from './components/AndroidFrame.tsx';
-import { Lead, Activity, GlobalLead, PipelineStage } from './types/crm.ts';
-import { CrmStorage, syncEngine } from './utils/syncQueue.ts';
-import { filterFollowUps } from './utils/crmCalculations.ts';
+import { Lead, Activity, LeadCorrection, PipelineStage, ActivityGpsLocation, ActivitySummarySource, WonDealArchiveRecord } from './types/crm.ts';
+import { filterFollowUps, formatNumber } from './utils/crmCalculations.ts';
 import { downloadLeadsCsv } from './utils/exportCsv.ts';
+import { downloadLeadsExcel } from './utils/exportExcel.ts';
+import { downloadLocalCrmExport } from './utils/exportJson.ts';
 import { SecurityVault } from './utils/securityLock.ts';
 import { CheckCircle2 } from 'lucide-react';
+import { firebaseTarget, getFirebaseAuth, workspaceId } from './firebase.ts';
+import { shouldUseLocalSecurityVault } from './localSecurityPolicy.ts';
+import { createActivity, createLead, deleteLead, subscribeToActivities, subscribeToLeads, subscribeToWonDealArchives, updateLeadDetails, updateLeadStage } from './firebaseRepository.ts';
+import { OptimisticLeadStageOverlay, type LeadSnapshotState } from './utils/optimisticLeadStages.ts';
+import { firestoreWriteQueue, type SyncQueueSnapshot } from './utils/offlineWriteQueue.ts';
+import { reconcileDocumentSyncStatuses } from './utils/syncStatus.ts';
+import { storeActivityPhoto } from './utils/activityPhotos.ts';
+import { canonicalizeModalHistoryState, createAppHistoryState, getModalLeadId, readAppHistoryState, type AppHistoryState, type AppModalName } from './utils/appHistory.ts';
+const DashboardView = lazy(() => import('./components/DashboardView.tsx').then(({ DashboardView }) => ({ default: DashboardView })));
+const PipelineKanbanView = lazy(() => import('./components/PipelineKanbanView.tsx').then(({ PipelineKanbanView }) => ({ default: PipelineKanbanView })));
+const GlobalLeadsView = lazy(() => import('./components/GlobalLeadsView.tsx').then(({ GlobalLeadsView }) => ({ default: GlobalLeadsView })));
+const ActivitiesListView = lazy(() => import('./components/ActivitiesListView.tsx').then(({ ActivitiesListView }) => ({ default: ActivitiesListView })));
+const AndroidCodeExplorer = lazy(() => import('./components/AndroidCodeExplorer.tsx').then(({ AndroidCodeExplorer }) => ({ default: AndroidCodeExplorer })));
+const QuickLeadModal = lazy(() => import('./components/QuickLeadModal.tsx').then(({ QuickLeadModal }) => ({ default: QuickLeadModal })));
+const ActivityLoggerModal = lazy(() => import('./components/ActivityLoggerModal.tsx').then(({ ActivityLoggerModal }) => ({ default: ActivityLoggerModal })));
+const LeadDetailModal = lazy(() => import('./components/LeadDetailModal.tsx').then(({ LeadDetailModal }) => ({ default: LeadDetailModal })));
+const WhatsAppModal = lazy(() => import('./components/WhatsAppModal.tsx').then(({ WhatsAppModal }) => ({ default: WhatsAppModal })));
+const SecurityLockScreen = lazy(() => import('./components/SecurityLockScreen.tsx').then(({ SecurityLockScreen }) => ({ default: SecurityLockScreen })));
+const SecuritySettingsModal = lazy(() => import('./components/SecuritySettingsModal.tsx').then(({ SecuritySettingsModal }) => ({ default: SecuritySettingsModal })));
+
+const AppChunkFallback = ({ label = 'Memuat tampilan…' }: { label?: string }) => (
+  <div className="min-h-64 grid place-items-center text-sm text-[#6b665c]" role="status" aria-live="polite">
+    {label}
+  </div>
+);
+
+const ModalChunkFallback = () => (
+  <div className="fixed inset-0 z-[100] grid place-items-center bg-black/20 text-sm font-semibold text-[#1f1f1f]" role="status" aria-live="polite">
+    Memuat formulir…
+  </div>
+);
+
+const APP_TABS: readonly NavTab[] = ['dashboard', 'pipeline', 'leads_finder', 'activities', 'android_code'];
 
 export default function App() {
+  const useLocalSecurityVault = shouldUseLocalSecurityVault(firebaseTarget);
   const [currentTab, setCurrentTab] = useState<NavTab>('dashboard');
   const [leads, setLeads] = useState<Lead[]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
-  const [globalLeads, setGlobalLeads] = useState<GlobalLead[]>([]);
-  const [pendingCount, setPendingCount] = useState<number>(0);
-  const [isSyncing, setIsSyncing] = useState<boolean>(false);
-  const [isSimulatedOffline, setIsSimulatedOffline] = useState<boolean>(false);
+  const [wonDealArchives, setWonDealArchives] = useState<WonDealArchiveRecord[]>([]);
+  const [snapshotReadiness, setSnapshotReadiness] = useState({ leads: false, activities: false, archives: false });
+  const [snapshotCacheState, setSnapshotCacheState] = useState({ leads: true, activities: true, archives: true });
+  const [syncQueueSnapshot, setSyncQueueSnapshot] = useState<SyncQueueSnapshot>(() => firestoreWriteQueue.getSnapshot());
+  const [isOnline, setIsOnline] = useState<boolean>(() => typeof navigator === 'undefined' || navigator.onLine);
   const [isPhoneFrame, setIsPhoneFrame] = useState<boolean>(false);
 
   // Security Vault & Lock State
-  const [isAppLocked, setIsAppLocked] = useState<boolean>(() => SecurityVault.isCurrentlyLocked());
+  const [isAppLocked, setIsAppLocked] = useState<boolean>(() => useLocalSecurityVault && SecurityVault.isCurrentlyLocked());
   const [isSecuritySettingsOpen, setIsSecuritySettingsOpen] = useState(false);
 
   // Modals
@@ -44,7 +69,14 @@ export default function App() {
   const [isActivityLoggerOpen, setIsActivityLoggerOpen] = useState(false);
   const [activityLead, setActivityLead] = useState<Lead | null>(null);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
+  const [editLeadRequestId, setEditLeadRequestId] = useState<string | null>(null);
+  const [deletingLeadId, setDeletingLeadId] = useState<string | null>(null);
   const [whatsAppLead, setWhatsAppLead] = useState<Lead | null>(null);
+  const [hasOpenedQuickLead, setHasOpenedQuickLead] = useState(false);
+  const [hasOpenedActivityLogger, setHasOpenedActivityLogger] = useState(false);
+  const [hasOpenedLeadDetail, setHasOpenedLeadDetail] = useState(false);
+  const [hasOpenedWhatsApp, setHasOpenedWhatsApp] = useState(false);
+  const [hasOpenedSecuritySettings, setHasOpenedSecuritySettings] = useState(false);
 
   // Snackbar Toast
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -59,41 +91,70 @@ export default function App() {
   // Refs for robust popstate back gesture handling
   const currentTabRef = useRef(currentTab);
   currentTabRef.current = currentTab;
-  const selectedLeadRef = useRef(selectedLead);
-  selectedLeadRef.current = selectedLead;
-  const isQuickLeadOpenRef = useRef(isQuickLeadOpen);
-  isQuickLeadOpenRef.current = isQuickLeadOpen;
-  const isActivityLoggerOpenRef = useRef(isActivityLoggerOpen);
-  isActivityLoggerOpenRef.current = isActivityLoggerOpen;
-  const whatsAppLeadRef = useRef(whatsAppLead);
-  whatsAppLeadRef.current = whatsAppLead;
-  const isSecuritySettingsOpenRef = useRef(isSecuritySettingsOpen);
-  isSecuritySettingsOpenRef.current = isSecuritySettingsOpen;
+  const historyEntryRef = useRef<AppHistoryState<NavTab> | null>(null);
+  const modalBackPendingRef = useRef(false);
+  const pendingTabChangeRef = useRef<NavTab | null>(null);
+  const stageOverlayRef = useRef(new OptimisticLeadStageOverlay());
+  const latestFirestoreLeadsRef = useRef<Lead[]>([]);
+  const latestFirestoreSnapshotStateRef = useRef<LeadSnapshotState>({ fromCache: true, pendingWriteIds: new Set() });
 
-  // Track double tap back to exit on root dashboard
-  const lastBackPressTimeRef = useRef<number>(0);
+  const renderedLeadsRef = useRef(leads);
+  renderedLeadsRef.current = leads;
 
-  // Safe modal openers with history push for Android back gesture support
-  const openModalWithHistory = useCallback((openFn: () => void, modalName: string) => {
+  // Each app history entry captures both the selected tab and its modal stack.
+  const openModalWithHistory = useCallback((openFn: () => void, modalName: AppModalName, leadId?: string) => {
     if (typeof window !== 'undefined') {
-      window.history.pushState({ modal: true, modalName }, '');
+      const current = readAppHistoryState(window.history.state, APP_TABS)
+        ?? historyEntryRef.current
+        ?? createAppHistoryState(currentTabRef.current);
+      if (current.modalStack.at(-1) === modalName && getModalLeadId(current, modalName) === (leadId ?? null)) {
+        openFn();
+        return;
+      }
+      const ids = current.modalStack.map((_, index) => current.modalLeadIds?.[index] ?? null);
+      const next = createAppHistoryState(current.tab, [...current.modalStack, modalName], [...ids, leadId ?? null]);
+      window.history.pushState(next, '');
+      historyEntryRef.current = next;
+      modalBackPendingRef.current = false;
     }
     openFn();
   }, []);
 
-  // Safe modal closer that unwinds history state cleanly
-  const closeModalWithHistory = useCallback((closeFn: () => void) => {
-    closeFn();
-    if (typeof window !== 'undefined' && window.history.state?.modal) {
-      window.history.back();
+  // popstate is the single owner of modal close transitions; the click handler
+  // only consumes the top modal entry and never closes a parent directly.
+  const closeModalWithHistory = useCallback((modalName: AppModalName, closeFn: () => void) => {
+    if (typeof window === 'undefined') {
+      closeFn();
+      return;
     }
+    const current = readAppHistoryState(window.history.state, APP_TABS);
+    if (current?.modalStack.length) {
+      if (current.modalStack[current.modalStack.length - 1] !== modalName || modalBackPendingRef.current) return;
+      modalBackPendingRef.current = true;
+      window.history.back();
+      return;
+    }
+    closeFn();
   }, []);
 
   // Tab changer with history entry
   const changeTabWithHistory = useCallback((tab: NavTab) => {
     if (tab === currentTabRef.current) return;
     if (typeof window !== 'undefined') {
-      window.history.pushState({ tab }, '');
+      const current = readAppHistoryState(window.history.state, APP_TABS)
+        ?? historyEntryRef.current
+        ?? createAppHistoryState(currentTabRef.current);
+      if (current.modalStack.length > 0) {
+        pendingTabChangeRef.current = tab;
+        if (!modalBackPendingRef.current) {
+          modalBackPendingRef.current = true;
+          window.history.go(-current.modalStack.length);
+        }
+        return;
+      }
+      const next = createAppHistoryState(tab);
+      window.history.pushState(next, '');
+      historyEntryRef.current = next;
     }
     setCurrentTab(tab);
   }, []);
@@ -102,58 +163,57 @@ export default function App() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
-    // Establish root history state
-    if (!window.history.state) {
-      window.history.replaceState({ root: true, tab: 'dashboard' }, '');
-    }
+    // Establish a canonical current entry. A modal cannot be restored from a
+    // browser entry alone after a full reload, so keep its tab but clear layers.
+    const existingState = readAppHistoryState(window.history.state, APP_TABS);
+    const initialState = createAppHistoryState(existingState?.tab ?? currentTabRef.current);
+    window.history.replaceState(initialState, '');
+    historyEntryRef.current = initialState;
+    setCurrentTab(initialState.tab);
 
-    const handlePopState = () => {
-      // 1. LIFO: Close top-most / child modals first before parent LeadDetailModal
-      if (isActivityLoggerOpenRef.current) {
-        setIsActivityLoggerOpen(false);
-        setActivityLead(null);
-        return;
+    const handlePopState = (event: PopStateEvent) => {
+      let destination = readAppHistoryState(event.state, APP_TABS);
+      modalBackPendingRef.current = false;
+      if (!destination) { pendingTabChangeRef.current = null; return; }
+      if (pendingTabChangeRef.current) {
+        const tab = pendingTabChangeRef.current;
+        pendingTabChangeRef.current = null;
+        destination = createAppHistoryState(tab);
+        window.history.pushState(destination, '');
       }
-      if (whatsAppLeadRef.current) {
-        setWhatsAppLead(null);
-        return;
+      const leadMap = new Map(renderedLeadsRef.current.map((lead) => [lead.id, lead]));
+      const next = canonicalizeModalHistoryState(destination, new Set(leadMap.keys()));
+      if (next.modalStack.length !== destination.modalStack.length) {
+        window.history.replaceState(next, '');
+        showToast('Dialog ditutup karena konteks Lead tidak tersedia; tab tetap dipertahankan.');
       }
-      if (isSecuritySettingsOpenRef.current) {
-        setIsSecuritySettingsOpen(false);
-        return;
-      }
-      if (isQuickLeadOpenRef.current) {
-        setIsQuickLeadOpen(false);
-        return;
-      }
-      if (selectedLeadRef.current) {
-        setSelectedLead(null);
-        return;
-      }
-
-      // 2. If no modal is open but user is on a secondary tab, navigate back to Dashboard
-      if (currentTabRef.current !== 'dashboard') {
-        setCurrentTab('dashboard');
-        return;
-      }
-
-      // 3. User is on Root Dashboard: double back confirmation to prevent accidental exit
-      const now = Date.now();
-      if (now - lastBackPressTimeRef.current < 2000) {
-        // Allow app exit / default behavior
-        return;
-      } else {
-        lastBackPressTimeRef.current = now;
-        window.history.pushState({ root: true, tab: 'dashboard' }, '');
-        showToast('Tekan kembali sekali lagi untuk keluar dari aplikasi.');
-      }
+      historyEntryRef.current = next;
+      setCurrentTab(next.tab);
+      const leadFor = (modalName: AppModalName) => {
+        const id = getModalLeadId(next, modalName);
+        return id ? leadMap.get(id) ?? null : null;
+      };
+      // Reconcile both Back and Forward. Lazy modal chunks may not have been
+      // opened in this mount yet, so restore their mount flags as well.
+      if (next.modalStack.includes('quickLead')) setHasOpenedQuickLead(true);
+      if (next.modalStack.includes('activityLogger')) setHasOpenedActivityLogger(true);
+      if (next.modalStack.includes('leadDetail')) setHasOpenedLeadDetail(true);
+      if (next.modalStack.includes('whatsapp')) setHasOpenedWhatsApp(true);
+      if (next.modalStack.includes('securitySettings')) setHasOpenedSecuritySettings(true);
+      if (!next.modalStack.includes('leadDetail')) setEditLeadRequestId(null);
+      setIsQuickLeadOpen(next.modalStack.includes('quickLead'));
+      setIsActivityLoggerOpen(next.modalStack.includes('activityLogger'));
+      setIsSecuritySettingsOpen(next.modalStack.includes('securitySettings'));
+      setActivityLead(leadFor('activityLogger'));
+      setSelectedLead(leadFor('leadDetail'));
+      setWhatsAppLead(leadFor('whatsapp'));
     };
 
     window.addEventListener('popstate', handlePopState);
 
     // Auto-lock when resumed from background if timeout expired
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
+      if (useLocalSecurityVault && document.visibilityState === 'visible') {
         if (SecurityVault.isCurrentlyLocked()) {
           setIsAppLocked(true);
         }
@@ -165,104 +225,224 @@ export default function App() {
       window.removeEventListener('popstate', handlePopState);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
+  }, [showToast, useLocalSecurityVault]);
+
+  // Firebase is the sole source of truth for authenticated CRM records. No
+  // localStorage hydration or automatic migration is performed here.
+  useEffect(() => {
+    const user = getFirebaseAuth().currentUser;
+    if (!user) return;
+    setSnapshotReadiness({ leads: false, activities: false, archives: false });
+    const onError = (error: Error) => showToast(`Firebase gagal memuat data: ${error.message}`);
+    const stopLeads = subscribeToLeads(user.uid, (snapshotLeads, snapshotState) => {
+      latestFirestoreLeadsRef.current = snapshotLeads;
+      latestFirestoreSnapshotStateRef.current = snapshotState;
+      setSnapshotReadiness((current) => ({ ...current, leads: true }));
+      setSnapshotCacheState((current) => ({ ...current, leads: snapshotState.fromCache }));
+      setLeads(stageOverlayRef.current.reconcile(snapshotLeads, snapshotState));
+    }, onError);
+    const stopActivities = subscribeToActivities(user.uid, (snapshotActivities, fromCache) => {
+      setActivities(snapshotActivities);
+      setSnapshotReadiness((current) => ({ ...current, activities: true }));
+      setSnapshotCacheState((current) => ({ ...current, activities: fromCache }));
+    }, onError);
+    const stopArchives = subscribeToWonDealArchives(user.uid, (snapshotArchives, fromCache) => {
+      setWonDealArchives(snapshotArchives);
+      setSnapshotReadiness((current) => ({ ...current, archives: true }));
+      setSnapshotCacheState((current) => ({ ...current, archives: fromCache }));
+    }, onError);
+    return () => { stopLeads(); stopActivities(); stopArchives(); };
   }, [showToast]);
 
-  // Load state from local storage & subscribe to sync engine
-  const refreshLocalData = useCallback(() => {
-    setLeads(CrmStorage.getLeads());
-    setActivities(CrmStorage.getActivities());
-    setGlobalLeads(CrmStorage.getGlobalLeads());
-    setPendingCount(syncEngine.getPendingCount());
-    setIsSimulatedOffline(CrmStorage.isSimulatedOffline());
+  useEffect(() => firestoreWriteQueue.subscribe((snapshot) => {
+    setSyncQueueSnapshot(snapshot);
+    const getStatus = (documentId: string) => firestoreWriteQueue.getDocumentSyncStatus(documentId);
+    setLeads((current) => reconcileDocumentSyncStatuses(current, getStatus));
+    setActivities((current) => reconcileDocumentSyncStatuses(current, getStatus));
+  }), []);
+
+  const acknowledgedCountRef = useRef(syncQueueSnapshot.acknowledgedCount);
+  useEffect(() => {
+    const newlyAcknowledged = syncQueueSnapshot.acknowledgedCount - acknowledgedCountRef.current;
+    acknowledgedCountRef.current = syncQueueSnapshot.acknowledgedCount;
+    if (newlyAcknowledged > 0) {
+      showToast(`${formatNumber(newlyAcknowledged)} operasi diakui Firestore.`);
+    }
+  }, [syncQueueSnapshot.acknowledgedCount, showToast]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
   }, []);
 
   useEffect(() => {
-    refreshLocalData();
-
-    // Subscribe to queue changes
-    const unsubscribe = syncEngine.subscribe((count, syncing) => {
-      setPendingCount(count);
-      setIsSyncing(syncing);
-      // Reload leads and activities when queue changes
-      setLeads(CrmStorage.getLeads());
-      setActivities(CrmStorage.getActivities());
-      setGlobalLeads(CrmStorage.getGlobalLeads());
+    setSelectedLead((current) => {
+      if (!current) return current;
+      return leads.find((lead) => lead.id === current.id) ?? current;
     });
-
-    // Auto pull remote Cloud Database data on initial load
-    syncEngine.pullRemoteData().then(() => {
-      refreshLocalData();
-    });
-
-    return () => {
-      unsubscribe();
-    };
-  }, [refreshLocalData]);
+  }, [leads]);
 
   // Actions
-  const handleToggleSimulatedOffline = () => {
-    const next = !isSimulatedOffline;
-    CrmStorage.setSimulatedOffline(next);
-    setIsSimulatedOffline(next);
-    if (!next) {
-      showToast('Connection restored: Flushing offline sync queue...');
-      syncEngine.processQueue().then((res) => {
-        if (res.processed > 0) {
-          showToast(`Synced ${res.processed} pending operation(s) to Cloud Database!`);
-        }
-        refreshLocalData();
-      });
+  const handleSyncNow = async () => {
+    if (!isOnline) {
+      showToast('Offline — mutasi tertunda tetap tersimpan dan tidak dikirim. Sambungkan kembali untuk memilih sinkronisasi manual.');
+      return;
+    }
+    if (syncQueueSnapshot.manualReplayCount > 0) {
+      const expectedCount = syncQueueSnapshot.manualReplayCount;
+      const confirmed = window.confirm(
+        `Sinkronkan ${formatNumber(expectedCount)} mutasi tertunda dari sesi sebelumnya sekarang? Mutasi akan dikirim ke Firestore; isi prospek dan aktivitas tidak ditampilkan.`,
+      );
+      if (!confirmed) return;
+      const startedCount = firestoreWriteQueue.startManualReplay();
+      if (startedCount > 0) {
+        showToast(`Sinkronisasi manual dimulai untuk ${formatNumber(startedCount)} mutasi tertunda.`);
+      } else {
+        showToast('Antrean berubah sebelum sinkronisasi dimulai; tidak ada mutasi yang dikirim.');
+      }
+      return;
+    }
+    const retryCount = firestoreWriteQueue.retryFailed();
+    if (retryCount > 0) {
+      showToast(`Mencoba ulang ${formatNumber(retryCount)} operasi yang gagal.`);
+    } else if (syncQueueSnapshot.pendingCount + syncQueueSnapshot.syncingCount > 0) {
+      showToast('Firestore sedang memproses operasi antrean; lihat status di bar atas.');
     } else {
-      showToast('Offline Mode enabled. Operations will queue locally.');
+      showToast('Tidak ada operasi tertunda atau gagal.');
     }
   };
 
-  const handleSyncNow = async () => {
-    if (!syncEngine.isOnline()) {
-      showToast('App is currently offline. Disable offline mode to sync.');
-      return;
-    }
-    showToast('Syncing with Cloud Database...');
-    const queueResult = await syncEngine.processQueue();
-    await syncEngine.pullRemoteData();
-    refreshLocalData();
-    showToast(
-      queueResult.processed > 0
-        ? `Sync complete! Synced ${queueResult.processed} action(s).`
-        : 'Up to date with Cloud Database!'
-    );
+  const handleRetrySyncOperation = (id: string) => {
+    void firestoreWriteQueue.retry(id).catch(() => undefined);
   };
 
   // Add Lead
-  const handleAddLead = (leadData: Omit<Lead, 'id' | '_syncStatus' | 'created_at' | 'updated_at'>) => {
-    const newLead = syncEngine.enqueueAddLead(leadData);
-    refreshLocalData();
-    showToast(
-      syncEngine.isOnline()
-        ? `Lead "${newLead.company_name}" added and syncing to Cloud Database!`
-        : `Lead "${newLead.company_name}" saved to local offline cache.`
-    );
+  const handleAddLead = async (leadData: Omit<Lead, 'id' | '_syncStatus' | 'created_at' | 'updated_at'>) => {
+    await createLead(getFirebaseAuth().currentUser!.uid, leadData);
+    showToast(`Lead "${leadData.company_name}" menunggu konfirmasi Firestore.`);
   };
 
-  // Update Lead Stage (with automatic archive logging for Closing Won)
+  // Update the UI immediately; only revert this operation if its own Firestore write fails.
   const handleUpdateLeadStage = (
     leadId: string,
     newStage: PipelineStage,
     nextFollowupDate?: string
   ) => {
-    syncEngine.enqueueUpdateLeadStage(leadId, newStage, nextFollowupDate);
-    refreshLocalData();
-    if (selectedLead && selectedLead.id === leadId) {
-      setSelectedLead((prev) => (prev ? { ...prev, pipeline_stage: newStage } : null));
+    const previousLead = leads.find((lead) => lead.id === leadId);
+    const ownerId = getFirebaseAuth().currentUser?.uid;
+    if (!previousLead || !ownerId) {
+      showToast('Stage tidak dapat diubah karena lead atau sesi owner tidak tersedia.');
+      return;
     }
-    if (newStage === 'Closing Won') {
-      showToast('Deal berhasil ditutup (Closing Won)! Otomatis dicatat ke sheet Archive_Logs.');
-    } else {
-      showToast(
-        syncEngine.isOnline()
-          ? `Stage updated to ${newStage} (Syncing to Cloud Database...)`
-          : `Stage updated to ${newStage} (Saved locally)`
-      );
+    const token = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    stageOverlayRef.current.apply(leadId, token, newStage, nextFollowupDate);
+    const optimisticFields = {
+      pipeline_stage: newStage,
+      ...(nextFollowupDate !== undefined ? { next_followup_date: nextFollowupDate } : {}),
+      _syncStatus: 'pending_update' as const,
+    };
+    setLeads((current) => current.map((lead) => lead.id === leadId ? stageOverlayRef.current.overlayLead({ ...lead, ...optimisticFields }) : lead));
+    setSelectedLead((current) => current?.id === leadId ? stageOverlayRef.current.overlayLead({ ...current, ...optimisticFields }) : current);
+
+    void (async () => {
+      try {
+        const receipt = await updateLeadStage(ownerId, leadId, newStage, nextFollowupDate);
+        showToast(newStage === 'Closing Won'
+          ? 'Closing Won dan arsip transaksi menunggu konfirmasi Firestore.'
+          : 'Perubahan stage menunggu konfirmasi Firestore.');
+        await receipt.acknowledged;
+        stageOverlayRef.current.acknowledge(leadId, token);
+        setLeads(stageOverlayRef.current.reconcile(latestFirestoreLeadsRef.current, latestFirestoreSnapshotStateRef.current));
+      } catch (error) {
+        stageOverlayRef.current.rollback(leadId, token);
+        const restoredLeads = stageOverlayRef.current.reconcile(latestFirestoreLeadsRef.current, latestFirestoreSnapshotStateRef.current);
+        setLeads(restoredLeads);
+        setSelectedLead((current) => current?.id === leadId
+          ? restoredLeads.find((lead) => lead.id === leadId) ?? current
+          : current);
+        const message = error instanceof Error ? error.message : 'Firestore menolak perubahan.';
+        showToast(`Stage gagal diubah: ${message}`);
+      }
+    })();
+  };
+
+  const handleUpdateLeadDetails = async (leadId: string, changes: LeadCorrection) => {
+    const previousLead = leads.find((lead) => lead.id === leadId);
+    const ownerId = getFirebaseAuth().currentUser?.uid;
+    if (!previousLead || !ownerId) throw new Error('Lead atau sesi owner tidak tersedia untuk koreksi.');
+
+    const token = `details-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    stageOverlayRef.current.applyDetails(leadId, token, changes);
+    setLeads((current) => current.map((lead) => lead.id === leadId ? stageOverlayRef.current.overlayLead(lead) : lead));
+    setSelectedLead((current) => current?.id === leadId ? stageOverlayRef.current.overlayLead(current) : current);
+
+    try {
+      const receipt = await updateLeadDetails(ownerId, leadId, changes);
+      showToast('Koreksi data Lead menunggu konfirmasi Firestore.');
+      await receipt.acknowledged;
+      stageOverlayRef.current.acknowledge(leadId, token);
+      const confirmed = stageOverlayRef.current.reconcile(latestFirestoreLeadsRef.current, latestFirestoreSnapshotStateRef.current);
+      setLeads(confirmed);
+      setSelectedLead((current) => current?.id === leadId ? confirmed.find((lead) => lead.id === leadId) ?? current : current);
+      showToast('Koreksi data Lead berhasil disimpan.');
+    } catch (error) {
+      stageOverlayRef.current.rollback(leadId, token);
+      const restoredLeads = stageOverlayRef.current.reconcile(latestFirestoreLeadsRef.current, latestFirestoreSnapshotStateRef.current);
+      setLeads(restoredLeads);
+      setSelectedLead((current) => current?.id === leadId
+        ? restoredLeads.find((lead) => lead.id === leadId) ?? previousLead
+        : current);
+      const message = error instanceof Error ? error.message : 'Firestore menolak koreksi data.';
+      showToast(`Koreksi Lead gagal: ${message}`);
+      throw error;
+    }
+  };
+
+  const handleDeleteLead = async (lead: Lead) => {
+    if (deletingLeadId) return;
+    if (!snapshotReadiness.leads || !snapshotReadiness.activities || !snapshotReadiness.archives
+      || snapshotCacheState.leads || snapshotCacheState.activities || snapshotCacheState.archives) {
+      showToast('Penghapusan ditahan sampai Lead, Activity, dan arsip selesai dimuat dari server.');
+      return;
+    }
+    if (lead._syncStatus && lead._syncStatus !== 'synced') {
+      showToast('Lead dengan perubahan sinkronisasi tertunda tidak dapat dihapus. Sinkronkan atau selesaikan antrean lebih dahulu.');
+      return;
+    }
+    if (activities.some((activity) => activity.lead_id === lead.id)) {
+      showToast('Lead ini memiliki riwayat Activity; penghapusan diblokir agar histori tetap utuh.');
+      return;
+    }
+    if (wonDealArchives.some((archive) => archive.lead_id === lead.id) || lead.pipeline_stage === 'Closing Won') {
+      showToast('Lead Closing Won/berarsip tidak dapat dihapus.');
+      return;
+    }
+    const confirmed = window.confirm(
+      `Hapus Lead "${lead.company_name}" secara permanen? Aksi ini tidak dapat dibatalkan. Lead dengan Activity atau arsip Won selalu ditolak.`,
+    );
+    if (!confirmed) return;
+    const ownerId = getFirebaseAuth().currentUser?.uid;
+    if (!ownerId) {
+      showToast('Sesi owner tidak tersedia; Lead tidak dihapus.');
+      return;
+    }
+    setDeletingLeadId(lead.id);
+    try {
+      await deleteLead(ownerId, lead.id);
+      setLeads((current) => current.filter((item) => item.id !== lead.id));
+      setSelectedLead((current) => current?.id === lead.id ? null : current);
+      showToast(`Lead "${lead.company_name}" berhasil dihapus.`);
+    } catch (error) {
+      showToast(`Lead gagal dihapus: ${error instanceof Error ? error.message : 'periksa koneksi dan izin.'}`);
+    } finally {
+      setDeletingLeadId(null);
     }
   };
 
@@ -271,39 +451,88 @@ export default function App() {
     lead_id: string;
     activity_type: string;
     notes: string;
-    ai_summary: string;
-    location_gps: string;
+    ai_summary?: string;
+    ai_summary_source?: ActivitySummarySource;
+    location_gps?: ActivityGpsLocation;
+    photo?: Blob;
   }) => {
-    syncEngine.enqueueAddActivity(activityData);
-    refreshLocalData();
-    showToast(
-      syncEngine.isOnline()
-        ? 'GPS Check-in recorded and syncing to Cloud Database!'
-        : 'GPS Check-in recorded to local offline storage.'
-    );
-  };
-
-  // Import Global Lead
-  const handleImportGlobalLead = (globalLead: GlobalLead) => {
-    syncEngine.enqueueImportGlobalLead(globalLead);
-    refreshLocalData();
-    showToast(`Imported "${globalLead.company_name}" into AR CRM sales pipeline!`);
+    try {
+      const { photo, ...activityDataForFirestore } = activityData;
+      const receipt = await createActivity(getFirebaseAuth().currentUser!.uid, activityDataForFirestore);
+      showToast('Aktivitas menunggu konfirmasi Firestore.');
+      if (photo && receipt.id) {
+        try {
+          await storeActivityPhoto(receipt.id, photo);
+          showToast('Aktivitas tersimpan; foto hanya tersedia di browser ini dan tidak tersinkron.');
+        } catch {
+          showToast('Aktivitas tersimpan, tetapi foto gagal disimpan lokal. Foto tidak diunggah ke cloud.');
+        }
+      }
+    } catch (error) {
+      showToast(`Aktivitas gagal disimpan: ${(error as Error).message}`);
+      throw error;
+    }
   };
 
   // Export CSV Report
   const handleExportCsv = useCallback(() => {
-    const currentLeads = CrmStorage.getLeads();
+    const currentLeads = leads;
     if (currentLeads.length === 0) {
       showToast('Tidak ada data prospek untuk diekspor.');
       return;
     }
     const filename = downloadLeadsCsv(currentLeads);
-    showToast(`Laporan rekapitulasi ${currentLeads.length} prospek berhasil diunduh (${filename})!`);
-  }, [showToast]);
+    showToast(`Laporan rekapitulasi ${formatNumber(currentLeads.length)} prospek berhasil diunduh (${filename})!`);
+  }, [leads, showToast]);
+
+  const handleExportExcel = useCallback(() => {
+    if (leads.length === 0) {
+      showToast('Tidak ada data prospek untuk diekspor.');
+      return;
+    }
+    const filename = downloadLeadsExcel(leads);
+    showToast(`Laporan Excel ${formatNumber(leads.length)} Lead diunduh (${filename}).`);
+  }, [leads, showToast]);
+
+  const handleExportSnapshot = useCallback(() => {
+    if (!snapshotReadiness.leads || !snapshotReadiness.activities || !snapshotReadiness.archives) {
+      showToast('Tunggu sampai Lead, aktivitas, dan arsip selesai dimuat sebelum mengekspor.');
+      return;
+    }
+    const ownerId = getFirebaseAuth().currentUser?.uid;
+    if (!ownerId || !workspaceId) {
+      showToast('Ekspor tidak tersedia karena sesi owner atau workspace belum siap.');
+      return;
+    }
+    const confirmed = window.confirm(
+      `Ekspor JSON lokal berisi ${formatNumber(leads.length)} Lead, ${formatNumber(activities.length)} aktivitas, dan ${formatNumber(wonDealArchives.length)} arsip Won. File mencakup telepon/kontak, catatan aktivitas, ringkasan AI, dan koordinat GPS bila tersedia. File hanya diunduh ke perangkat ini; ini bukan backup/restore Cloud Firestore. Lanjutkan?`,
+    );
+    if (!confirmed) return;
+    try {
+      const filename = downloadLocalCrmExport({
+        workspaceId,
+        ownerId,
+        leads,
+        activities,
+        wonDealArchives,
+        coverage: {
+          leads_from_cache: snapshotCacheState.leads,
+          activities_from_cache: snapshotCacheState.activities,
+          archives_from_cache: snapshotCacheState.archives,
+          pending_mutations: syncQueueSnapshot.pendingCount + syncQueueSnapshot.syncingCount,
+          failed_mutations: syncQueueSnapshot.failedCount,
+        },
+      });
+      showToast(`Ekspor snapshot lokal diunduh: ${filename}. Periksa status kelengkapan di dalam file.`);
+    } catch (error) {
+      showToast(`Ekspor snapshot gagal: ${error instanceof Error ? error.message : 'kesalahan tidak diketahui'}`);
+    }
+  }, [activities, leads, snapshotCacheState, snapshotReadiness, syncQueueSnapshot.failedCount, syncQueueSnapshot.pendingCount, syncQueueSnapshot.syncingCount, showToast, wonDealArchives]);
 
   const followUpMetrics = filterFollowUps(leads);
   const dueCount = followUpMetrics.dueToday.length + followUpMetrics.overdue.length;
-  const isOnline = syncEngine.isOnline();
+  const pendingCount = syncQueueSnapshot.pendingCount + syncQueueSnapshot.syncingCount;
+  const isSyncing = syncQueueSnapshot.isSyncing;
 
   const getTabTitle = () => {
     switch (currentTab) {
@@ -322,87 +551,115 @@ export default function App() {
     }
   };
 
+  const openQuickLead = () => {
+    setHasOpenedQuickLead(true);
+    openModalWithHistory(() => setIsQuickLeadOpen(true), 'quickLead');
+  };
+
+  const openActivityLogger = (lead?: Lead) => {
+    setActivityLead(lead ?? null);
+    setHasOpenedActivityLogger(true);
+    openModalWithHistory(() => setIsActivityLoggerOpen(true), 'activityLogger', lead?.id);
+  };
+
+  const openLeadDetail = (lead: Lead, startEditing = false) => {
+    setHasOpenedLeadDetail(true);
+    setEditLeadRequestId(startEditing ? lead.id : null);
+    openModalWithHistory(() => setSelectedLead(lead), 'leadDetail', lead.id);
+  };
+
+  const openWhatsApp = (lead: Lead) => {
+    setHasOpenedWhatsApp(true);
+    setWhatsAppLead(lead);
+    openModalWithHistory(() => setWhatsAppLead(lead), 'whatsapp', lead.id);
+  };
+
+  const openSecuritySettings = () => {
+    setHasOpenedSecuritySettings(true);
+    openModalWithHistory(() => setIsSecuritySettingsOpen(true), 'securitySettings');
+  };
+
   return (
     <AndroidFrame isPhoneFrame={isPhoneFrame} isOnline={isOnline}>
-      <div className="flex-1 flex flex-col min-h-screen bg-[#fcfcfa]">
+      <div className={`flex-1 flex flex-col bg-[#fcfcfa] ${isPhoneFrame ? 'h-full min-h-0' : 'min-h-dvh'}`}>
         {/* Top App Bar with Security Lock & CSV Export */}
         <TopAppBar
           title={getTabTitle()}
           isOnline={isOnline}
-          isSimulatedOffline={isSimulatedOffline}
-          onToggleSimulatedOffline={handleToggleSimulatedOffline}
           pendingCount={pendingCount}
+          failedCount={syncQueueSnapshot.failedCount}
+          acknowledgedCount={syncQueueSnapshot.acknowledgedCount}
+          manualReplayCount={syncQueueSnapshot.manualReplayCount}
           isSyncing={isSyncing}
           onSyncNow={handleSyncNow}
+          syncOperations={syncQueueSnapshot.operations}
+          onRetrySyncOperation={handleRetrySyncOperation}
           isPhoneFrame={isPhoneFrame}
           onTogglePhoneFrame={() => setIsPhoneFrame(!isPhoneFrame)}
           isAndroidCodeActive={currentTab === 'android_code'}
           onToggleAndroidCode={() =>
-            changeTabWithHistory(currentTab === 'android_code' ? 'dashboard' : 'android_code')
+            currentTab === 'android_code' ? window.history.back() : changeTabWithHistory('android_code')
           }
-          onOpenSecurity={() => openModalWithHistory(() => setIsSecuritySettingsOpen(true), 'securitySettings')}
-          isSecurityActive={SecurityVault.isSecurityEnabled()}
+          onOpenSecurity={useLocalSecurityVault ? openSecuritySettings : undefined}
+          isSecurityActive={useLocalSecurityVault && SecurityVault.isSecurityEnabled()}
           onExportCsv={handleExportCsv}
+          onExportExcel={handleExportExcel}
+          onExportSnapshot={handleExportSnapshot}
         />
 
         {/* Main Content Area */}
-        <main className="flex-1 p-3.5 sm:p-6 max-w-7xl w-full mx-auto">
+        <main className={`flex-1 p-3.5 sm:p-6 max-w-7xl w-full mx-auto ${isPhoneFrame ? 'min-h-0 overflow-y-auto' : ''}`}>
           {currentTab === 'dashboard' && (
-            <DashboardView
-              leads={leads}
-              activities={activities}
-              onOpenQuickLead={() => openModalWithHistory(() => setIsQuickLeadOpen(true), 'quickLead')}
-              onOpenActivityLogger={(lead) => {
-                setActivityLead(lead || null);
-                openModalWithHistory(() => setIsActivityLoggerOpen(true), 'activityLogger');
-              }}
-              onSelectLead={(lead) => openModalWithHistory(() => setSelectedLead(lead), 'leadDetail')}
-              onOpenWhatsApp={(lead) => {
-                setWhatsAppLead(lead);
-                openModalWithHistory(() => setWhatsAppLead(lead), 'whatsapp');
-              }}
-              onNavigateToPipeline={() => changeTabWithHistory('pipeline')}
-              onNavigateToFinder={() => changeTabWithHistory('leads_finder')}
-              onExportCsv={handleExportCsv}
-            />
+            <Suspense fallback={<AppChunkFallback />}>
+              <DashboardView
+                leads={leads}
+                activities={activities}
+                onOpenQuickLead={openQuickLead}
+                onOpenActivityLogger={openActivityLogger}
+                onSelectLead={openLeadDetail}
+                onOpenWhatsApp={openWhatsApp}
+                onNavigateToPipeline={() => changeTabWithHistory('pipeline')}
+                onNavigateToFinder={() => changeTabWithHistory('leads_finder')}
+              />
+            </Suspense>
           )}
 
           {currentTab === 'pipeline' && (
-            <PipelineKanbanView
-              leads={leads}
-              onUpdateLeadStage={handleUpdateLeadStage}
-              onSelectLead={(lead) => openModalWithHistory(() => setSelectedLead(lead), 'leadDetail')}
-              onOpenQuickLead={() => openModalWithHistory(() => setIsQuickLeadOpen(true), 'quickLead')}
-              onOpenWhatsApp={(lead) => {
-                setWhatsAppLead(lead);
-                openModalWithHistory(() => setWhatsAppLead(lead), 'whatsapp');
-              }}
-              onExportCsv={handleExportCsv}
-            />
+            <Suspense fallback={<AppChunkFallback />}>
+              <PipelineKanbanView
+                leads={leads}
+                onUpdateLeadStage={handleUpdateLeadStage}
+                onSelectLead={openLeadDetail}
+                onEditLead={(lead) => openLeadDetail(lead, true)}
+                onDeleteLead={(lead) => { void handleDeleteLead(lead); }}
+                deletingLeadId={deletingLeadId}
+                onOpenQuickLead={openQuickLead}
+              />
+            </Suspense>
           )}
 
           {currentTab === 'leads_finder' && (
-            <GlobalLeadsView
-              personalLeads={leads}
-              globalLeads={globalLeads}
-              onImportGlobalLead={handleImportGlobalLead}
-              onNavigateToPipeline={() => changeTabWithHistory('pipeline')}
-            />
+            <Suspense fallback={<AppChunkFallback />}>
+              <GlobalLeadsView />
+            </Suspense>
           )}
 
           {currentTab === 'activities' && (
-            <ActivitiesListView
-              activities={activities}
-              leads={leads}
-              onOpenActivityLogger={(lead) => {
-                setActivityLead(lead || null);
-                openModalWithHistory(() => setIsActivityLoggerOpen(true), 'activityLogger');
-              }}
-              onSelectLead={(lead) => openModalWithHistory(() => setSelectedLead(lead), 'leadDetail')}
-            />
+            <Suspense fallback={<AppChunkFallback />}>
+              <ActivitiesListView
+                activities={activities}
+                leads={leads}
+                onOpenActivityLogger={openActivityLogger}
+                onSelectLead={openLeadDetail}
+              />
+            </Suspense>
           )}
 
-          {currentTab === 'android_code' && <AndroidCodeExplorer />}
+          {currentTab === 'android_code' && (
+            <Suspense fallback={<AppChunkFallback />}>
+              <AndroidCodeExplorer />
+            </Suspense>
+          )}
         </main>
 
         {/* Android Material 3 Bottom Navigation Bar */}
@@ -414,72 +671,93 @@ export default function App() {
 
         {/* Android Snackbar Toast Notification: 8px radius, ink background, Sprout Orange icon */}
         {toastMessage && (
-          <div className="fixed bottom-16 sm:bottom-20 left-1/2 -translate-x-1/2 z-50 bg-[#1f1f1f] text-[#fcfcfa] text-xs font-semibold px-4 py-2.5 rounded-[8px] border border-[#1f1f1f] flex items-center gap-2.5 max-w-md animate-in fade-in slide-in-from-bottom-2 duration-150">
+          <div role="status" style={{ maxWidth: isPhoneFrame ? 352 : 448 }} className="fixed bottom-[calc(5.5rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 z-50 bg-[#1f1f1f] text-[#fcfcfa] text-xs font-semibold px-4 py-2.5 rounded-[8px] border border-[#1f1f1f] flex items-start gap-2.5 w-[calc(100%-2rem)] max-w-md animate-in fade-in slide-in-from-bottom-2 duration-150">
             <CheckCircle2 className="w-4 h-4 text-[#ff4800] shrink-0" />
-            <span className="truncate">{toastMessage}</span>
+            <span className="min-w-0 break-words">{toastMessage}</span>
           </div>
         )}
 
         {/* MODALS WITH MOBILE BACK GESTURE INTEGRATION */}
-        <QuickLeadModal
-          isOpen={isQuickLeadOpen}
-          onClose={() => closeModalWithHistory(() => setIsQuickLeadOpen(false))}
-          onAddLead={handleAddLead}
-        />
+        {hasOpenedQuickLead && (
+          <Suspense fallback={<ModalChunkFallback />}>
+            <QuickLeadModal
+              isOpen={isQuickLeadOpen}
+              onClose={() => closeModalWithHistory('quickLead', () => setIsQuickLeadOpen(false))}
+              onAddLead={handleAddLead}
+            />
+          </Suspense>
+        )}
 
-        <ActivityLoggerModal
-          isOpen={isActivityLoggerOpen}
-          onClose={() =>
-            closeModalWithHistory(() => {
-              setIsActivityLoggerOpen(false);
-              setActivityLead(null);
-            })
-          }
-          leads={leads}
-          initialLead={activityLead}
-          onSaveActivity={handleSaveActivity}
-        />
+        {hasOpenedActivityLogger && (
+          <Suspense fallback={<ModalChunkFallback />}>
+            <ActivityLoggerModal
+              isOpen={isActivityLoggerOpen}
+              onClose={() =>
+                closeModalWithHistory('activityLogger', () => {
+                  setIsActivityLoggerOpen(false);
+                  setActivityLead(null);
+                })
+              }
+              leads={leads}
+              initialLead={activityLead}
+              aiSummarizerEnabled={import.meta.env.VITE_AI_MEETING_SUMMARIZER_ENABLED === 'true'}
+              onSaveActivity={handleSaveActivity}
+            />
+          </Suspense>
+        )}
 
-        <LeadDetailModal
-          isOpen={!!selectedLead}
-          onClose={() => closeModalWithHistory(() => setSelectedLead(null))}
-          lead={selectedLead}
-          activities={activities}
-          onUpdateStage={handleUpdateLeadStage}
-          onOpenActivityLogger={(l) => {
-            setActivityLead(l);
-            openModalWithHistory(() => setIsActivityLoggerOpen(true), 'activityLogger');
-          }}
-          onOpenWhatsApp={(l) => {
-            setWhatsAppLead(l);
-            openModalWithHistory(() => setWhatsAppLead(l), 'whatsapp');
-          }}
-        />
+        {hasOpenedLeadDetail && (
+          <Suspense fallback={<ModalChunkFallback />}>
+              <LeadDetailModal
+                isOpen={!!selectedLead}
+              onClose={() => closeModalWithHistory('leadDetail', () => { setSelectedLead(null); setEditLeadRequestId(null); })}
+                lead={selectedLead}
+                startEditing={Boolean(selectedLead && editLeadRequestId === selectedLead.id)}
+              activities={activities}
+              onUpdateStage={handleUpdateLeadStage}
+              onUpdateLeadDetails={handleUpdateLeadDetails}
+              onOpenActivityLogger={openActivityLogger}
+              onOpenWhatsApp={openWhatsApp}
+            />
+          </Suspense>
+        )}
 
-        <WhatsAppModal
-          isOpen={!!whatsAppLead}
-          onClose={() => closeModalWithHistory(() => setWhatsAppLead(null))}
-          lead={whatsAppLead}
-        />
+        {hasOpenedWhatsApp && (
+          <Suspense fallback={<ModalChunkFallback />}>
+            <WhatsAppModal
+              isOpen={!!whatsAppLead}
+              onClose={() => closeModalWithHistory('whatsapp', () => setWhatsAppLead(null))}
+              lead={whatsAppLead}
+            />
+          </Suspense>
+        )}
 
-        <SecuritySettingsModal
-          isOpen={isSecuritySettingsOpen}
-          onClose={() => closeModalWithHistory(() => setIsSecuritySettingsOpen(false))}
-          onLockNow={() => {
-            closeModalWithHistory(() => setIsSecuritySettingsOpen(false));
-            SecurityVault.lockNow();
-            setIsAppLocked(true);
-          }}
-        />
+        {useLocalSecurityVault && (
+          hasOpenedSecuritySettings && (
+            <Suspense fallback={<ModalChunkFallback />}>
+              <SecuritySettingsModal
+                isOpen={isSecuritySettingsOpen}
+                onClose={() => closeModalWithHistory('securitySettings', () => setIsSecuritySettingsOpen(false))}
+                onLockNow={() => {
+                  closeModalWithHistory('securitySettings', () => setIsSecuritySettingsOpen(false));
+                  SecurityVault.lockNow();
+                  setIsAppLocked(true);
+                }}
+              />
+            </Suspense>
+          )
+        )}
 
         {/* Local Security Shield Fullscreen Lock Overlay */}
-        {isAppLocked && (
-          <SecurityLockScreen
-            onUnlocked={() => {
-              SecurityVault.recordUnlock();
-              setIsAppLocked(false);
-            }}
-          />
+        {useLocalSecurityVault && isAppLocked && (
+          <Suspense fallback={<ModalChunkFallback />}>
+            <SecurityLockScreen
+              onUnlocked={() => {
+                SecurityVault.recordUnlock();
+                setIsAppLocked(false);
+              }}
+            />
+          </Suspense>
         )}
       </div>
     </AndroidFrame>

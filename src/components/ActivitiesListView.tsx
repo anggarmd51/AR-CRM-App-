@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
-import { History, MapPin, Sparkles, Plus, Search, Calendar, Building2 } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { History, Plus, Search, Calendar, Building2, MapPin, Sparkles } from 'lucide-react';
 import { Activity, Lead } from '../types/crm.ts';
+import { formatDateTimeDisplay } from '../utils/crmCalculations.ts';
+import { loadActivityPhoto } from '../utils/activityPhotos.ts';
 
 interface ActivitiesListViewProps {
   activities: Activity[];
@@ -17,10 +19,37 @@ export const ActivitiesListView: React.FC<ActivitiesListViewProps> = ({
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedType, setSelectedType] = useState('all');
+  const [photoUrls, setPhotoUrls] = useState<Map<string, string>>(() => new Map());
+
+  useEffect(() => {
+    let cancelled = false;
+    const createdUrls: string[] = [];
+    void Promise.all(activities.map(async (activity) => {
+      try {
+        const photo = await loadActivityPhoto(activity.id);
+        if (!photo) return undefined;
+        const url = URL.createObjectURL(photo);
+        createdUrls.push(url);
+        return [activity.id, url] as const;
+      } catch {
+        return undefined;
+      }
+    })).then((entries) => {
+      if (cancelled) {
+        createdUrls.forEach((url) => URL.revokeObjectURL(url));
+        return;
+      }
+      setPhotoUrls(new Map(entries.filter((entry): entry is readonly [string, string] => Boolean(entry))));
+    });
+    return () => {
+      cancelled = true;
+      createdUrls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [activities]);
 
   const filtered = activities.filter((act) => {
     const matchedLead = leads.find((l) => l.id === act.lead_id);
-    const searchTarget = `${act.notes} ${act.activity_type} ${act.location_gps || ''} ${
+    const searchTarget = `${act.notes} ${act.activity_type} ${
       matchedLead ? matchedLead.company_name + ' ' + matchedLead.contact_person : ''
     }`.toLowerCase();
 
@@ -44,12 +73,12 @@ export const ActivitiesListView: React.FC<ActivitiesListViewProps> = ({
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h2 className="text-xl font-bold text-[#1f1f1f] tracking-tight flex items-center gap-2 font-serif-heading">
+            <h2 className="text-xl font-bold text-[#1f1f1f] tracking-tight flex items-center gap-2 font-serif-heading">
             <History className="w-5 h-5 text-[#ff4800]" />
-            Field Activities & GPS Check-Ins
+            Field Activities & Check-Ins
           </h2>
           <p className="text-xs text-[#6b665c]">
-            Audit trail of client visits, phone calls, and AI-summarized touchpoints
+            Audit trail of client visits and phone calls
           </p>
         </div>
 
@@ -68,7 +97,7 @@ export const ActivitiesListView: React.FC<ActivitiesListViewProps> = ({
           <Search className="w-4 h-4 absolute left-3 top-2.5 text-[#6b665c]" />
           <input
             type="text"
-            placeholder="Search notes, company, GPS..."
+            placeholder="Search notes, company..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] pl-9 pr-3 py-2 text-xs text-[#1f1f1f] placeholder-[#6b665c] focus:outline-none focus:bg-[#fcfcfa]"
@@ -119,38 +148,43 @@ export const ActivitiesListView: React.FC<ActivitiesListViewProps> = ({
                     )}
                   </div>
 
-                  {act.location_gps && (
-                    <a
-                      href={`https://maps.google.com/?q=${act.location_gps}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="flex items-center gap-1 font-mono text-[10px] text-[#1f1f1f] bg-[#fcfcfa] hover:bg-[#eae4d5] px-2.5 py-1 rounded-[4px] border border-[#1f1f1f] transition-colors"
-                    >
-                      <MapPin className="w-3 h-3 text-[#ff4800]" />
-                      <span>GPS: {act.location_gps}</span>
-                    </a>
-                  )}
                 </div>
 
-                <p className="text-xs text-[#1f1f1f] leading-relaxed">{act.notes}</p>
-
+                <p className="text-xs text-[#1f1f1f] leading-relaxed whitespace-pre-wrap">{act.notes}</p>
+                {photoUrls.has(act.id) && <figure className="space-y-1">
+                  <img src={photoUrls.get(act.id)} alt={`Dokumentasi lokal untuk ${act.activity_type}`} loading="lazy" className="max-h-64 rounded-[8px] border border-[#1f1f1f] object-contain" />
+                  <figcaption className="text-[10px] text-[#6b665c]">Foto lokal pada browser ini; tidak tersinkron antarperangkat.</figcaption>
+                </figure>}
                 {act.ai_summary && (
-                  <div className="bg-[#fcfcfa] border border-[#1f1f1f] rounded-[8px] p-3 text-[#1f1f1f] text-xs whitespace-pre-line">
-                    <span className="font-bold text-[#ff4800] flex items-center gap-1.5 mb-1">
-                      <Sparkles className="w-3.5 h-3.5" />
-                      AI Action Items & Executive Summary
-                    </span>
-                    {act.ai_summary}
+                  <div className="rounded-[8px] border border-[#1f1f1f]/30 bg-[#fcfcfa] p-3 space-y-1">
+                    <div className="flex items-center gap-1.5 text-[10px] font-bold text-[#1f1f1f]"><Sparkles className="w-3 h-3 text-[#ff4800]" />Ringkasan {act.ai_summary_source === 'gemini' ? 'Gemini' : 'lokal'}</div>
+                    <p className="text-xs text-[#1f1f1f] leading-relaxed whitespace-pre-wrap">{act.ai_summary}</p>
                   </div>
                 )}
+                {act.location_gps && (
+                  <a
+                    href={`https://maps.google.com/?q=${act.location_gps.latitude},${act.location_gps.longitude}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-[#155e3c] underline underline-offset-2"
+                  >
+                    <MapPin className="w-3 h-3" />
+                    Check-in GPS ({act.location_gps.latitude.toFixed(5)}, {act.location_gps.longitude.toFixed(5)}; ±{act.location_gps.accuracy_m} m)
+                  </a>
+                )}
+
 
                 <div className="text-[10px] text-[#6b665c] flex items-center justify-between pt-1 border-t border-[#1f1f1f]/10">
                   <span className="flex items-center gap-1 font-medium">
                     <Calendar className="w-3 h-3 text-[#1f1f1f]/50" />
-                    {act.created_at ? new Date(act.created_at).toLocaleString() : 'Recent'}
+                    {formatDateTimeDisplay(act.created_at)}
                   </span>
-                  <span className="font-mono text-[#1f1f1f] font-semibold">
-                    {act._syncStatus === 'synced' ? 'Synced to Cloud' : 'Local Cache (Pending Sync)'}
+                  <span className={`font-mono font-semibold ${act._syncStatus === 'error' ? 'text-[#9b2c2c]' : act._syncStatus === 'synced' ? 'text-[#155e3c]' : 'text-[#a44a00]'}`}>
+                    {!act._syncStatus || act._syncStatus === 'synced'
+                      ? 'Diakui Firestore'
+                      : act._syncStatus === 'error'
+                        ? 'Gagal — periksa antrean'
+                        : 'Menunggu pengakuan Firestore'}
                   </span>
                 </div>
               </div>

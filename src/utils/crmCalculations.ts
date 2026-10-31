@@ -1,5 +1,27 @@
 import { Lead, PipelineMetrics, FollowUpCategory, PipelineStage, STAGE_CONFIG } from '../types/crm.ts';
 
+const INDONESIAN_TIME_ZONE = 'Asia/Jakarta';
+const calendarDateFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: INDONESIAN_TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+const dateDisplayFormatter = new Intl.DateTimeFormat('id-ID', {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+  timeZone: INDONESIAN_TIME_ZONE,
+});
+const dateTimeDisplayFormatter = new Intl.DateTimeFormat('id-ID', {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  timeZone: INDONESIAN_TIME_ZONE,
+});
+
 /**
  * Calculates comprehensive CRM financial & pipeline metrics.
  */
@@ -24,7 +46,9 @@ export function calculatePipelineMetrics(leads: Lead[]): PipelineMetrics {
     }
 
     const value = Number(lead.deal_value) || 0;
-    totalPipelineValue += value;
+    if (stage !== 'Closing Lost') {
+      totalPipelineValue += value;
+    }
 
     if (stage === 'Closing Won') {
       wonValue += value;
@@ -50,14 +74,34 @@ export function calculatePipelineMetrics(leads: Lead[]): PipelineMetrics {
 }
 
 /**
- * Normalizes date to 'YYYY-MM-DD' for robust calendar comparisons.
+ * Normalizes a calendar date or timestamp to its Indonesian local calendar day.
+ * Date-only values are kept as-is; instants are interpreted in Asia/Jakarta.
  */
 export function toDateStringOnly(dateInput: string | Date | undefined): string | null {
   if (!dateInput) return null;
+
+  if (typeof dateInput === 'string') {
+    const dateOnlyMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateInput);
+    if (dateOnlyMatch) {
+      const year = Number(dateOnlyMatch[1]);
+      const month = Number(dateOnlyMatch[2]);
+      const day = Number(dateOnlyMatch[3]);
+      const isLeapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+      const daysInMonth = [31, isLeapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+      return year > 0 && month >= 1 && month <= 12 && day >= 1 && day <= daysInMonth[month - 1]
+        ? dateInput
+        : null;
+    }
+  }
+
   try {
-    const d = typeof dateInput === 'string' ? new Date(dateInput) : dateInput;
-    if (isNaN(d.getTime())) return null;
-    return d.toISOString().slice(0, 10);
+    const date = typeof dateInput === 'string' ? new Date(dateInput) : dateInput;
+    if (Number.isNaN(date.getTime())) return null;
+
+    const parts = Object.fromEntries(
+      calendarDateFormatter.formatToParts(date).map(({ type, value }) => [type, value]),
+    );
+    return `${parts.year}-${parts.month}-${parts.day}`;
   } catch {
     return null;
   }
@@ -67,9 +111,7 @@ export function toDateStringOnly(dateInput: string | Date | undefined): string |
  * Categorizes leads into Overdue, Due Today, Upcoming, and No Date.
  */
 export function filterFollowUps(leads: Lead[], referenceDateStr?: string): FollowUpCategory {
-  const refDate = referenceDateStr
-    ? new Date(referenceDateStr).toISOString().slice(0, 10)
-    : new Date().toISOString().slice(0, 10);
+  const refDate = toDateStringOnly(referenceDateStr) ?? toDateStringOnly(new Date())!;
 
   const overdue: Lead[] = [];
   const dueToday: Lead[] = [];
@@ -106,18 +148,18 @@ export function filterFollowUps(leads: Lead[], referenceDateStr?: string): Follo
  * Formats monetary amounts with neat separators.
  */
 export function formatCurrency(amount: number, currency: string = 'IDR'): string {
-  if (isNaN(amount)) return '0';
-  if (currency === 'IDR') {
-    // Format compact or full
-    if (amount >= 1_000_000_000) {
-      return `Rp ${(amount / 1_000_000_000).toFixed(1)}B`;
-    }
-    if (amount >= 1_000_000) {
-      return `Rp ${(amount / 1_000_000).toFixed(1)}M`;
-    }
-    return `Rp ${new Intl.NumberFormat('id-ID').format(amount)}`;
-  }
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: 0 }).format(amount);
+  const safeAmount = Number.isFinite(amount) ? amount : 0;
+  return new Intl.NumberFormat('id-ID', {
+    style: 'currency',
+    currency,
+    maximumFractionDigits: 0,
+  }).format(safeAmount);
+}
+
+/** Formats counts and other numeric values using Indonesian separators. */
+export function formatNumber(value: number, options: Intl.NumberFormatOptions = {}): string {
+  const safeValue = Number.isFinite(value) ? value : 0;
+  return new Intl.NumberFormat('id-ID', options).format(safeValue);
 }
 
 /**
@@ -188,14 +230,23 @@ export function generateWhatsAppUrl(
 export function formatDateDisplay(dateStr?: string): string {
   if (!dateStr) return 'No date set';
   try {
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return dateStr;
-    return d.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    });
+    const localDate = toDateStringOnly(dateStr);
+    if (!localDate) return dateStr;
+    const displayDate = new Date(`${localDate}T12:00:00+07:00`);
+    return dateDisplayFormatter.format(displayDate);
   } catch {
     return dateStr;
+  }
+}
+
+/** Formats an absolute timestamp in Indonesian local time for activity history. */
+export function formatDateTimeDisplay(dateTimeStr?: string): string {
+  if (!dateTimeStr) return 'Recent';
+  try {
+    const date = new Date(dateTimeStr);
+    if (Number.isNaN(date.getTime())) return dateTimeStr;
+    return dateTimeDisplayFormatter.format(date);
+  } catch {
+    return dateTimeStr;
   }
 }

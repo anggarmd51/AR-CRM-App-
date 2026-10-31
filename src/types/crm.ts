@@ -1,12 +1,22 @@
 export type PipelineStage = 'Prospect' | 'Meeting' | 'Negotiation' | 'Closing Won' | 'Closing Lost';
 
-export type LeadScore = 'Hot' | 'Warm' | 'Cold';
+export type LeadScore = 'Hot' | 'Warm' | 'Cold' | 'Unrated';
+
+export interface ActivityGpsLocation {
+  latitude: number;
+  longitude: number;
+  accuracy_m: number;
+}
+
+export type ActivitySummarySource = 'gemini' | 'local';
 
 export interface Lead {
   id: string;
   company_name: string;
   contact_person: string;
-  phone: string | number;
+  email?: string;
+  phone: string;
+  address?: string;
   industry: string;
   city: string;
   pipeline_stage: PipelineStage;
@@ -18,15 +28,21 @@ export interface Lead {
   _syncStatus?: 'synced' | 'pending_insert' | 'pending_update' | 'error';
 }
 
+export type LeadCorrection = Partial<Pick<Lead,
+  'company_name' | 'contact_person' | 'email' | 'phone' | 'address' | 'industry' | 'city'
+  | 'deal_value' | 'next_followup_date' | 'lead_score'
+>>;
+
 export interface Activity {
   id: string;
   lead_id: string;
   activity_type: string;
   notes: string;
   ai_summary?: string;
-  location_gps?: string;
+  ai_summary_source?: ActivitySummarySource;
+  location_gps?: ActivityGpsLocation;
   created_at?: string;
-  _syncStatus?: 'synced' | 'pending_insert';
+  _syncStatus?: 'synced' | 'pending_insert' | 'pending_update' | 'error';
 }
 
 export interface GlobalLead {
@@ -42,6 +58,8 @@ export interface GlobalLead {
   decision_maker_title?: string;
   email?: string;
   ai_match_score?: number;
+  ai_verification_status?: 'needs_manual_verification';
+  ai_source_urls?: string[];
   intent_level?: 'High Intent' | 'In-Market' | 'Strong Fit' | 'Surge Intent';
   company_initials?: string;
   is_ai_enriched?: boolean;
