@@ -1,7 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { getStagingAppCheckSiteKey, initializeStagingAppCheck } from './firebaseAppCheckPolicy.ts';
+import {
+  getStagingAppCheckSiteKey,
+  initializeStagingAppCheck,
+  shouldBypassAppCheckForExactStagingPreview,
+  STAGING_PREVIEW_ALIAS_ORIGIN,
+} from './firebaseAppCheckPolicy.ts';
 import { KNOWN_PRODUCTION_FIREBASE_PROJECT_ID, resolveFirebaseTarget } from './firebaseDeploymentGuard.ts';
 
 const productionProjectId = KNOWN_PRODUCTION_FIREBASE_PROJECT_ID;
@@ -137,4 +142,36 @@ test('Firebase initializes App Check before creating Auth or Firestore clients',
   assert.match(firebaseModule, /initializeStagingAppCheck\(\s*firebaseTarget/);
   assert.match(firebaseModule, /getToken\(appCheck, true\)/);
   assert.match(firebaseModule, /assertAppCheckVerified\(\)/);
+  assert.match(firebaseModule, /firebaseTarget !== 'staging' \|\| isExactStagingPreviewBypass\(\)/);
+  assert.match(firebaseModule, /if \(isExactStagingPreviewBypass\(\)\)/);
+  assert.match(firebaseModule, /!isExactStagingPreviewBypass\(\) && !appCheckVerified/);
+});
+
+test('temporary App Check bypass requires the exact staging Preview, branch, and runtime alias', () => {
+  const exactContext = {
+    firebaseTarget: 'staging' as const,
+    vercelEnvironment: 'preview',
+    gitRef: 'cue/firebase-stabilization',
+    runtimeOrigin: STAGING_PREVIEW_ALIAS_ORIGIN,
+  };
+
+  assert.equal(shouldBypassAppCheckForExactStagingPreview(exactContext), true);
+
+  const outOfBoundaryContexts = [
+    { ...exactContext, firebaseTarget: 'local' as const },
+    { ...exactContext, firebaseTarget: 'production' as const },
+    { ...exactContext, vercelEnvironment: 'development' },
+    { ...exactContext, vercelEnvironment: 'production' },
+    { ...exactContext, vercelEnvironment: '' },
+    { ...exactContext, gitRef: 'main' },
+    { ...exactContext, gitRef: '' },
+    { ...exactContext, runtimeOrigin: 'https://another-preview.vercel.app' },
+    { ...exactContext, runtimeOrigin: `${STAGING_PREVIEW_ALIAS_ORIGIN}/` },
+    { ...exactContext, runtimeOrigin: 'http://arcrm-app-git-cue-firebase-stabilization-anggaramadhan538-8607.vercel.app' },
+    { ...exactContext, runtimeOrigin: '' },
+  ];
+
+  for (const context of outOfBoundaryContexts) {
+    assert.equal(shouldBypassAppCheckForExactStagingPreview(context), false);
+  }
 });

@@ -4,10 +4,14 @@ import { connectAuthEmulator, getAuth, GoogleAuthProvider, type Auth } from 'fir
 import { connectFirestoreEmulator, getFirestore, type Firestore } from 'firebase/firestore';
 import { firebaseOwnerBindingMatchesRules, firebaseStagingOwnerBindingMatchesRules } from './firebaseRulesBinding.ts';
 import { shouldUseFirebaseEmulators } from './firebaseEmulatorMode.ts';
-import { initializeStagingAppCheck } from './firebaseAppCheckPolicy.ts';
+import {
+  initializeStagingAppCheck,
+  shouldBypassAppCheckForExactStagingPreview,
+} from './firebaseAppCheckPolicy.ts';
 import { resolveFirebaseTarget, type FirebaseTarget } from './firebaseDeploymentGuard.ts';
 
 declare const __VERCEL_ENV__: string;
+declare const __VERCEL_GIT_COMMIT_REF__: string;
 
 const requiredConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -54,8 +58,17 @@ function assertTargetConfiguration(): void {
   if (targetConfigurationError) throw targetConfigurationError;
 }
 
+function isExactStagingPreviewBypass(): boolean {
+  return shouldBypassAppCheckForExactStagingPreview({
+    firebaseTarget,
+    vercelEnvironment: typeof __VERCEL_ENV__ === 'undefined' ? '' : __VERCEL_ENV__,
+    gitRef: typeof __VERCEL_GIT_COMMIT_REF__ === 'undefined' ? '' : __VERCEL_GIT_COMMIT_REF__,
+    runtimeOrigin: typeof window === 'undefined' ? '' : window.location.origin,
+  });
+}
+
 function initializeRequiredAppCheck(firebaseApp: FirebaseApp): void {
-  if (firebaseTarget !== 'staging') return;
+  if (firebaseTarget !== 'staging' || isExactStagingPreviewBypass()) return;
   if (appCheckStartupError) throw appCheckStartupError;
   if (appCheck) return;
 
@@ -90,6 +103,10 @@ export async function verifyFirebaseStartup(): Promise<void> {
   if (!firebaseIsConfigured) throw new Error('Firebase is not configured.');
   const firebaseApp = getFirebaseApp();
   if (firebaseTarget !== 'staging') return;
+  if (isExactStagingPreviewBypass()) {
+    appCheckVerified = true;
+    return;
+  }
   if (appCheckStartupError) throw appCheckStartupError;
   if (!appCheck) throw new Error('App Check staging failed closed before Firebase clients were created.');
   try {
@@ -105,7 +122,7 @@ export async function verifyFirebaseStartup(): Promise<void> {
 }
 
 function assertAppCheckVerified(): void {
-  if (firebaseTarget === 'staging' && !appCheckVerified) {
+  if (firebaseTarget === 'staging' && !isExactStagingPreviewBypass() && !appCheckVerified) {
     throw appCheckStartupError ?? new Error('App Check staging must be verified before Firebase Auth or Firestore is used.');
   }
 }

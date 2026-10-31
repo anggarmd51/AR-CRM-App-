@@ -8,10 +8,11 @@ const configDirectory = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig(() => {
   return {
-    // Vercel system environment is not otherwise exposed to browser code. Only
-    // the non-secret deployment class is embedded so Firebase can fail closed.
+    // Vercel system metadata is not otherwise exposed to browser code. Only
+    // non-secret deployment class/ref values are embedded so Firebase can fail closed.
     define: {
       __VERCEL_ENV__: JSON.stringify(process.env.VERCEL_ENV ?? ''),
+      __VERCEL_GIT_COMMIT_REF__: JSON.stringify(process.env.VERCEL_GIT_COMMIT_REF ?? ''),
     },
     plugins: [react(), tailwindcss()],
     build: {

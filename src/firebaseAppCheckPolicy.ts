@@ -35,3 +35,26 @@ export function initializeStagingAppCheck(
     };
   }
 }
+
+export interface StagingPreviewAppCheckBypassContext {
+  firebaseTarget: FirebaseTarget;
+  vercelEnvironment: string;
+  gitRef: string;
+  runtimeOrigin: string;
+}
+
+export const STAGING_PREVIEW_ALIAS_ORIGIN =
+  'https://arcrm-app-git-cue-firebase-stabilization-anggaramadhan538-8607.vercel.app';
+
+/**
+ * Temporary emergency bypass: all four deployment/runtime boundaries must
+ * match. Any missing or unexpected value keeps strict App Check enabled.
+ */
+export function shouldBypassAppCheckForExactStagingPreview(
+  context: StagingPreviewAppCheckBypassContext,
+): boolean {
+  return context.firebaseTarget === 'staging'
+    && context.vercelEnvironment === 'preview'
+    && context.gitRef === 'cue/firebase-stabilization'
+    && context.runtimeOrigin === STAGING_PREVIEW_ALIAS_ORIGIN;
+}
