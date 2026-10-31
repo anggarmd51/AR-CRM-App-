@@ -12,3 +12,19 @@ dist
 **/*.log
 .vercel
 **/.vercel
+
+# Keep the deployment artifact runtime-only, matching the verified live source.
+.firebaserc.example
+docs
+tests
+**/*.test.ts
+firebase.json
+firebase.staging.json
+firestore.indexes.json
+firestore.rules
+HANDOVER_AUDIT_FINAL.md
+metadata.json
+PROJECT_STATE.md
+scripts/migrate_crm.py
+scripts/run-firestore-staging.mjs
+server.ts
