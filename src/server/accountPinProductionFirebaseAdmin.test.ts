@@ -6,6 +6,7 @@ import {
   ACCOUNT_PIN_APPROVED_RELEASE_BRANCH,
   ACCOUNT_PIN_PRODUCTION_GCP_PROJECT_NUMBER,
   ACCOUNT_PIN_PRODUCTION_WIF_AUDIENCE,
+  ACCOUNT_PIN_PRODUCTION_WIF_STS_AUDIENCE,
   ACCOUNT_PIN_PRODUCTION_PROJECT_ID,
   ACCOUNT_PIN_PRODUCTION_SERVICE_ACCOUNT_ID,
   ACCOUNT_PIN_PRODUCTION_WIF_POOL_ID,
@@ -164,9 +165,9 @@ test('mocked Production WIF uses the exact audience and service account, and ada
   assert.equal(token.access_token, 'mock-google-access-token');
   assert.equal(token.expires_in, 3_600);
 
-  const expectedAudience = ACCOUNT_PIN_PRODUCTION_WIF_AUDIENCE;
-  assert.equal(requestedAudience, expectedAudience);
-  assert.equal(capturedExternalOptions?.audience, expectedAudience);
+  assert.notEqual(ACCOUNT_PIN_PRODUCTION_WIF_AUDIENCE, ACCOUNT_PIN_PRODUCTION_WIF_STS_AUDIENCE);
+  assert.equal(requestedAudience, 'https://iam.googleapis.com/projects/577829773376/locations/global/workloadIdentityPools/vercel-prod/providers/vercel-prod');
+  assert.equal(capturedExternalOptions?.audience, '//iam.googleapis.com/projects/577829773376/locations/global/workloadIdentityPools/vercel-prod/providers/vercel-prod');
   assert.equal('credential_source' in (capturedExternalOptions ?? {}), false);
   assert.equal('private_key' in (capturedExternalOptions ?? {}), false);
   assert.equal(capturedExternalOptions?.subject_token_type, 'urn:ietf:params:oauth:token-type:jwt');
@@ -177,7 +178,7 @@ test('mocked Production WIF uses the exact audience and service account, and ada
   );
 });
 
-test('OIDC subject-token supplier rejects a wrong audience and an empty Vercel token', async () => {
+test('OIDC subject-token supplier accepts STS audience and rejects HTTPS or wrong audiences', async () => {
   let suppliedTokenCalls = 0;
   let externalOptions: IdentityPoolClientOptions | undefined;
   createProductionAccountPinCredential(productionEnvironment, {
@@ -201,10 +202,8 @@ test('OIDC subject-token supplier rejects a wrong audience and an empty Vercel t
     subjectTokenType: externalOptions?.subject_token_type ?? '',
     transporter: {} as ExternalAccountSupplierContext['transporter'],
   };
-  await assert.rejects(
-    supplier.getSubjectToken({ ...context, audience: `${context.audience}/wrong` }),
-    /does not match the approved Google identity provider/,
-  );
+  await assert.rejects(supplier.getSubjectToken({ ...context, audience: ACCOUNT_PIN_PRODUCTION_WIF_AUDIENCE }), /does not match the approved Google identity provider/);
+  await assert.rejects(supplier.getSubjectToken({ ...context, audience: `${context.audience}/wrong` }), /does not match the approved Google identity provider/);
   assert.equal(suppliedTokenCalls, 0);
   await assert.rejects(supplier.getSubjectToken(context), /did not return a valid subject token/);
   assert.equal(suppliedTokenCalls, 1);
