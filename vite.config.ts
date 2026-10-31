@@ -12,7 +12,6 @@ export default defineConfig(() => {
     // the non-secret deployment class is embedded so Firebase can fail closed.
     define: {
       __VERCEL_ENV__: JSON.stringify(process.env.VERCEL_ENV ?? ''),
-      __VERCEL_GIT_COMMIT_REF__: JSON.stringify(process.env.VERCEL_GIT_COMMIT_REF ?? ''),
     },
     plugins: [react(), tailwindcss()],
     build: {

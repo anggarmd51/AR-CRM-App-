@@ -6,7 +6,6 @@ import { firebaseOwnerBindingMatchesRules, firebaseStagingOwnerBindingMatchesRul
 import { shouldUseFirebaseEmulators } from './firebaseEmulatorMode.ts';
 import { initializeStagingAppCheck } from './firebaseAppCheckPolicy.ts';
 import { resolveFirebaseTarget, type FirebaseTarget } from './firebaseDeploymentGuard.ts';
-import { privateStagingPreviewDebug, privateStagingDebugRegistrationReady } from './stagingAppCheckDebug.ts';
 
 declare const __VERCEL_ENV__: string;
 
@@ -66,7 +65,7 @@ function initializeRequiredAppCheck(firebaseApp: FirebaseApp): void {
     (siteKey) => {
       appCheck = initializeAppCheck(firebaseApp, {
         provider: new ReCaptchaEnterpriseProvider(siteKey),
-        isTokenAutoRefreshEnabled: !privateStagingPreviewDebug,
+        isTokenAutoRefreshEnabled: true,
       });
     },
   );
@@ -93,10 +92,6 @@ export async function verifyFirebaseStartup(): Promise<void> {
   if (firebaseTarget !== 'staging') return;
   if (appCheckStartupError) throw appCheckStartupError;
   if (!appCheck) throw new Error('App Check staging failed closed before Firebase clients were created.');
-  if (privateStagingPreviewDebug && !privateStagingDebugRegistrationReady()) {
-    appCheckStartupError = new Error('Uji debug privat menunggu registrasi lokal. Firebase Auth dan Firestore tetap diblokir.');
-    throw appCheckStartupError;
-  }
   try {
     const token = await getToken(appCheck, true);
     if (!token.token) throw new Error('App Check returned an empty token.');
