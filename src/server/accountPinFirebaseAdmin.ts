@@ -2,7 +2,7 @@ import { getVercelOidcToken } from '@vercel/oidc';
 import { ExternalAccountClient, type IdentityPoolClientOptions } from 'google-auth-library';
 import { cert, getApps, initializeApp, type App, type AppOptions, type Credential } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-import { getFirestore } from 'firebase-admin/firestore';
+import { getFirestore, Firestore as GoogleCloudFirestore, type Firestore as FirebaseAdminFirestore } from 'firebase-admin/firestore';
 import { FirestoreAccountPinStore } from './accountPinFirestoreStore.ts';
 import { isAccountPinEnrollmentFlagEnabled } from './accountPinEnrollmentPolicy.ts';
 import { FIREBASE_RULES_WORKSPACE_ID, firebaseOwnerBindingMatchesRules } from '../firebaseRulesBinding.ts';
@@ -67,6 +67,9 @@ interface ProductionAdminDependencies {
 }
 
 const keylessWifCredentials = new WeakSet<object>();
+const keylessWifExternalAccountClients = new WeakMap<object, ExternalAccountTokenClient>();
+const keylessWifApps = new WeakSet<object>();
+const keylessWifAppClients = new WeakMap<object, ExternalAccountTokenClient>();
 
 function required(environment: Environment, name: string): string {
   const value = environment[name]?.trim();
@@ -185,6 +188,7 @@ export function createProductionAccountPinCredential(
     },
   };
   keylessWifCredentials.add(credential as object);
+  keylessWifExternalAccountClients.set(credential as object, externalAccountClient);
   return credential;
 }
 
@@ -200,9 +204,12 @@ export function createProductionFirebaseAdminApp(
     if (existing.options.projectId !== config.projectId
       || existing.options.serviceAccountId !== config.serviceAccountId
       || !existing.options.credential
-      || !keylessWifCredentials.has(existing.options.credential as object)) {
+      || !keylessWifApps.has(existing as object)) {
       throw new Error('Account PIN Firebase Admin app is not bound to the approved keyless Production configuration.');
     }
+    keylessWifApps.add(existing as object);
+    const existingClient = keylessWifExternalAccountClients.get(existing.options.credential as object);
+    if (existingClient) keylessWifAppClients.set(existing as object, existingClient);
     return existing;
   }
 
@@ -214,11 +221,51 @@ export function createProductionFirebaseAdminApp(
   }
 
   const initializeAdminApp = dependencies.initializeApp ?? initializeApp;
-  return initializeAdminApp({
+  const app = initializeAdminApp({
     credential,
     projectId: config.projectId,
     serviceAccountId: config.serviceAccountId,
   }, PRODUCTION_ADMIN_APP_NAME);
+  // Firebase Admin may normalize/wrap the credential while constructing the App.
+  // Bind that exact normalized object so Firestore cannot substitute another client.
+  if (app.options.credential && app.options.credential !== credential) {
+    const externalAccountClient = keylessWifExternalAccountClients.get(credential as object);
+    if (!externalAccountClient) {
+      throw new Error('Account PIN Production runtime requires the approved Google external account client.');
+    }
+    keylessWifCredentials.add(app.options.credential as object);
+    keylessWifExternalAccountClients.set(app.options.credential as object, externalAccountClient);
+  }
+  const appClient = keylessWifExternalAccountClients.get(app.options.credential as object)
+    ?? keylessWifExternalAccountClients.get(credential as object);
+  if (!appClient) {
+    throw new Error('Account PIN Production runtime requires the approved Google external account client.');
+  }
+  keylessWifApps.add(app as object);
+  keylessWifAppClients.set(app as object, appClient);
+  return app;
+}
+
+/** Creates Production Firestore with the exact WIF client; never falls back to ADC or app credentials. */
+export function createProductionFirestore(app: App): FirebaseAdminFirestore {
+  if (app.name !== PRODUCTION_ADMIN_APP_NAME
+    || app.options.projectId !== ACCOUNT_PIN_PRODUCTION_PROJECT_ID
+    || app.options.serviceAccountId !== ACCOUNT_PIN_PRODUCTION_SERVICE_ACCOUNT_ID
+    || !app.options.credential
+    || !keylessWifApps.has(app as object)) {
+    throw new Error('Account PIN Firestore is not bound to the approved keyless Production configuration.');
+  }
+
+  const authClient = keylessWifAppClients.get(app as object)
+    ?? keylessWifExternalAccountClients.get(app.options.credential as object);
+  if (!authClient) {
+    throw new Error('Account PIN Firestore requires the approved Google external account client.');
+  }
+
+  return new GoogleCloudFirestore({
+    projectId: ACCOUNT_PIN_PRODUCTION_PROJECT_ID,
+    authClient,
+  });
 }
 
 function getStagingAdminApp(environment: Environment) {
@@ -265,9 +312,10 @@ function createAccountPinRuntime(
   ownerUid: string,
   pepper: string,
   app: App,
+  firestoreOverride?: FirebaseAdminFirestore,
 ): AccountPinRuntime {
   const auth = getAuth(app);
-  const firestore = getFirestore(app);
+  const firestore = firestoreOverride ?? getFirestore(app);
   const store = new FirestoreAccountPinStore(firestore);
   const dependencies: PinVerificationDependencies = {
     ownerUid,
@@ -330,5 +378,5 @@ export function createProductionAccountPinRuntime(environment: Environment = pro
   if (Buffer.byteLength(pepper, 'utf8') < 32) throw new Error('Account PIN server configuration is incomplete.');
 
   const app = createProductionFirebaseAdminApp(environment);
-  return createAccountPinRuntime(environment, config.projectId, ownerUid, pepper, app);
+  return createAccountPinRuntime(environment, config.projectId, ownerUid, pepper, app, createProductionFirestore(app));
 }

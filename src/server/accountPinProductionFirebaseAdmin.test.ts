@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { App, AppOptions } from 'firebase-admin/app';
+import { initializeApp, type App, type AppOptions } from 'firebase-admin/app';
 import type { ExternalAccountSupplierContext, IdentityPoolClientOptions } from 'google-auth-library';
 import {
   ACCOUNT_PIN_APPROVED_RELEASE_BRANCH,
@@ -12,6 +12,7 @@ import {
   ACCOUNT_PIN_PRODUCTION_WIF_PROVIDER_ID,
   createProductionAccountPinCredential,
   createProductionAccountPinRuntime,
+  createProductionFirestore,
   createProductionFirebaseAdminApp,
   resolveProductionAccountPinOwnerUid,
 } from './accountPinFirebaseAdmin.ts';
@@ -260,6 +261,62 @@ test('Production Firebase Admin refuses to reuse an app with a non-WIF credentia
 
   assert.throws(
     () => createProductionFirebaseAdminApp(productionEnvironment, { getApps: () => [app] }),
+    /not bound to the approved keyless Production configuration/,
+  );
+});
+
+test('real Production bootstrap creates Firestore with the existing WIF client and no ADC fallback', () => {
+  const externalAccountClient = {
+    credentials: { expiry_date: Date.now() + 3_600_000 },
+    async getAccessToken() { return { token: 'synthetic-test-only-access-token' }; },
+  };
+  const credential = createProductionAccountPinCredential(productionEnvironment, {
+    getVercelOidcToken: async () => 'synthetic-test-only-oidc-token',
+    createExternalAccountClient: () => externalAccountClient,
+  });
+  const app = createProductionFirebaseAdminApp(productionEnvironment, {
+    getApps: () => [],
+    createCredential: () => credential,
+    initializeApp,
+  });
+
+  const firestore = createProductionFirestore(app) as unknown as {
+    projectId: string;
+    _settings?: { projectId?: string; authClient?: unknown };
+  };
+  assert.equal(firestore.projectId, ACCOUNT_PIN_PRODUCTION_PROJECT_ID);
+  assert.equal(firestore._settings?.projectId, ACCOUNT_PIN_PRODUCTION_PROJECT_ID);
+  assert.equal(firestore._settings?.authClient, externalAccountClient);
+
+  const runtime = createProductionAccountPinRuntime({
+    ...productionEnvironment,
+    ACCOUNT_PIN_OWNER_UID: FIREBASE_RULES_OWNER_UID,
+    ACCOUNT_PIN_PEPPER: 'synthetic-test-only-pepper-32-bytes-minimum',
+  });
+  assert.equal(typeof runtime.verify, 'function');
+  assert.equal(typeof runtime.enroll, 'function');
+});
+
+test('Production Firestore refuses a cross-project or unbound credential and requires explicit auth client binding', () => {
+  const untrustedApp = {
+    name: 'ar-crm-account-pin-production-wif',
+    options: {
+      projectId: ACCOUNT_PIN_PRODUCTION_PROJECT_ID,
+      serviceAccountId: ACCOUNT_PIN_PRODUCTION_SERVICE_ACCOUNT_ID,
+      credential: { getAccessToken: async () => ({ access_token: 'untrusted', expires_in: 3_600 }) },
+    },
+  } as unknown as App;
+  assert.throws(
+    () => createProductionFirestore(untrustedApp),
+    /not bound to the approved keyless Production configuration/,
+  );
+
+  const wrongProjectApp = {
+    ...untrustedApp,
+    options: { ...untrustedApp.options, projectId: 'wrong-project' },
+  } as unknown as App;
+  assert.throws(
+    () => createProductionFirestore(wrongProjectApp),
     /not bound to the approved keyless Production configuration/,
   );
 });
