@@ -8,6 +8,10 @@ import { isAccountPinEnrollmentFlagEnabled } from './accountPinEnrollmentPolicy.
 import { FIREBASE_RULES_WORKSPACE_ID, firebaseOwnerBindingMatchesRules } from '../firebaseRulesBinding.ts';
 import { reserveAiUsage } from './leadFinderQuota.ts';
 import {
+  withAccountPinFirebaseDiagnostics,
+  type AccountPinFirebaseDiagnosticLogger,
+} from './accountPinFirebaseDiagnostics.ts';
+import {
   createAccountPinEnrollmentService,
   createAccountPinStatusService,
   createAccountPinVerificationService,
@@ -58,6 +62,7 @@ interface ProductionCredentialDependencies {
   getVercelOidcToken?: OidcTokenGetter;
   createExternalAccountClient?: ExternalAccountClientFactory;
   now?: () => number;
+  diagnosticLogger?: AccountPinFirebaseDiagnosticLogger;
 }
 
 interface ProductionAdminDependencies {
@@ -172,7 +177,11 @@ export function createProductionAccountPinCredential(
 
   const credential: Credential = {
     async getAccessToken() {
-      const tokenResponse = await externalAccountClient.getAccessToken();
+      const tokenResponse = await withAccountPinFirebaseDiagnostics(
+        'production_wif_get_access_token',
+        () => externalAccountClient.getAccessToken(),
+        dependencies.diagnosticLogger,
+      );
       const expiryDate = externalAccountClient.credentials.expiry_date;
       const expiresIn = typeof expiryDate === 'number' && Number.isFinite(expiryDate)
         ? Math.floor((expiryDate - now()) / 1_000)
@@ -320,17 +329,19 @@ function createAccountPinRuntime(
   const dependencies: PinVerificationDependencies = {
     ownerUid,
     async verifyFirebaseIdToken(idToken) {
-      const decoded = await auth.verifyIdToken(idToken, true);
-      if (decoded.aud !== projectId
-        || decoded.iss !== `https://securetoken.google.com/${projectId}`
-        || !Number.isInteger(decoded.auth_time)) {
-        throw new Error('Firebase ID token audience, issuer, or authentication time mismatch.');
-      }
-      return {
-        uid: decoded.uid,
-        authTimeSeconds: decoded.auth_time,
-        ...(typeof decoded.pinSessionId === 'string' ? { pinSessionId: decoded.pinSessionId } : {}),
-      };
+      return withAccountPinFirebaseDiagnostics('firebase_id_token_verification', async () => {
+        const decoded = await auth.verifyIdToken(idToken, true);
+        if (decoded.aud !== projectId
+          || decoded.iss !== `https://securetoken.google.com/${projectId}`
+          || !Number.isInteger(decoded.auth_time)) {
+          throw new Error('Firebase ID token audience, issuer, or authentication time mismatch.');
+        }
+        return {
+          uid: decoded.uid,
+          authTimeSeconds: decoded.auth_time,
+          ...(typeof decoded.pinSessionId === 'string' ? { pinSessionId: decoded.pinSessionId } : {}),
+        };
+      });
     },
     credentials: store,
     verifyAccountPin: (pin, verifier) => verifyAccountPinVerifier(pin, verifier, pepper),
