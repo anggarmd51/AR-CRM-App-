@@ -256,7 +256,8 @@ const LeadKanbanCard: React.FC<LeadKanbanCardProps> = ({
 
   const currentIndex = PIPELINE_STAGES.indexOf(lead.pipeline_stage);
   const canMoveBack = currentIndex > 0 && canTransitionFromAuthoritativeStage(lead.pipeline_stage, PIPELINE_STAGES[currentIndex - 1]);
-  const canMoveForward = currentIndex < PIPELINE_STAGES.length - 1;
+  const canMoveForward = currentIndex < PIPELINE_STAGES.length - 1 && canTransitionFromAuthoritativeStage(lead.pipeline_stage, PIPELINE_STAGES[currentIndex + 1]);
+  const isStageFinal = lead.pipeline_stage === 'Closing Won';
 
   return (
     <div className="bg-[#fcfcfa] hover:bg-white border border-[#1f1f1f] rounded-[12px] p-3 transition-all">
@@ -355,14 +356,15 @@ const LeadKanbanCard: React.FC<LeadKanbanCardProps> = ({
           <div className="relative">
             <button
               type="button"
+              disabled={isStageFinal}
               onClick={(e) => {
                 e.stopPropagation();
                 setShowStageSelector(!showStageSelector);
               }}
               className="min-h-[36px] px-2.5 py-1.5 rounded-[8px] bg-[#f8f5ee] hover:bg-[#eae4d5] text-[11px] font-bold text-[#1f1f1f] border border-[#1f1f1f] flex items-center gap-1 transition-all active:scale-95"
             >
-              <span>Move</span>
-              <ChevronDown className="w-3 h-3" />
+              <span>{isStageFinal ? 'Won final' : 'Move'}</span>
+              {!isStageFinal && <ChevronDown className="w-3 h-3" />}
             </button>
 
             {showStageSelector && (

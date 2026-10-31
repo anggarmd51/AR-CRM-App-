@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import 'fake-indexeddb/auto';
 import { CrmSyncEngine, CrmStorage, OfflineWriteQueue } from './syncQueue.ts';
 import { allowlistedMutation, IndexedDbOfflineOutboxStore, type DurableMutation, type DurableQueueInput, type DurableQueueRecord, type OfflineOutboxStore, type QueueOwnerScope, type RestoredQueueRecord } from './offlineOutbox.ts';
+import { assertSafeInitialLeadStage } from './salesSafety.ts';
 
 // Mock localStorage for Node environment testing
 const storageMap = new Map<string, string>();
@@ -847,4 +848,75 @@ test('stage mutation keeps follow-up date optional instead of clearing it', () =
     kind: 'update-lead-stage',
     payload: { lead_id: 'lead-safe', pipeline_stage: 'Meeting' },
   });
+});
+
+test('encrypted legacy lead intents retain original text and initial Won on restoration', async () => {
+  const nonce = crypto.randomUUID();
+  const scope = { ownerId: `owner-legacy-${nonce}`, workspaceId: `workspace-legacy-${nonce}` };
+  const store = new IndexedDbOfflineOutboxStore();
+  for (const stage of ['Prospect', 'Closing Won'] as const) {
+    const id = `legacy-${stage.replaceAll(' ', '-')}-${nonce}`;
+    const original = leadRecord(id);
+    if (original.kind !== 'create-lead') throw new Error('Invalid synthetic fixture.');
+    const record: DurableQueueRecord = {
+      ...original,
+      ...scope,
+      payload: {
+        ...original.payload,
+        company_name: '  Original company intent  ',
+        contact_person: '  Original contact  ',
+        phone: ' 0000000000 ',
+        industry: '  Test  ',
+        city: '  Jakarta  ',
+        pipeline_stage: stage,
+      },
+      attempts: 0,
+      state: 'pending',
+    };
+    await store.insert(record);
+    try {
+      const [restored] = await new IndexedDbOfflineOutboxStore().list(scope);
+      assert.deepEqual(restored?.payload, record.payload);
+      assert.equal(restored?.state, 'pending');
+    } finally {
+      await store.remove(scope, id);
+    }
+  }
+});
+
+test('legacy initial-Won replay stays manual, fails before remote write, and preserves its intent', async () => {
+  const original = leadRecord('legacy-won-held');
+  if (original.kind !== 'create-lead') throw new Error('Invalid synthetic fixture.');
+  const record: DurableQueueRecord = {
+    ...original,
+    payload: { ...original.payload, company_name: '  Original intent  ', pipeline_stage: 'Closing Won' },
+    attempts: 0,
+    state: 'pending',
+  };
+  const store = new MemoryOutboxStore();
+  await store.insert(record);
+  const queue = new OfflineWriteQueue(new FakeConnectivity(true), store, { retryBaseMs: 60_000 });
+  let replayCalls = 0;
+  let remoteWrites = 0;
+  try {
+    await queue.activateScope(ownerScope, async (restored) => {
+      replayCalls += 1;
+      if (restored.kind !== 'create-lead' || !restored.payload) throw new Error('Invalid synthetic replay.');
+      const payload = restored.payload as Extract<DurableMutation, { kind: 'create-lead' }>['payload'];
+      assertSafeInitialLeadStage(payload.pipeline_stage, 'failed-precondition');
+      remoteWrites += 1;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    assert.equal(replayCalls, 0);
+    assert.equal(queue.getSnapshot().pendingCount, 1);
+    assert.equal(queue.startManualReplay(), 1);
+    await waitFor(() => queue.getSnapshot().failedCount === 1);
+    assert.equal(replayCalls, 1);
+    assert.equal(remoteWrites, 0);
+    const [preserved] = await store.list(ownerScope);
+    assert.equal(preserved?.state, 'failed');
+    assert.deepEqual(preserved?.payload, record.payload);
+  } finally {
+    queue.deactivateScope();
+  }
 });

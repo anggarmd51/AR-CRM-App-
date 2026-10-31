@@ -28,11 +28,15 @@ function boundedText(value: unknown, field: keyof typeof SALES_TEXT_LIMITS, requ
   return normalized;
 }
 
-/** Normalize and validate the create-lead payload before it can enter the durable outbox. */
-export function normalizeCreateLeadPayload(input: CreateLeadInput): CreateLeadInput {
-  if (input.pipeline_stage === 'Closing Won') {
-    throw Object.assign(new Error('Lead baru tidak dapat dibuat langsung sebagai Closing Won. Buat lead sebagai Prospect, lalu pindahkan ke Closing Won untuk membuat arsip.'), { code: 'invalid-argument' });
+export function assertSafeInitialLeadStage(stage: PipelineStage, code: 'invalid-argument' | 'failed-precondition' = 'invalid-argument'): void {
+  if (stage === 'Closing Won') {
+    throw Object.assign(new Error('Lead baru tidak dapat dibuat langsung sebagai Closing Won. Buat lead sebagai Prospect, lalu pindahkan ke Closing Won untuk membuat arsip.'), { code });
   }
+}
+
+/** Normalize only NEW input, never an already persisted/idempotent intent. */
+export function normalizeCreateLeadPayload(input: CreateLeadInput): CreateLeadInput {
+  assertSafeInitialLeadStage(input.pipeline_stage);
   return {
     ...input,
     company_name: boundedText(input.company_name, 'company_name', true),
@@ -44,5 +48,5 @@ export function normalizeCreateLeadPayload(input: CreateLeadInput): CreateLeadIn
 }
 
 export function canTransitionFromAuthoritativeStage(current: PipelineStage, requested: PipelineStage): boolean {
-  return current !== 'Closing Won' || requested === 'Closing Won' || requested === 'Closing Lost';
+  return current !== 'Closing Won' || requested === 'Closing Won';
 }

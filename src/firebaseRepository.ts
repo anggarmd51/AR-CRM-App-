@@ -16,7 +16,7 @@ import { firestoreWriteQueue, type QueueWriteReceipt as QueueReceipt } from './u
 import type { DurableMutation, DurableQueueInput, DurableQueueRecord, RestoredQueueRecord } from './utils/offlineOutbox.ts';
 import { setDocWithServerReconciliation } from './utils/idempotentFirestoreCreate.ts';
 import type { LeadSnapshotState } from './utils/optimisticLeadStages.ts';
-import { canTransitionFromAuthoritativeStage, normalizeCreateLeadPayload } from './utils/salesSafety.ts';
+import { assertSafeInitialLeadStage, canTransitionFromAuthoritativeStage, normalizeCreateLeadPayload } from './utils/salesSafety.ts';
 
 export interface RepositoryWriteReceipt<T = void> {
   operationId: string;
@@ -109,6 +109,7 @@ async function executeDurableMutation(restored: RestoredQueueRecord): Promise<vo
 
   switch (record.kind) {
     case 'create-lead': {
+      assertSafeInitialLeadStage(record.payload.pipeline_stage, 'failed-precondition');
       const ref = doc(db, 'workspaces', record.workspaceId, 'leads', record.documentId);
       const expected = {
         ...record.payload,
@@ -168,7 +169,7 @@ async function executeDurableMutation(restored: RestoredQueueRecord): Promise<vo
         }
         const currentStage = leadSnapshot.data().pipeline_stage as PipelineStage;
         if (!canTransitionFromAuthoritativeStage(currentStage, record.payload.pipeline_stage)) {
-          throw Object.assign(new Error('Closing Won bersifat final dan tidak dapat dikembalikan ke stage sebelumnya.'), { code: 'failed-precondition' });
+          throw Object.assign(new Error('Closing Won bersifat final dan tidak dapat dipindahkan ke stage lain.'), { code: 'failed-precondition' });
         }
         transaction.update(ref, {
           pipeline_stage: record.payload.pipeline_stage,
