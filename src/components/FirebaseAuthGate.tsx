@@ -287,7 +287,7 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
 
   return (
     <>
-      <div className="fixed right-3 top-3 z-[60] flex items-center gap-2 rounded-[8px] border border-[#eae4d5] bg-[#fcfcfa]/95 px-2 py-1 text-[10px] text-[#6b665c] shadow-sm">
+      <div className="flex items-center justify-end gap-2 border-b border-[#eae4d5] bg-[#fcfcfa] px-3 py-1 text-[10px] text-[#6b665c] sm:px-4">
         <span className="max-w-[180px] truncate">{user.email || 'Google user'}</span>
         <button onClick={handleSignOut} className="font-bold text-[#ff4800]">Keluar</button>
       </div>

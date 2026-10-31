@@ -93,3 +93,9 @@ test('outbox UI exposes safe metadata only and keeps restored replay owner-initi
   assert.match(app, /startManualReplay\(\)/);
   assert.doesNotMatch(app, /getFailedMutation|correctFailedOperation/);
 });
+
+test('authenticated account controls stay in flow and cannot overlay the app header', () => {
+  assert.match(authGate, /<div className="flex items-center justify-end gap-2 border-b/);
+  assert.doesNotMatch(authGate, /className="fixed[^\"]*(?:top|right)-/);
+  assert.match(authGate, /<button onClick=\{handleSignOut\} className="font-bold text-\[#ff4800\]">Keluar<\/button>/);
+});
