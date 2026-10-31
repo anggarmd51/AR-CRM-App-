@@ -16,6 +16,7 @@ dist
 # Keep the deployment artifact runtime-only, matching the verified live source.
 .firebaserc.example
 docs
+ops
 tests
 **/*.test.ts
 firebase.json

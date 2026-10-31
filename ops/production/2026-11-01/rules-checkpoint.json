@@ -1,0 +1,16 @@
+{
+  "projectId": "ar-crm-73222",
+  "databaseId": "(default)",
+  "approvedSha256": "357eca226d04d7b205d9f8b4af68f20272de9b29f7730c09ffa36b01917f1266",
+  "approvedBytes": 10379,
+  "publishedLocalTime": "2026-11-01T00:44:00+07:00",
+  "consoleActiveVersionLabel": "Today • 12:44 AM",
+  "prepublishSha256": "2c5e37c802dbddcf1baf0baca09637c6f6385024a13da8e9842348da1bdcd221",
+  "prepublishBytes": 5543,
+  "rollbackVersionLocalTime": "2026-10-26T07:16:00+07:00",
+  "demoEmulatorTestsPassed": 6,
+  "liveReloadFullSourceEqualityVerified": true,
+  "customerDataWritesPerformed": false,
+  "hardDeleteRemainsDenied": true,
+  "iamChangesPerformed": false
+}
