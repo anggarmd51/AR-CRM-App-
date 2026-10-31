@@ -5,7 +5,6 @@ import type { ExternalAccountSupplierContext, IdentityPoolClientOptions } from '
 import {
   ACCOUNT_PIN_APPROVED_RELEASE_BRANCH,
   ACCOUNT_PIN_PRODUCTION_GCP_PROJECT_NUMBER,
-  ACCOUNT_PIN_PRODUCTION_WIF_AUDIENCE,
   ACCOUNT_PIN_PRODUCTION_WIF_STS_AUDIENCE,
   ACCOUNT_PIN_PRODUCTION_PROJECT_ID,
   ACCOUNT_PIN_PRODUCTION_SERVICE_ACCOUNT_ID,
@@ -111,20 +110,20 @@ test('Production owner UID falls back to the server VITE binding and rejects emp
   }
 });
 
-test('mocked Production WIF uses the exact audience and service account, and adapts OAuth access tokens for Firebase Admin without network calls', async () => {
+test('mocked Production WIF uses the exact STS audience and service account, and adapts OAuth access tokens for Firebase Admin without network calls', async () => {
   const now = 1_800_000_000_000;
   const environmentWithUnusedLegacyKey = {
     ...productionEnvironment,
     FIREBASE_ADMIN_SERVICE_ACCOUNT_JSON: '{"type":"service_account","private_key":"synthetic-test-only"}',
   };
   let capturedExternalOptions: IdentityPoolClientOptions | undefined;
-  let requestedAudience: string | undefined;
+  let oidcTokenCallArguments: unknown[] | undefined;
   let capturedAppOptions: AppOptions | undefined;
   let capturedAppName: string | undefined;
   const credential = createProductionAccountPinCredential(environmentWithUnusedLegacyKey, {
     now: () => now,
-    getVercelOidcToken: async ({ audience }) => {
-      requestedAudience = audience;
+    getVercelOidcToken: async (...args) => {
+      oidcTokenCallArguments = args;
       return 'mock-vercel-oidc-subject-token';
     },
     createExternalAccountClient: (options) => {
@@ -165,8 +164,7 @@ test('mocked Production WIF uses the exact audience and service account, and ada
   assert.equal(token.access_token, 'mock-google-access-token');
   assert.equal(token.expires_in, 3_600);
 
-  assert.notEqual(ACCOUNT_PIN_PRODUCTION_WIF_AUDIENCE, ACCOUNT_PIN_PRODUCTION_WIF_STS_AUDIENCE);
-  assert.equal(requestedAudience, 'https://iam.googleapis.com/projects/577829773376/locations/global/workloadIdentityPools/vercel-prod/providers/vercel-prod');
+  assert.deepEqual(oidcTokenCallArguments, []);
   assert.equal(capturedExternalOptions?.audience, '//iam.googleapis.com/projects/577829773376/locations/global/workloadIdentityPools/vercel-prod/providers/vercel-prod');
   assert.equal('credential_source' in (capturedExternalOptions ?? {}), false);
   assert.equal('private_key' in (capturedExternalOptions ?? {}), false);
@@ -178,7 +176,7 @@ test('mocked Production WIF uses the exact audience and service account, and ada
   );
 });
 
-test('OIDC subject-token supplier accepts STS audience and rejects HTTPS or wrong audiences', async () => {
+test('OIDC subject-token supplier accepts the exact STS audience and rejects wrong audiences', async () => {
   let suppliedTokenCalls = 0;
   let externalOptions: IdentityPoolClientOptions | undefined;
   createProductionAccountPinCredential(productionEnvironment, {
@@ -202,7 +200,7 @@ test('OIDC subject-token supplier accepts STS audience and rejects HTTPS or wron
     subjectTokenType: externalOptions?.subject_token_type ?? '',
     transporter: {} as ExternalAccountSupplierContext['transporter'],
   };
-  await assert.rejects(supplier.getSubjectToken({ ...context, audience: ACCOUNT_PIN_PRODUCTION_WIF_AUDIENCE }), /does not match the approved Google identity provider/);
+  await assert.rejects(supplier.getSubjectToken({ ...context, audience: `https:${context.audience}` }), /does not match the approved Google identity provider/);
   await assert.rejects(supplier.getSubjectToken({ ...context, audience: `${context.audience}/wrong` }), /does not match the approved Google identity provider/);
   assert.equal(suppliedTokenCalls, 0);
   await assert.rejects(supplier.getSubjectToken(context), /did not return a valid subject token/);

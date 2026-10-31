@@ -28,8 +28,6 @@ export const ACCOUNT_PIN_PRODUCTION_SERVICE_ACCOUNT_ID = 'ar-crm-production-pin@
 export const ACCOUNT_PIN_PRODUCTION_GCP_PROJECT_NUMBER = '577829773376';
 export const ACCOUNT_PIN_PRODUCTION_WIF_POOL_ID = 'vercel-prod';
 export const ACCOUNT_PIN_PRODUCTION_WIF_PROVIDER_ID = 'vercel-prod';
-// Vercel requests a subject JWT with the HTTPS provider URL as its OIDC audience.
-export const ACCOUNT_PIN_PRODUCTION_WIF_AUDIENCE = 'https://iam.googleapis.com/projects/577829773376/locations/global/workloadIdentityPools/vercel-prod/providers/vercel-prod';
 // Google STS expects the workload identity provider resource name, not the JWT audience URL.
 export const ACCOUNT_PIN_PRODUCTION_WIF_STS_AUDIENCE = '//iam.googleapis.com/projects/577829773376/locations/global/workloadIdentityPools/vercel-prod/providers/vercel-prod';
 const STAGING_ADMIN_APP_NAME = 'ar-crm-account-pin-staging';
@@ -50,7 +48,6 @@ type Environment = Record<string, string | undefined>;
 interface ProductionWifConfig {
   projectId: typeof ACCOUNT_PIN_PRODUCTION_PROJECT_ID;
   serviceAccountId: typeof ACCOUNT_PIN_PRODUCTION_SERVICE_ACCOUNT_ID;
-  audience: string;
 }
 
 interface ExternalAccountTokenClient {
@@ -58,7 +55,7 @@ interface ExternalAccountTokenClient {
   credentials: { expiry_date?: number | null };
 }
 
-type OidcTokenGetter = (options: { audience: string }) => Promise<string>;
+type OidcTokenGetter = () => Promise<string>;
 type ExternalAccountClientFactory = (options: IdentityPoolClientOptions) => ExternalAccountTokenClient | null;
 
 interface ProductionCredentialDependencies {
@@ -137,7 +134,6 @@ function getProductionWifConfig(environment: Environment): ProductionWifConfig {
   return {
     projectId: ACCOUNT_PIN_PRODUCTION_PROJECT_ID,
     serviceAccountId: ACCOUNT_PIN_PRODUCTION_SERVICE_ACCOUNT_ID,
-    audience: ACCOUNT_PIN_PRODUCTION_WIF_AUDIENCE,
   };
 }
 
@@ -166,7 +162,7 @@ export function createProductionAccountPinCredential(
         if (context.audience !== ACCOUNT_PIN_PRODUCTION_WIF_STS_AUDIENCE) {
           throw new Error('Google STS audience does not match the approved Google identity provider.');
         }
-        const subjectToken = await getOidcToken({ audience: config.audience });
+        const subjectToken = await getOidcToken();
         if (typeof subjectToken !== 'string' || subjectToken.trim().length === 0) {
           throw new Error('Vercel OIDC did not return a valid subject token.');
         }
