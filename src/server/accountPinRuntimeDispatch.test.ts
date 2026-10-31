@@ -59,6 +59,17 @@ test('runtime dispatch uses the Production factory only for the exact approved P
   assert.equal(createConfiguredAccountPinRuntime(productionEnvironment, factories), 'production-runtime');
   assert.equal(getAccountPinRuntimeTarget({ ...productionEnvironment, ACCOUNT_PIN_OWNER_UID: undefined }), 'production');
   assert.deepEqual(calls, { production: 1, staging: 0 });
+  const newProductionRelease = {
+    ...productionEnvironment,
+    VERCEL_GIT_COMMIT_REF: 'cue/production-runtime-repair-20261101',
+  };
+  assert.equal(getAccountPinRuntimeTarget(newProductionRelease), 'production');
+  assert.equal(createConfiguredAccountPinRuntime(newProductionRelease, factories), 'production-runtime');
+  assert.deepEqual(calls, { production: 2, staging: 0 });
+  assert.equal(getAccountPinRuntimeTarget({
+    ...newProductionRelease,
+    VERCEL_GIT_COMMIT_REF: 'cue/production-runtime-repair-20261102',
+  }), undefined);
 });
 
 test('Production route dispatch fails closed for wrong project, service account, WIF binding, branch, or target', () => {
@@ -69,6 +80,7 @@ test('Production route dispatch fails closed for wrong project, service account,
     { ...productionEnvironment, GCP_WORKLOAD_IDENTITY_POOL_ID: 'other-pool' },
     { ...productionEnvironment, GCP_WORKLOAD_IDENTITY_POOL_PROVIDER_ID: 'other-provider' },
     { ...productionEnvironment, VERCEL_GIT_COMMIT_REF: 'main' },
+    { ...productionEnvironment, VERCEL_GIT_COMMIT_REF: 'cue/production-runtime-repair-20261102' },
     { ...productionEnvironment, VITE_FIREBASE_TARGET: 'staging' },
     { ...productionEnvironment, ACCOUNT_PIN_OWNER_UID: 'synthetic-mismatched-owner' },
     { ...productionEnvironment, VITE_FIREBASE_OWNER_UID: 'synthetic-mismatched-owner' },
@@ -102,6 +114,9 @@ test('non-Production Preview deploys only the staging runtime on the approved br
   const wrongBranch = { ...stagingEnvironment, VERCEL_GIT_COMMIT_REF: 'feature/other' };
   assert.equal(getAccountPinRuntimeTarget(wrongBranch), undefined);
   assert.equal(createConfiguredAccountPinRuntime(wrongBranch, factories), undefined);
+  const productionOnlyBranch = { ...stagingEnvironment, VERCEL_GIT_COMMIT_REF: 'cue/production-runtime-repair-20261101' };
+  assert.equal(getAccountPinRuntimeTarget(productionOnlyBranch), undefined);
+  assert.equal(createConfiguredAccountPinRuntime(productionOnlyBranch, factories), undefined);
   assert.deepEqual(calls, { production: 0, staging: 1 });
 });
 

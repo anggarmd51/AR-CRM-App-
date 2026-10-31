@@ -82,6 +82,42 @@ test('Production PIN Admin rejects Preview, disabled, wrong-project, and wrong-s
   assert.equal(initializeCalls, 0);
 });
 
+test('Production PIN Admin adds the exact release ref without relaxing environment or target restrictions', () => {
+  const releaseEnvironment = {
+    ...productionEnvironment,
+    VERCEL_GIT_COMMIT_REF: 'cue/production-runtime-repair-20261101',
+  };
+  const credential = createProductionAccountPinCredential(releaseEnvironment, {
+    createExternalAccountClient: () => ({
+      credentials: { expiry_date: Date.now() + 3_600_000 },
+      async getAccessToken() { return { token: 'mock-google-access-token' }; },
+    }),
+  });
+  assert.ok(credential);
+  for (const branch of [
+    'cue/production-runtime-repair-20261102',
+    'cue/production-runtime-repair-20261101-extra',
+    'cue/production-runtime-repair-20261101/extra',
+    'cue/*',
+  ]) {
+    assert.throws(
+      () => createProductionAccountPinCredential({ ...releaseEnvironment, VERCEL_GIT_COMMIT_REF: branch }),
+      /approved release branch and Firebase target/,
+    );
+  }
+  assert.throws(
+    () => createProductionAccountPinCredential({ ...releaseEnvironment, VERCEL_ENV: 'preview' }),
+    /disabled outside the explicitly enabled Production environment/,
+  );
+  assert.throws(
+    () => createProductionAccountPinCredential({
+      ...releaseEnvironment,
+      VITE_FIREBASE_TARGET: 'staging',
+    }),
+    /approved release branch and Firebase target/,
+  );
+});
+
 test('Production runtime rejects missing or short pepper before Firebase Admin initialization', () => {
   assert.throws(() => createProductionAccountPinRuntime(productionEnvironment), /configuration is incomplete/);
   const ownerConfigured = { ...productionEnvironment, ACCOUNT_PIN_OWNER_UID: FIREBASE_RULES_OWNER_UID };

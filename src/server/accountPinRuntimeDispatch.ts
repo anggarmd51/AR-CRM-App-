@@ -1,5 +1,6 @@
 import {
   ACCOUNT_PIN_APPROVED_RELEASE_BRANCH,
+  isApprovedProductionReleaseBranch,
   ACCOUNT_PIN_PRODUCTION_GCP_PROJECT_NUMBER,
   ACCOUNT_PIN_PRODUCTION_PROJECT_ID,
   ACCOUNT_PIN_PRODUCTION_SERVICE_ACCOUNT_ID,
@@ -33,7 +34,7 @@ function hasValidProductionOwnerBinding(environment: AccountPinEnvironment): boo
 
 function hasProductionConfig(environment: AccountPinEnvironment): boolean {
   return environment.VERCEL_ENV === 'production'
-    && environment.VERCEL_GIT_COMMIT_REF === ACCOUNT_PIN_APPROVED_RELEASE_BRANCH
+    && isApprovedProductionReleaseBranch(environment.VERCEL_GIT_COMMIT_REF)
     && environment.VITE_FIREBASE_TARGET === 'production'
     && environment.ACCOUNT_PIN_ENABLED === 'true'
     && environment.FIREBASE_ADMIN_PROJECT_ID === ACCOUNT_PIN_PRODUCTION_PROJECT_ID

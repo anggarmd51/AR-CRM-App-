@@ -78,7 +78,7 @@ service cloud.firestore {
         ])
         && data.company_name is string && data.company_name.size() > 0 && data.company_name.size() <= 200
         && data.contact_person is string && data.contact_person.size() > 0 && data.contact_person.size() <= 200
-        && data.phone is string
+        && data.phone is string && data.phone.size() <= 200
         && data.industry is string && data.industry.size() <= 120
         && data.city is string && data.city.size() <= 120
         && validStage(data.pipeline_stage)
@@ -153,6 +153,28 @@ service cloud.firestore {
         && incoming.created_at == existing.created_at;
     }
 
+    function wonArchiveMatchesLeadAfter(workspaceId, leadId, leadData) {
+      let archivePath = /databases/$(database)/documents/workspaces/$(workspaceId)/wonDealArchives/$(leadId);
+      return existsAfter(archivePath)
+        && validWonArchiveFields(getAfter(archivePath).data, leadId)
+        && getAfter(archivePath).data.company_name == leadData.company_name
+        && getAfter(archivePath).data.contact_person == leadData.contact_person
+        && getAfter(archivePath).data.phone == leadData.phone
+        && getAfter(archivePath).data.industry == leadData.industry
+        && getAfter(archivePath).data.city == leadData.city
+        && getAfter(archivePath).data.deal_value == leadData.deal_value;
+    }
+
+    function validWonStateAfterUpdate(workspaceId, leadId, existing, incoming) {
+      let archivePath = /databases/$(database)/documents/workspaces/$(workspaceId)/wonDealArchives/$(leadId);
+      return existing.pipeline_stage == 'Closing Won'
+        ? incoming.pipeline_stage == 'Closing Won'
+          && wonArchiveMatchesLeadAfter(workspaceId, leadId, incoming)
+        : incoming.pipeline_stage == 'Closing Won'
+          ? !exists(archivePath) && wonArchiveMatchesLeadAfter(workspaceId, leadId, incoming)
+          : true;
+    }
+
     match /workspaces/{workspaceId} {
       allow get: if ownerMembership(workspaceId);
       allow list, create, update, delete: if false;
@@ -168,13 +190,17 @@ service cloud.firestore {
         allow get, list: if ownerMembership(workspaceId)
           && resource.data.ownerId == request.auth.uid;
         allow create: if ownerMembership(workspaceId)
-          && validLeadFields(request.resource.data);
+          && validLeadFields(request.resource.data)
+          && request.resource.data.pipeline_stage != 'Closing Won';
         allow update: if ownerMembership(workspaceId)
           && resource.data.ownerId == request.auth.uid
           && resource.data.role == 'owner'
           && validLeadFields(request.resource.data)
           && immutableLeadIdentity(resource.data, request.resource.data)
+          && request.resource.data.updated_at == request.time
+          && validWonStateAfterUpdate(workspaceId, leadId, resource.data, request.resource.data)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'contact_person', 'phone', 'deal_value', 'lead_score',
             'pipeline_stage', 'next_followup_date', 'updated_at'
           ]);
         allow delete: if false;
@@ -198,6 +224,8 @@ service cloud.firestore {
           && resource.data.ownerId == request.auth.uid;
         allow create: if ownerMembership(workspaceId)
           && validWonArchiveFields(request.resource.data, leadId)
+          && exists(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(leadId))
+          && get(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(leadId)).data.pipeline_stage != 'Closing Won'
           && existsAfter(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(leadId))
           && getAfter(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(leadId)).data.ownerId == request.auth.uid
           && getAfter(/databases/$(database)/documents/workspaces/$(workspaceId)/leads/$(leadId)).data.role == 'owner'

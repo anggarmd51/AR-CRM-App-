@@ -417,7 +417,8 @@ export class OfflineWriteQueue {
     if (!this.refreshConnectivity()) throw new OfflineWriteBlockedError();
     const sanitized = allowlistedMutation(mutation);
     if (sanitized.kind !== operation.durable.kind) throw new Error('A correction cannot change the operation type.');
-    if (sanitized.kind === 'update-lead-stage' && sanitized.payload.lead_id !== operation.durable.documentId) {
+    if ((sanitized.kind === 'update-lead-stage' || sanitized.kind === 'update-lead-profile')
+      && sanitized.payload.lead_id !== operation.durable.documentId) {
       throw new Error('A correction cannot change the lead document ID.');
     }
 

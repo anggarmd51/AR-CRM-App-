@@ -24,6 +24,16 @@ export type DurableMutation =
       };
     }
   | {
+      kind: 'update-lead-profile';
+      payload: {
+        lead_id: string;
+        contact_person: string;
+        phone: string;
+        deal_value: number;
+        lead_score: LeadScore;
+      };
+    }
+  | {
       kind: 'create-activity';
       payload: {
         lead_id: string;
@@ -217,6 +227,24 @@ export function allowlistedMutation(mutation: DurableMutation): DurableMutation 
         },
       };
     }
+    case 'update-lead-profile': {
+      if (!ALLOWED_SCORES.has(payload.lead_score as LeadScore)
+        || typeof payload.deal_value !== 'number'
+        || !Number.isFinite(payload.deal_value)
+        || payload.deal_value < 0) {
+        throw new Error('Offline operation data failed local validation.');
+      }
+      return {
+        kind: mutation.kind,
+        payload: {
+          lead_id: assertId(payload.lead_id),
+          contact_person: assertText(payload.contact_person, 200, false).trim(),
+          phone: assertText(payload.phone, 200).trim(),
+          deal_value: payload.deal_value,
+          lead_score: payload.lead_score as LeadScore,
+        },
+      };
+    }
     case 'create-activity': {
       const aiSummary = payload.ai_summary === undefined ? undefined : assertText(payload.ai_summary, 4_000, false);
       const summarySource = payload.ai_summary_source;
@@ -244,6 +272,7 @@ function labelFor(kind: DurableMutation['kind']): string {
   switch (kind) {
     case 'create-lead': return 'Tambah prospek';
     case 'update-lead-stage': return 'Ubah tahap prospek';
+    case 'update-lead-profile': return 'Ubah profil lead';
     case 'create-activity': return 'Simpan aktivitas';
   }
 }

@@ -1,16 +1,23 @@
-import React from 'react';
+import React, { useEffect, useReducer } from 'react';
 import {
   X,
   Phone,
   MapPin,
   Calendar,
-  Flame,
   MessageCircle,
   Clock,
-  Sparkles,
 } from 'lucide-react';
 import { Lead, Activity, PipelineStage, PIPELINE_STAGES, STAGE_CONFIG } from '../types/crm.ts';
 import { formatCurrency, formatDateDisplay, formatNumber } from '../utils/crmCalculations.ts';
+import {
+  createLeadProfileEditorState,
+  leadProfileEditorReducer,
+  leadProfileFrom,
+  normalizeLeadProfileEdit,
+  submitLeadProfileEdit,
+  LEAD_PROFILE_SCORES,
+  type LeadProfileEdit,
+} from '../utils/leadProfileEdit.ts';
 
 interface LeadDetailModalProps {
   isOpen: boolean;
@@ -18,6 +25,7 @@ interface LeadDetailModalProps {
   lead: Lead | null;
   activities: Activity[];
   onUpdateStage: (leadId: string, stage: PipelineStage, nextFollowupDate?: string) => void;
+  onSaveProfile: (leadId: string, profile: LeadProfileEdit) => Promise<void>;
   onOpenActivityLogger: (lead: Lead) => void;
   onOpenWhatsApp: (lead: Lead) => void;
 }
@@ -28,13 +36,44 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
   lead,
   activities,
   onUpdateStage,
+  onSaveProfile,
   onOpenActivityLogger,
   onOpenWhatsApp,
 }) => {
+  const [editor, dispatchEditor] = useReducer(
+    leadProfileEditorReducer,
+    lead,
+    (initialLead) => createLeadProfileEditorState(initialLead
+      ? leadProfileFrom(initialLead)
+      : { contact_person: '', phone: '', deal_value: 0, lead_score: 'Unrated' }),
+  );
+
+  useEffect(() => {
+    if (isOpen && lead) dispatchEditor({ type: 'reset', profile: leadProfileFrom(lead) });
+  }, [isOpen, lead?.id]);
+
   if (!isOpen || !lead) return null;
 
   const leadActivities = activities.filter((a) => a.lead_id === lead.id);
   const stageCfg = STAGE_CONFIG[lead.pipeline_stage];
+  const isWon = lead.pipeline_stage === 'Closing Won';
+
+  const saveProfile = async () => {
+    let profile: LeadProfileEdit;
+    try {
+      profile = normalizeLeadProfileEdit(editor.draft);
+    } catch (error) {
+      dispatchEditor({ type: 'save-error', message: error instanceof Error ? error.message : 'Data profil tidak valid.' });
+      return;
+    }
+    dispatchEditor({ type: 'save-start' });
+    try {
+      await submitLeadProfileEdit(lead.id, profile, onSaveProfile);
+      dispatchEditor({ type: 'save-success', profile });
+    } catch (error) {
+      dispatchEditor({ type: 'save-error', message: error instanceof Error ? error.message : 'Perubahan profil gagal disimpan.' });
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#1f1f1f]/50 backdrop-blur-xs overflow-y-auto">
@@ -77,6 +116,117 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
               </div>
             </div>
           </div>
+
+          <section aria-label="Sales profile" className="space-y-3 bg-[#f8f5ee] p-3.5 rounded-[16px] border border-[#1f1f1f]">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-[#1f1f1f] font-bold">Sales Profile</span>
+              {!editor.editing ? (
+                <button
+                  type="button"
+                  onClick={() => dispatchEditor({ type: 'begin', profile: leadProfileFrom(lead) })}
+                  className="py-1.5 px-3 rounded-[8px] bg-[#fcfcfa] border border-[#1f1f1f] text-[#1f1f1f] font-bold hover:bg-[#eae4d5]"
+                >
+                  Edit
+                </button>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="submit"
+                    form="lead-profile-edit-form"
+                    disabled={editor.saving}
+                    className="py-1.5 px-3 rounded-[8px] bg-[#ff4800] border border-[#1f1f1f] text-white font-bold disabled:opacity-50"
+                  >
+                    {editor.saving ? 'Saving…' : 'Save'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={editor.saving}
+                    onClick={() => dispatchEditor({ type: 'cancel', profile: leadProfileFrom(lead) })}
+                    className="py-1.5 px-3 rounded-[8px] bg-[#fcfcfa] border border-[#1f1f1f] text-[#1f1f1f] font-bold disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {isWon && (
+              <p className="rounded-[8px] border border-[#155e3c]/40 bg-[#edf7f1] p-2 text-[11px] text-[#155e3c]" role="note">
+                Won archives are immutable. Contact, phone, and deal value stay locked to the archive; lead score may still be updated.
+              </p>
+            )}
+
+            {editor.editing ? (
+              <form
+                id="lead-profile-edit-form"
+                className="grid grid-cols-1 sm:grid-cols-2 gap-3"
+                onSubmit={(event) => { event.preventDefault(); void saveProfile(); }}
+              >
+                <label className="space-y-1 font-medium text-[#6b665c]">
+                  <span>Contact Person</span>
+                  <input
+                    aria-label="Contact Person"
+                    required
+                    maxLength={200}
+                    readOnly={isWon}
+                    disabled={editor.saving}
+                    value={editor.draft.contact_person}
+                    onChange={(event) => dispatchEditor({ type: 'change', field: 'contact_person', value: event.target.value })}
+                    className="w-full rounded-[8px] border border-[#1f1f1f] bg-[#fcfcfa] px-3 py-2 text-[#1f1f1f] read-only:bg-[#eae4d5]"
+                  />
+                </label>
+                <label className="space-y-1 font-medium text-[#6b665c]">
+                  <span>Phone</span>
+                  <input
+                    aria-label="Phone"
+                    type="tel"
+                    maxLength={200}
+                    readOnly={isWon}
+                    disabled={editor.saving}
+                    value={editor.draft.phone}
+                    onChange={(event) => dispatchEditor({ type: 'change', field: 'phone', value: event.target.value })}
+                    className="w-full rounded-[8px] border border-[#1f1f1f] bg-[#fcfcfa] px-3 py-2 text-[#1f1f1f] read-only:bg-[#eae4d5]"
+                  />
+                </label>
+                <label className="space-y-1 font-medium text-[#6b665c]">
+                  <span>Deal Value</span>
+                  <input
+                    aria-label="Deal Value"
+                    type="number"
+                    required
+                    min="0"
+                    step="any"
+                    readOnly={isWon}
+                    disabled={editor.saving}
+                    value={Number.isFinite(editor.draft.deal_value) ? String(editor.draft.deal_value) : ''}
+                    onChange={(event) => dispatchEditor({ type: 'change', field: 'deal_value', value: event.target.value === '' ? Number.NaN : Number(event.target.value) })}
+                    className="w-full rounded-[8px] border border-[#1f1f1f] bg-[#fcfcfa] px-3 py-2 text-[#1f1f1f] read-only:bg-[#eae4d5]"
+                  />
+                </label>
+                <label className="space-y-1 font-medium text-[#6b665c]">
+                  <span>Lead Score</span>
+                  <select
+                    aria-label="Lead Score"
+                    required
+                    disabled={editor.saving}
+                    value={editor.draft.lead_score}
+                    onChange={(event) => dispatchEditor({ type: 'change', field: 'lead_score', value: event.target.value as LeadProfileEdit['lead_score'] })}
+                    className="w-full rounded-[8px] border border-[#1f1f1f] bg-[#fcfcfa] px-3 py-2 text-[#1f1f1f]"
+                  >
+                    {LEAD_PROFILE_SCORES.map((score) => <option key={score} value={score}>{score}</option>)}
+                  </select>
+                </label>
+                {editor.error && <p className="sm:col-span-2 text-[#9b2c2c] font-semibold" role="alert">{editor.error}</p>}
+              </form>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[#6b665c]">
+                <div><span>Contact Person:</span><div className="font-semibold text-[#1f1f1f]">{lead.contact_person}</div></div>
+                <div><span>Phone:</span><div className="font-semibold text-[#1f1f1f]">{lead.phone || '—'}</div></div>
+                <div><span>Deal Value:</span><div className="font-semibold text-[#1f1f1f]">{formatCurrency(lead.deal_value)}</div></div>
+                <div><span>Lead Score:</span><div className="font-bold text-[#ff4800]">{lead.lead_score}</div></div>
+              </div>
+            )}
+          </section>
 
           {/* Quick Contact & Action Buttons: 8px radius */}
           <div className="grid grid-cols-3 gap-2">
@@ -133,7 +283,8 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
                 <button
                   key={st}
                   onClick={() => onUpdateStage(lead.id, st)}
-                  className={`py-1.5 px-2 rounded-[8px] border text-center font-bold text-[11px] transition-all ${
+                  disabled={isWon}
+                  className={`py-1.5 px-2 rounded-[8px] border text-center font-bold text-[11px] transition-all ${isWon ? 'cursor-not-allowed opacity-60' : ''} ${
                     lead.pipeline_stage === st
                       ? 'bg-[#1f1f1f] border-[#1f1f1f] text-white'
                       : 'bg-[#fcfcfa] border-[#1f1f1f] text-[#1f1f1f] hover:bg-[#eae4d5]'
@@ -148,23 +299,12 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
           {/* Details Overview */}
           <div className="space-y-2.5 bg-[#f8f5ee] p-3.5 rounded-[16px] border border-[#1f1f1f]">
             <div className="flex items-center justify-between text-[#6b665c]">
-              <span>Contact Person:</span>
-              <span className="text-[#1f1f1f] font-semibold">{lead.contact_person}</span>
-            </div>
-            <div className="flex items-center justify-between text-[#6b665c]">
               <span>Industry:</span>
               <span className="text-[#1f1f1f] font-semibold">{lead.industry}</span>
             </div>
             <div className="flex items-center justify-between text-[#6b665c]">
               <span>City:</span>
               <span className="text-[#1f1f1f] font-semibold">{lead.city}</span>
-            </div>
-            <div className="flex items-center justify-between text-[#6b665c]">
-              <span>Lead Score:</span>
-              <span className="text-[#ff4800] font-bold flex items-center gap-1">
-                {lead.lead_score === 'Hot' && <Flame className="w-3.5 h-3.5 fill-[#ff4800]" />}
-                {lead.lead_score}
-              </span>
             </div>
             <div className="flex items-center justify-between text-[#6b665c]">
               <span>Sync State:</span>

@@ -11,12 +11,13 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore';
 import { getFirebaseAuth, getFirebaseDb, workspaceId } from './firebase.ts';
-import type { Activity, Lead, PipelineStage } from './types/crm.ts';
+import type { Activity, Lead, PipelineStage, WonDealArchiveRecord } from './types/crm.ts';
 import { firestoreWriteQueue, type QueueWriteReceipt as QueueReceipt } from './utils/offlineWriteQueue.ts';
 import type { DurableMutation, DurableQueueInput, DurableQueueRecord, RestoredQueueRecord } from './utils/offlineOutbox.ts';
 import { setDocWithServerReconciliation } from './utils/idempotentFirestoreCreate.ts';
 import type { LeadSnapshotState } from './utils/optimisticLeadStages.ts';
 import { assertSafeInitialLeadStage, canTransitionFromAuthoritativeStage, normalizeCreateLeadPayload } from './utils/salesSafety.ts';
+import { assertLeadProfileEditAllowed, normalizeLeadProfileEdit, type LeadProfileEdit } from './utils/leadProfileEdit.ts';
 
 export interface RepositoryWriteReceipt<T = void> {
   operationId: string;
@@ -181,6 +182,39 @@ async function executeDurableMutation(restored: RestoredQueueRecord): Promise<vo
       });
       return;
     }
+    case 'update-lead-profile': {
+      if (record.payload.lead_id !== record.documentId) {
+        throw Object.assign(new Error('Invalid lead-profile operation.'), { code: 'invalid-argument' });
+      }
+      const profile = normalizeLeadProfileEdit(record.payload);
+      const ref = doc(db, 'workspaces', record.workspaceId, 'leads', record.documentId);
+      const archiveRef = doc(db, 'workspaces', record.workspaceId, 'wonDealArchives', record.documentId);
+      await runTransaction(db, async (transaction) => {
+        const leadSnapshot = await transaction.get(ref);
+        if (!leadSnapshot.exists()) {
+          throw Object.assign(new Error('Lead tidak ditemukan untuk perubahan profil.'), { code: 'not-found' });
+        }
+        const currentData = leadSnapshot.data();
+        if (currentData.ownerId !== record.ownerId || currentData.role !== 'owner') {
+          throw Object.assign(new Error('Lead bukan milik owner yang sedang terautentikasi.'), { code: 'permission-denied' });
+        }
+        const archiveSnapshot = await transaction.get(archiveRef);
+        const currentLead = { ...currentData, id: record.documentId } as Lead;
+        const archive = archiveSnapshot.exists() ? archiveSnapshot.data() as WonDealArchiveRecord : null;
+        assertLeadProfileEditAllowed(currentLead, archive, profile);
+
+        // A partial update preserves immutable identity, stage, and follow-up.
+        // Firestore Rules independently validate the full resulting document.
+        transaction.update(ref, {
+          contact_person: profile.contact_person,
+          phone: profile.phone,
+          deal_value: profile.deal_value,
+          lead_score: profile.lead_score,
+          updated_at: serverTimestamp(),
+        });
+      });
+      return;
+    }
     case 'create-activity': {
       const ref = doc(db, 'workspaces', record.workspaceId, 'activities', record.documentId);
       const expected = {
@@ -301,6 +335,25 @@ export async function updateLeadStage(
       pipeline_stage,
       ...(next_followup_date !== undefined ? { next_followup_date } : {}),
     },
+  };
+  const dependency = firestoreWriteQueue.dependencyForLead(leadId);
+  const durable = createDurableRecord(ownerId, operationId, payload, leadId, dependency);
+  const receipt = enqueueDurable(ownerId, durable);
+  await receipt.accepted;
+  return { operationId, state: 'queued-locally', acknowledged: receipt.acknowledged };
+}
+
+export async function updateLeadProfile(
+  ownerId: string,
+  leadId: string,
+  profile: LeadProfileEdit,
+): Promise<RepositoryWriteReceipt<void>> {
+  getFirebaseDb();
+  const normalized = normalizeLeadProfileEdit(profile);
+  const operationId = `lead-profile:${leadId}:${createOperationId()}`;
+  const payload: DurableMutation = {
+    kind: 'update-lead-profile',
+    payload: { lead_id: leadId, ...normalized },
   };
   const dependency = firestoreWriteQueue.dependencyForLead(leadId);
   const durable = createDurableRecord(ownerId, operationId, payload, leadId, dependency);

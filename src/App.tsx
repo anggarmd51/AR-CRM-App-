@@ -25,11 +25,13 @@ import { SecurityVault } from './utils/securityLock.ts';
 import { CheckCircle2 } from 'lucide-react';
 import { firebaseTarget, getFirebaseAuth, workspaceId } from './firebase.ts';
 import { shouldUseLocalSecurityVault } from './localSecurityPolicy.ts';
-import { createActivity, createLead, subscribeToActivities, subscribeToLeads, updateLeadStage } from './firebaseRepository.ts';
+import { createActivity, createLead, subscribeToActivities, subscribeToLeads, updateLeadProfile, updateLeadStage } from './firebaseRepository.ts';
 import { createImportedLeadDocumentId, normalizeImportedCompanyName } from './utils/leadImportIdentity.ts';
 import { OptimisticLeadStageOverlay, type LeadSnapshotState } from './utils/optimisticLeadStages.ts';
+import { OptimisticLeadProfileOverlay } from './utils/optimisticLeadProfiles.ts';
 import { firestoreWriteQueue, type SyncQueueSnapshot } from './utils/offlineWriteQueue.ts';
 import { createAppHistoryState, getClosedModalNames, readAppHistoryState, type AppHistoryState, type AppModalName } from './utils/appHistory.ts';
+import { normalizeLeadProfileEdit, type LeadProfileEdit } from './utils/leadProfileEdit.ts';
 
 const APP_TABS: readonly NavTab[] = ['dashboard', 'pipeline', 'leads_finder', 'activities', 'android_code'];
 
@@ -72,6 +74,7 @@ export default function App() {
   const historyEntryRef = useRef<AppHistoryState<NavTab> | null>(null);
   const modalBackPendingRef = useRef(false);
   const stageOverlayRef = useRef(new OptimisticLeadStageOverlay());
+  const profileOverlayRef = useRef(new OptimisticLeadProfileOverlay());
   const latestFirestoreLeadsRef = useRef<Lead[]>([]);
   const latestFirestoreSnapshotStateRef = useRef<LeadSnapshotState>({ fromCache: true, pendingWriteIds: new Set() });
   const importedGlobalLeadNamesRef = useRef(new Set<string>());
@@ -219,7 +222,8 @@ export default function App() {
     const stopLeads = subscribeToLeads(user.uid, (snapshotLeads, snapshotState) => {
       latestFirestoreLeadsRef.current = snapshotLeads;
       latestFirestoreSnapshotStateRef.current = snapshotState;
-      setLeads(stageOverlayRef.current.reconcile(snapshotLeads, snapshotState));
+      const stageReconciled = stageOverlayRef.current.reconcile(snapshotLeads, snapshotState);
+      setLeads(profileOverlayRef.current.reconcile(stageReconciled, snapshotState));
       const confirmedNames = new Set(snapshotLeads.map((lead) => normalizeImportedCompanyName(lead.company_name)));
       setPendingGlobalLeadNames((current) => {
         const next = new Set([...current].filter((name) => !confirmedNames.has(name)));
@@ -323,8 +327,12 @@ export default function App() {
       ...(nextFollowupDate !== undefined ? { next_followup_date: nextFollowupDate } : {}),
       _syncStatus: 'pending_update' as const,
     };
-    setLeads((current) => current.map((lead) => lead.id === leadId ? stageOverlayRef.current.overlayLead({ ...lead, ...optimisticFields }) : lead));
-    setSelectedLead((current) => current?.id === leadId ? stageOverlayRef.current.overlayLead({ ...current, ...optimisticFields }) : current);
+    setLeads((current) => current.map((lead) => lead.id === leadId
+      ? profileOverlayRef.current.overlayLead(stageOverlayRef.current.overlayLead({ ...lead, ...optimisticFields }))
+      : lead));
+    setSelectedLead((current) => current?.id === leadId
+      ? profileOverlayRef.current.overlayLead(stageOverlayRef.current.overlayLead({ ...current, ...optimisticFields }))
+      : current);
 
     void (async () => {
       try {
@@ -334,10 +342,12 @@ export default function App() {
           : 'Perubahan stage menunggu konfirmasi Firestore.');
         await receipt.acknowledged;
         stageOverlayRef.current.acknowledge(leadId, token);
-        setLeads(stageOverlayRef.current.reconcile(latestFirestoreLeadsRef.current, latestFirestoreSnapshotStateRef.current));
+        const latestStageLeads = stageOverlayRef.current.reconcile(latestFirestoreLeadsRef.current, latestFirestoreSnapshotStateRef.current);
+        setLeads(profileOverlayRef.current.reconcile(latestStageLeads, latestFirestoreSnapshotStateRef.current));
       } catch (error) {
         stageOverlayRef.current.rollback(leadId, token);
-        const restoredLeads = stageOverlayRef.current.reconcile(latestFirestoreLeadsRef.current, latestFirestoreSnapshotStateRef.current);
+        const latestStageLeads = stageOverlayRef.current.reconcile(latestFirestoreLeadsRef.current, latestFirestoreSnapshotStateRef.current);
+        const restoredLeads = profileOverlayRef.current.reconcile(latestStageLeads, latestFirestoreSnapshotStateRef.current);
         setLeads(restoredLeads);
         setSelectedLead((current) => current?.id === leadId
           ? restoredLeads.find((lead) => lead.id === leadId) ?? current
@@ -346,6 +356,43 @@ export default function App() {
         showToast(`Stage gagal diubah: ${message}`);
       }
     })();
+  };
+
+  const handleUpdateLeadProfile = async (leadId: string, input: LeadProfileEdit): Promise<void> => {
+    const previousLead = leads.find((lead) => lead.id === leadId);
+    const ownerId = getFirebaseAuth().currentUser?.uid;
+    if (!previousLead || !ownerId) throw new Error('Profil tidak dapat diubah karena lead atau sesi owner tidak tersedia.');
+
+    const profile = normalizeLeadProfileEdit(input);
+    const receipt = await updateLeadProfile(ownerId, leadId, profile);
+    const token = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    profileOverlayRef.current.apply(leadId, token, profile);
+    setLeads((current) => current.map((lead) => lead.id === leadId
+      ? profileOverlayRef.current.overlayLead(stageOverlayRef.current.overlayLead({ ...lead, ...profile, _syncStatus: 'pending_update' }))
+      : lead));
+    setSelectedLead((current) => current?.id === leadId
+      ? profileOverlayRef.current.overlayLead(stageOverlayRef.current.overlayLead({ ...current, ...profile, _syncStatus: 'pending_update' }))
+      : current);
+    showToast(`Profil lead "${previousLead.company_name}" menunggu konfirmasi Firestore.`);
+
+    void receipt.acknowledged.then(() => {
+      profileOverlayRef.current.acknowledge(leadId, token);
+      const latestStageLeads = stageOverlayRef.current.reconcile(latestFirestoreLeadsRef.current, latestFirestoreSnapshotStateRef.current);
+      const reconciledLeads = profileOverlayRef.current.reconcile(latestStageLeads, latestFirestoreSnapshotStateRef.current);
+      setLeads(reconciledLeads);
+      setSelectedLead((current) => current?.id === leadId
+        ? reconciledLeads.find((lead) => lead.id === leadId) ?? current
+        : current);
+    }).catch((error) => {
+      profileOverlayRef.current.rollback(leadId, token);
+      const latestStageLeads = stageOverlayRef.current.reconcile(latestFirestoreLeadsRef.current, latestFirestoreSnapshotStateRef.current);
+      const restoredLeads = profileOverlayRef.current.reconcile(latestStageLeads, latestFirestoreSnapshotStateRef.current);
+      const restoredLead = restoredLeads.find((lead) => lead.id === leadId) ?? previousLead;
+      setLeads(restoredLeads);
+      setSelectedLead((current) => current?.id === leadId ? restoredLead : current);
+      const message = error instanceof Error ? error.message : 'Firestore menolak perubahan profil.';
+      showToast(`Profil lead gagal diubah: ${message}`);
+    });
   };
 
   // Add Activity / Check-In
@@ -572,6 +619,7 @@ export default function App() {
           lead={selectedLead}
           activities={activities}
           onUpdateStage={handleUpdateLeadStage}
+          onSaveProfile={handleUpdateLeadProfile}
           onOpenActivityLogger={(l) => {
             setActivityLead(l);
             openModalWithHistory(() => setIsActivityLoggerOpen(true), 'activityLogger');
