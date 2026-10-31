@@ -1,3 +1,4 @@
+import './stagingAppCheckDebug.ts';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import { FirebaseAuthGate } from './components/FirebaseAuthGate.tsx';
