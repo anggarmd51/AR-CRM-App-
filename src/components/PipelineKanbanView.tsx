@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { Lead, PipelineStage, PIPELINE_STAGES, STAGE_CONFIG } from '../types/crm.ts';
 import { formatCurrency, formatDateDisplay, formatNumber } from '../utils/crmCalculations.ts';
+import { canTransitionFromAuthoritativeStage } from '../utils/salesSafety.ts';
 
 interface PipelineKanbanViewProps {
   leads: Lead[];
@@ -254,7 +255,7 @@ const LeadKanbanCard: React.FC<LeadKanbanCardProps> = ({
   const [showStageSelector, setShowStageSelector] = useState(false);
 
   const currentIndex = PIPELINE_STAGES.indexOf(lead.pipeline_stage);
-  const canMoveBack = currentIndex > 0;
+  const canMoveBack = currentIndex > 0 && canTransitionFromAuthoritativeStage(lead.pipeline_stage, PIPELINE_STAGES[currentIndex - 1]);
   const canMoveForward = currentIndex < PIPELINE_STAGES.length - 1;
 
   return (
@@ -369,7 +370,7 @@ const LeadKanbanCard: React.FC<LeadKanbanCardProps> = ({
                 onClick={(e) => e.stopPropagation()}
                 className="absolute right-0 bottom-full mb-1 z-30 bg-[#fcfcfa] border border-[#1f1f1f] rounded-[8px] p-1 w-36 space-y-0.5 shadow-sm"
               >
-                {PIPELINE_STAGES.map((st) => (
+                {PIPELINE_STAGES.filter((st) => canTransitionFromAuthoritativeStage(lead.pipeline_stage, st)).map((st) => (
                   <button
                     key={st}
                     type="button"

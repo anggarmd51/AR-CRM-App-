@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { X, Plus, Calendar, Flame, Check } from 'lucide-react';
 import { Lead, PipelineStage, LeadScore, PIPELINE_STAGES } from '../types/crm.ts';
+import { normalizeCreateLeadPayload } from '../utils/salesSafety.ts';
 
 interface QuickLeadModalProps {
   isOpen: boolean;
@@ -43,12 +44,12 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!companyName.trim() || !contactPerson.trim() || isSubmitting) return;
+    if (isSubmitting) return;
 
     setIsSubmitting(true);
     setSubmitError(null);
     try {
-      await onAddLead({
+      const payload = normalizeCreateLeadPayload({
         company_name: companyName.trim(),
         contact_person: contactPerson.trim(),
         phone: phone.trim(),
@@ -59,6 +60,7 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
         next_followup_date: nextFollowupDate,
         lead_score: leadScore,
       });
+      await onAddLead(payload);
       onClose();
     } catch (error) {
       setSubmitError(error instanceof Error
@@ -113,6 +115,7 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
               <input
                 type="text"
                 required
+                maxLength={200}
                 placeholder="e.g. PT Artha Sentosa"
                 value={companyName}
                 onChange={(e) => setCompanyName(e.target.value)}
@@ -125,6 +128,7 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
               <input
                 type="text"
                 required
+                maxLength={200}
                 placeholder="e.g. Maya Indah (VP Sales)"
                 value={contactPerson}
                 onChange={(e) => setContactPerson(e.target.value)}
@@ -150,6 +154,7 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
               <label className="text-[#1f1f1f] font-semibold">City</label>
               <input
                 type="text"
+                maxLength={120}
                 placeholder="e.g. Jakarta, Surabaya"
                 value={city}
                 onChange={(e) => setCity(e.target.value)}
@@ -184,7 +189,7 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
                 onChange={(e) => setPipelineStage(e.target.value as PipelineStage)}
                 className="w-full bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] px-3 py-2 text-[#1f1f1f] font-medium focus:outline-none"
               >
-                {PIPELINE_STAGES.map((st) => (
+                {PIPELINE_STAGES.filter((st) => st !== 'Closing Won').map((st) => (
                   <option key={st} value={st}>
                     {st}
                   </option>

@@ -1,4 +1,5 @@
 import type { ActivityGpsLocation, ActivitySummarySource, LeadScore, PipelineStage } from '../types/crm.ts';
+import { normalizeCreateLeadPayload } from './salesSafety.ts';
 
 export type DurableMutation =
   | {
@@ -187,15 +188,26 @@ export function allowlistedMutation(mutation: DurableMutation): DurableMutation 
         || payload.deal_value < 0) {
         throw new Error('Offline operation data failed local validation.');
       }
+      const normalized = normalizeCreateLeadPayload({
+        company_name: payload.company_name as string,
+        contact_person: payload.contact_person as string,
+        phone: payload.phone as string,
+        industry: payload.industry as string,
+        city: payload.city as string,
+        pipeline_stage: payload.pipeline_stage as PipelineStage,
+        deal_value: payload.deal_value,
+        next_followup_date: payload.next_followup_date as string,
+        lead_score: payload.lead_score as LeadScore,
+      });
       return {
         kind: mutation.kind,
         payload: {
-          company_name: assertText(payload.company_name, 200, false),
-          contact_person: assertText(payload.contact_person, 200, false),
-          phone: assertText(payload.phone, 200),
-          industry: assertText(payload.industry, 120),
-          city: assertText(payload.city, 120),
-          pipeline_stage: payload.pipeline_stage as PipelineStage,
+          company_name: normalized.company_name,
+          contact_person: normalized.contact_person,
+          phone: assertText(normalized.phone, 200),
+          industry: normalized.industry,
+          city: normalized.city,
+          pipeline_stage: normalized.pipeline_stage,
           deal_value: payload.deal_value,
           next_followup_date: assertCalendarDate(payload.next_followup_date),
           lead_score: payload.lead_score as LeadScore,

@@ -6,7 +6,6 @@ import {
   query,
   runTransaction,
   serverTimestamp,
-  updateDoc,
   where,
   type DocumentData,
   type Unsubscribe,
@@ -17,6 +16,7 @@ import { firestoreWriteQueue, type QueueWriteReceipt as QueueReceipt } from './u
 import type { DurableMutation, DurableQueueInput, DurableQueueRecord, RestoredQueueRecord } from './utils/offlineOutbox.ts';
 import { setDocWithServerReconciliation } from './utils/idempotentFirestoreCreate.ts';
 import type { LeadSnapshotState } from './utils/optimisticLeadStages.ts';
+import { canTransitionFromAuthoritativeStage, normalizeCreateLeadPayload } from './utils/salesSafety.ts';
 
 export interface RepositoryWriteReceipt<T = void> {
   operationId: string;
@@ -161,12 +161,22 @@ async function executeDurableMutation(restored: RestoredQueueRecord): Promise<vo
         });
         return;
       }
-      await updateDoc(ref, {
-        pipeline_stage: record.payload.pipeline_stage,
-        ...(record.payload.next_followup_date !== undefined
-          ? { next_followup_date: record.payload.next_followup_date }
-          : {}),
-        updated_at: serverTimestamp(),
+      await runTransaction(db, async (transaction) => {
+        const leadSnapshot = await transaction.get(ref);
+        if (!leadSnapshot.exists()) {
+          throw Object.assign(new Error('Lead tidak ditemukan untuk perubahan stage.'), { code: 'not-found' });
+        }
+        const currentStage = leadSnapshot.data().pipeline_stage as PipelineStage;
+        if (!canTransitionFromAuthoritativeStage(currentStage, record.payload.pipeline_stage)) {
+          throw Object.assign(new Error('Closing Won bersifat final dan tidak dapat dikembalikan ke stage sebelumnya.'), { code: 'failed-precondition' });
+        }
+        transaction.update(ref, {
+          pipeline_stage: record.payload.pipeline_stage,
+          ...(record.payload.next_followup_date !== undefined
+            ? { next_followup_date: record.payload.next_followup_date }
+            : {}),
+          updated_at: serverTimestamp(),
+        });
       });
       return;
     }
@@ -257,7 +267,7 @@ export async function createLead(
   const operationId = `lead-create:${ref.id}`;
   const payload: DurableMutation = {
     kind: 'create-lead',
-    payload: {
+    payload: normalizeCreateLeadPayload({
       company_name: lead.company_name,
       contact_person: lead.contact_person,
       phone: String(lead.phone ?? ''),
@@ -267,7 +277,7 @@ export async function createLead(
       deal_value: Number(lead.deal_value) || 0,
       next_followup_date: lead.next_followup_date || '',
       lead_score: lead.lead_score,
-    },
+    }),
   };
   const durable = createDurableRecord(ownerId, operationId, payload, ref.id);
   const receipt = enqueueDurable(ownerId, durable);
