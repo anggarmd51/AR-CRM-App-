@@ -1,0 +1,14 @@
+.env
+.env.*
+**/.env
+**/.env.*
+*.local
+**/*.local
+node_modules
+**/node_modules
+dist
+**/dist
+*.log
+**/*.log
+.vercel
+**/.vercel
