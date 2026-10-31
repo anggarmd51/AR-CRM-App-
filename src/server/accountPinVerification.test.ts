@@ -139,6 +139,7 @@ test('verification accepts only same-origin HTTPS POST with one PIN field', asyn
   const testHarness = harness();
   assert.equal((await testHarness.verify(request({ pin: '123456' }, { method: 'GET' }))).statusCode, 405);
   assert.equal((await testHarness.verify(request({ pin: '123456' }, { forwardedProto: 'http' }))).statusCode, 403);
+  assert.equal((await testHarness.verify(request({ pin: '123456' }, { origin: undefined, fetchSite: 'same-origin' }))).statusCode, 403);
   assert.equal((await testHarness.verify(request({ pin: '123456' }, { origin: 'https://attacker.example.test' }))).statusCode, 403);
   assert.equal((await testHarness.verify(request({ pin: '123456', ownerUid: OWNER_UID }))).statusCode, 400);
   assert.equal(testHarness.calls.reserved, 0);
@@ -297,6 +298,33 @@ test('status requires authenticated same-origin GET and fails closed on storage 
   const failedStorage = harness();
   failedStorage.dependencies.credentials.getCredential = async () => { throw new Error('storage failure'); };
   assert.equal((await failedStorage.status(statusRequest())).statusCode, 503);
+});
+
+test('status accepts only genuine same-origin HTTPS browser GET without Origin, including the HTTP adapter', async () => {
+  const testHarness = harness();
+  assert.equal((await testHarness.status(statusRequest({ origin: undefined, fetchSite: 'same-origin' }))).statusCode, 200);
+  assert.equal((await testHarness.status(statusRequest({ origin: undefined }))).statusCode, 403);
+  assert.equal((await testHarness.status(statusRequest({ origin: undefined, fetchSite: 'cross-site' }))).statusCode, 403);
+  assert.equal((await testHarness.status(statusRequest({ origin: undefined, fetchSite: 'same-site' }))).statusCode, 403);
+  assert.equal((await testHarness.status(statusRequest({ origin: undefined, fetchSite: ['same-origin', 'cross-site'] }))).statusCode, 403);
+  assert.equal((await testHarness.status(statusRequest({ origin: '', fetchSite: 'same-origin' }))).statusCode, 403);
+  assert.equal((await testHarness.status(statusRequest({ origin: ['https://app.example.test'], fetchSite: 'same-origin' }))).statusCode, 403);
+  assert.equal((await testHarness.status(statusRequest({ origin: 'https://attacker.example.test', fetchSite: 'same-origin' }))).statusCode, 403);
+  assert.equal((await testHarness.status(statusRequest({ origin: undefined, fetchSite: 'same-origin', forwardedProto: 'http' }))).statusCode, 403);
+  assert.equal((await testHarness.status(statusRequest({ origin: undefined, fetchSite: 'same-origin', authorization: undefined }))).statusCode, 401);
+
+  const { accountPinRequest } = await import('../../api/account-pin/http.ts');
+  const baseline = statusRequest();
+  const browserRequest = accountPinRequest({
+    method: 'GET',
+    headers: {
+      authorization: baseline.authorization,
+      host: baseline.host,
+      'x-forwarded-proto': 'https',
+      'sec-fetch-site': 'same-origin',
+    },
+  } as unknown as Parameters<typeof accountPinRequest>[0]);
+  assert.equal((await testHarness.status(browserRequest)).statusCode, 200);
 });
 
 test('uses a salted scrypt verifier and rejects wrong PINs, peppers, and malformed verifier material', async () => {
