@@ -1,34 +1,47 @@
 # PROJECT STATE & ARCHITECTURAL SPECIFICATION
 ## AR Personal CRM Enterprise (Solo Account Manager Edition)
 
-> **Document Version:** 2.4.1 (local Rules and PWA hardening)
-> **Status:** Branch kerja saat ini `cue/ar-crm-operational-features`, HEAD `70ee0122c610b583b3627f65fce38c868230364f`; perubahan operasional dan persiapan staging masih uncommitted. Uji lokal lulus, tetapi env/deployment Preview branch ini belum tersedia dan aktivasi hosted ditahan. Tidak ada perubahan Production.
-> **Production terakhir diperiksa baca-saja melalui metadata Vercel (28 Okt 2026; tidak diperiksa ulang pada pembaruan ini):** project `arcrm-app`, alias [https://arcrmapp.vercel.app/](https://arcrmapp.vercel.app/) READY pada commit `f010c46f6358fa57fe2b0957e8f049058acb0b7d`, branch `cue/firebase-stabilization`; ditandai Vercel sebagai rollback candidate. Metadata deployment terkonfirmasi saat itu, tetapi prosedur dan keberhasilan rollback belum diuji.
-> **Preview staging lama:** [https://arcrm-4sv1mj6xw-anggaramadhan538-8607.vercel.app](https://arcrm-4sv1mj6xw-anggaramadhan538-8607.vercel.app) — akses tanpa sesi pada 30 Okt diarahkan ke SSO Vercel; bukan deployment branch operasional dan tidak dipakai sebagai bukti hosted CRUD/PIN.
+> **Document Version:** 2.4.2 (staging Rules, PIN, and App Check gate status)
+> **Status terkini:** Diverifikasi 31 Oktober 2026, 22:08 WIB. Checkout `cue/firebase-stabilization` pada `71187fc3a084ff304915d309b96ea82824c10850`, HEAD cocok dengan `origin/cue/firebase-stabilization`. Kandidat Rules staging lokal dan tesnya belum di-commit; perubahan koordinator pada dokumen ini serta review teknis tetap dipertahankan. PR #1 menuju `main` masih terbuka; belum digabung.
+> **Production:** Alias [https://arcrmapp.vercel.app/](https://arcrmapp.vercel.app/) menjawab HTTP 200 pada root saat diperiksa baca-saja 31 Okt 20:01 WIB; `/api/account-pin/status` menjawab HTTP 500. Root 200 bukan bukti alur aplikasi siap. Tidak ada perubahan Production dalam rangkaian pemeriksaan dan pengujian ini; status deployment/commit Vercel Production tidak dibaca ulang.
+> **Preview staging aktif untuk pengujian:** [alias branch `cue/firebase-stabilization`](https://arcrm-app-git-cue-firebase-stabilization-anggaramadhan538-8607.vercel.app/) — deployment `CtyWn3VvEYFQLNuppbUQmsKnaumW`, Preview/Ready, commit `71187fc`; sesi browser terautentikasi memverifikasi alias dan aplikasi. Permintaan publik tanpa sesi pada 31 Okt 20:01 WIB diarahkan ke Vercel SSO (HTTP 302); ini Preview terlindungi, bukan link publik Production.
+> **Firebase staging:** project `ar-crm-staging-angga-20261027`, database `(default)`, Rules version `2426eaaf-9389-4071-9d9f-9ea4166bc5b3` tetap aktif. `firestore.staging.rules` berisi kandidat lokal yang belum dipublikasikan; aturan cloud tidak diubah. Backup sebelum perubahan dan rencana rollback tersimpan di `/workspace/ar-crm-staging-rules-backups/20261031T114313Z/`.
+> **App Check staging:** bypass sementara hanya berlaku jika target Firebase staging, Vercel Preview, branch yang disetujui, dan alias staging exact semuanya cocok. Exchange reCAPTCHA Enterprise HTTP 403 belum diperbaiki; Issue [#2](https://github.com/anggarmd51/AR-CRM-App-/issues/2) terbuka untuk diagnosis dan mengaktifkan kembali App Check ketat. Bypass bukan bukti bahwa attestation normal telah pulih.
 > **Author & Architect:** Lead Full-Stack Software Architect & UI/UX State Specialist  
-> **Last Updated:** 30 Oktober 2026, 11:54 WIB
+> **Last Updated:** 31 Oktober 2026, 22:08 WIB
 > **Target Platform:** Responsive Progressive Web App (PWA) untuk browser laptop dan ponsel; tidak ada native Android app pada source ini.
 > **Catatan sumber kebenaran:** bagian “Status operasional terbaru” di bawah menjadi ringkasan saat ini. Bagian bertanggal setelahnya adalah snapshot historis pada waktu masing-masing dan tidak boleh mengalahkan bukti yang lebih baru. Branch `cue/firebase-stabilization` memakai Firebase Auth/Firestore untuk Leads/Activities dan tidak mengimpor data lama otomatis. Data operasional belum dimigrasikan; jangan memakai spreadsheet lama yang dikosongkan sebagai sumber.
 
-## Status operasional terbaru — 30 Oktober 2026, 11:54 WIB
+## Status operasional terbaru — 31 Oktober 2026, 22:08 WIB
 
-Owner menyetujui pengecualian PIN **khusus staging** untuk `cue/ar-crm-operational-features`. Allowlist staging kini mencakup branch ini dan `cue/firebase-stabilization`; guard branch Production tetap terpisah dan tidak diperluas. Konfigurasi client staging dipulihkan dari Console project staging ke `.env.staging.local`, dan kandidat `firestore.staging.rules` mengikat owner/workspace staging saja. Kedua file mode `0600` dan ignored Git; tidak ada credential Admin, pepper, atau secret Make di client env. Source Rules staging yang sedang dipublikasikan dipertahankan sebagai salinan privat terpisah, bukan ditimpa kandidat.
+Branch `cue/firebase-stabilization` tetap pada HEAD `71187fc`, sama dengan origin. Working tree memuat kandidat lokal `firestore.staging.rules` (diabaikan Git), tes `firestore.rules.test.ts`, serta perubahan koordinator di dokumen ini dan review teknis; tidak ada commit atau push. Vercel check, PR #1, dan Issue #2 seperti status sebelumnya.
 
-| Verifikasi sesi ini | Hasil |
+| Verifikasi terbaru | Hasil |
 | --- | --- |
-| Tes PIN staging/dispatcher/Production terfokus | 29/29 lulus |
-| Rules staging-bound pada `demo-ar-crm-staging-rules` | 25/25 lulus |
-| Tes webhook mapper/guard/writer | 17/17 lulus |
-| Satu prospek sintetis via HTTP loopback pada `demo-ar-crm-make-webhook` | create 201; retry 200, ID sama; tepat satu Lead; Lead/root/member fixture dibersihkan |
-| TypeScript/lint dan `git diff --check` | lulus |
+| `npm test` | 209/209 lulus |
+| `npm run lint` / TypeScript | lulus; build tidak dijalankan karena tidak ada source aplikasi atau konfigurasi build yang berubah |
+| Firestore Rules baseline Emulator | 22/22 lulus pada `demo-ar-crm-rules` |
+| Kandidat Rules staging lokal Emulator | 25/25 lulus pada `demo-ar-crm-staging-rules` memakai `firebase.staging.json`; delete Lead non-Won ditolak baik tanpa maupun dengan Activity tertaut. Kandidat belum dipublikasikan. |
+| PIN staging / Google Auth / custom token | Hasil hosted sebelumnya berlaku untuk Rules yang saat itu dipublikasikan; tidak diuji ulang terhadap kandidat lokal. Logout lalu login ulang belum diuji. |
+| Hosted Lead sintetis staging | Uji create/read/edit/delete UI terdahulu hanya membuktikan Rules yang dipublikasikan sebelum kandidat lokal; tidak ada hosted test baru atau data yang ditulis untuk kandidat ini. |
+| Hosted Activity sintetis staging | Uji create/read dan pembersihan terdahulu hanya membuktikan Rules yang dipublikasikan sebelum kandidat lokal; Activity update/delete klien tetap tidak diizinkan. Tidak ada hosted test baru atau data pelanggan yang ditulis. |
+| Source Rules aktif | Rules version `2426eaaf-9389-4071-9d9f-9ea4166bc5b3` tetap aktif di staging. Readback byte-identik sebelumnya mendahului perubahan kandidat lokal; versi cloud tidak diubah. |
+| Production read-only HTTP | Root 200; `/api/account-pin/status` 500 pada 31 Okt 20:01 WIB. Tidak ada Production test/tindakan. |
 
-Persiapan 25 variabel Vercel yang seluruhnya hanya `preview` + branch operasional dicoba dalam keadaan PIN/enrollment/webhook/AI **false** serta GAS kosong. API menolak seluruh batch dengan HTTP 400; readback setelahnya memastikan **nol** variabel branch dibuat dan metadata/value scope lain tidak berubah. Exact branch juga belum ada di remote menurut `git ls-remote`; tidak ada commit, push, atau deployment. Jangan mem-push branch untuk mengatasi ini sebelum snapshot ditinjau dan risiko auto-deploy dengan general Preview yang berbagi binding Production dihilangkan. General Preview dan semua variabel Production tidak diubah.
+Hosted tests di atas membuktikan alur terhadap Rules staging yang dipublikasikan sebelum kandidat lokal, bukan terhadap kandidat ini. Tidak ada pengujian hosted untuk kandidat dan tidak ada data staging/Production yang ditulis. Preview hanya dapat diakses melalui SSO; data hosted test terdahulu telah dibersihkan dan dicek ulang lewat Admin read-only.
 
-Rules staging live ternyata lebih lama: belum memiliki gate sesi PIN, optional email/address, AI/GPS Activity, dan arsip Won dari branch operasional, serta tetap menolak semua delete Lead. Kandidat lokal yang diuji menambahkan kebijakan fitur saat ini (termasuk delete non-Won tanpa arsip), sehingga **bukan** salinan perilaku live dan belum dipublikasikan. Publikasi Rules staging memerlukan review/persetujuan tersendiri, bukan sekadar melengkapi file yang hilang.
+### Gate dan pekerjaan tertunda
 
-Aktivasi hosted tetap ditahan: pepper PIN staging lama bersifat write-only di Vercel dan belum tersedia sebagai secret tersimpan; permintaan input secret telah dikirim, tanpa membuat pepper pengganti atau reset credential. Domain Auth/reCAPTCHA Preview dan pengujian hosted sign-in/PIN/CRUD juga belum dilakukan. Firebase staging terlihat tetap Spark/no-cost; tidak ada billing/Blaze, enforcement App Check, Rules/data cloud, scenario Make, panggilan AI berbayar, atau Production yang diubah. Tes lokal bukan bukti hosted/Production ready.
+- **App Check ketat:** belum pulih; 403 Enterprise tetap terbuka pada Issue #2. Bypass sementara meningkatkan risiko di staging dan harus dicabut setelah penyebab 403 diperbaiki.
+- **Activity edit/delete:** belum didukung oleh Rules aktif (create/read saja). Tes Lead edit dan kebijakan delete lokal mencakup Emulator; lead Closing Won/archive belum diuji hosted pada kandidat ini.
+- **Backup/restore cloud:** belum ada restore drill yang lulus.
+- **Ketahanan perangkat:** logout/login ulang, offline/reconnect, multi-tab, dan uji ponsel fisik belum selesai.
+- **Production:** status belum GO; endpoint PIN menjawab 500 pada pemeriksaan baca-saja ini. Tidak ada alias/env/rules/deployment/data Production yang diubah di tugas ini.
+- **Backup/rollback Rules staging:** tersedia dan belum digunakan untuk rollback. File: `/workspace/ar-crm-staging-rules-backups/20261031T114313Z/published.firestore.before.rules` dan `rollback-plan.md`.
 
-Catatan re-run: kandidat privat `firestore.staging.rules` sekarang sengaja dipertahankan. Runner `npm run test:firestore:staging` menolak file yang sudah ada; jangan menghapus kandidat/backup secara otomatis. Untuk menguji kandidat yang dipertahankan, gunakan Firestore Emulator dengan `--project demo-ar-crm-staging-rules --config firebase.staging.json --only firestore` dan `FIRESTORE_RULES_TARGET=staging`, setelah mengosongkan environment credential/project cloud seperti pada runner.
+Firebase staging tetap dibatasi pada project staging; tidak ada perubahan billing/IAM/Make atau data pelanggan. Nilai credential/secret tidak dicatat di dokumen ini.
+
+Catatan publikasi terdahulu: sebelum perubahan lokal saat ini, `firestore.staging.rules` pernah dipublikasikan dan diverifikasi byte-identik dengan Rules version di atas. Kandidat sekarang hanya lokal dan belum dipublikasikan. Pertahankan backup/rollback; jangan menimpa file rules Production.
 
 ## Snapshot operasional sebelumnya — 29 Oktober 2026, 11:06 WIB
 

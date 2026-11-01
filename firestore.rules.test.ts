@@ -328,11 +328,24 @@ test('activity parent lookup is workspace-scoped and requires a valid lead schem
   await assertFails(updateDoc(doc(db, 'workspaces', workspace, 'activities', 'existing-activity'), { notes: 'cannot edit activity' }));
 });
 
-test('owner can delete eligible leads but cannot delete Won leads or activity history', async () => {
+test('staging denies lead deletion while baseline behavior and Won/archive/activity constraints remain protected', async () => {
   const db = ownerWithActivePinSession();
   const eligible = doc(db, 'workspaces', workspace, 'leads', 'eligible-for-delete');
   await assertSucceeds(setDoc(eligible, validLead()));
-  await assertSucceeds(deleteDoc(eligible));
+  if (rulesTarget === 'staging') {
+    await assertFails(deleteDoc(eligible));
+    await assertSucceeds(getDoc(eligible));
+
+    const leadWithActivity = doc(db, 'workspaces', workspace, 'leads', 'lead-with-activity-cannot-delete');
+    const linkedActivity = doc(db, 'workspaces', workspace, 'activities', 'activity-on-lead-cannot-delete');
+    await assertSucceeds(setDoc(leadWithActivity, validLead()));
+    await assertSucceeds(setDoc(linkedActivity, validActivity('lead-with-activity-cannot-delete')));
+    await assertFails(deleteDoc(leadWithActivity));
+    await assertSucceeds(getDoc(leadWithActivity));
+    await assertSucceeds(getDoc(linkedActivity));
+  } else {
+    await assertSucceeds(deleteDoc(eligible));
+  }
   const wonLead = doc(db, 'workspaces', workspace, 'leads', 'won-cannot-delete');
   await env.withSecurityRulesDisabled(async (context) => {
     await setDoc(doc(context.firestore(), 'workspaces', workspace, 'leads', 'won-cannot-delete'), { ...validLead(), pipeline_stage: 'Closing Won' });
