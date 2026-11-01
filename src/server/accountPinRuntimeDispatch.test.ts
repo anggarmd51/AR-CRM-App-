@@ -62,6 +62,10 @@ test('runtime dispatch uses the Production factory only for the exact approved P
   assert.deepEqual(calls, { production: 1, staging: 0 });
 });
 
+test('Production runtime dispatch accepts the exact main ref', () => {
+  assert.equal(getAccountPinRuntimeTarget({ ...productionEnvironment, VERCEL_GIT_COMMIT_REF: 'main' }), 'production');
+});
+
 test('Production route dispatch fails closed for wrong project, service account, WIF binding, branch, or target', () => {
   const invalidEnvironments = [
     { ...productionEnvironment, FIREBASE_ADMIN_PROJECT_ID: 'wrong-project' },
@@ -69,7 +73,11 @@ test('Production route dispatch fails closed for wrong project, service account,
     { ...productionEnvironment, GCP_PROJECT_NUMBER: '123456789012' },
     { ...productionEnvironment, GCP_WORKLOAD_IDENTITY_POOL_ID: 'other-pool' },
     { ...productionEnvironment, GCP_WORKLOAD_IDENTITY_POOL_PROVIDER_ID: 'other-provider' },
-    { ...productionEnvironment, VERCEL_GIT_COMMIT_REF: 'main' },
+    { ...productionEnvironment, VERCEL_GIT_COMMIT_REF: 'main/preview' },
+    { ...productionEnvironment, VERCEL_GIT_COMMIT_REF: 'prefix-main' },
+    { ...productionEnvironment, VERCEL_GIT_COMMIT_REF: 'main-suffix' },
+    { ...productionEnvironment, VERCEL_GIT_COMMIT_REF: 'main*' },
+    { ...productionEnvironment, VERCEL_GIT_COMMIT_REF: 'cue/firebase-stabilization-extra' },
     { ...productionEnvironment, VITE_FIREBASE_TARGET: 'staging' },
     { ...productionEnvironment, ACCOUNT_PIN_OWNER_UID: 'synthetic-mismatched-owner' },
     { ...productionEnvironment, VITE_FIREBASE_OWNER_UID: 'synthetic-mismatched-owner' },

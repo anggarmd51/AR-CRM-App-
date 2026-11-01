@@ -28,10 +28,18 @@ export const ACCOUNT_PIN_PRODUCTION_WIF_AUDIENCE = 'https://iam.googleapis.com/p
 const STAGING_ADMIN_APP_NAME = 'ar-crm-account-pin-staging';
 const PRODUCTION_ADMIN_APP_NAME = 'ar-crm-account-pin-production-wif';
 export const ACCOUNT_PIN_APPROVED_RELEASE_BRANCH = 'cue/firebase-stabilization';
+export const ACCOUNT_PIN_APPROVED_PRODUCTION_BRANCHES = [
+  ACCOUNT_PIN_APPROVED_RELEASE_BRANCH,
+  'main',
+] as const;
 export const ACCOUNT_PIN_APPROVED_STAGING_BRANCHES = [
   'cue/firebase-stabilization',
   'cue/ar-crm-operational-features',
 ] as const;
+
+export function isAccountPinApprovedProductionBranch(branch: string | undefined): boolean {
+  return ACCOUNT_PIN_APPROVED_PRODUCTION_BRANCHES.some((approvedBranch) => approvedBranch === branch);
+}
 
 export function isAccountPinApprovedStagingBranch(branch: string | undefined): boolean {
   return ACCOUNT_PIN_APPROVED_STAGING_BRANCHES.some((approvedBranch) => approvedBranch === branch);
@@ -109,7 +117,7 @@ function getProductionWifConfig(environment: Environment): ProductionWifConfig {
   if (environment.VERCEL_ENV !== 'production' || environment.ACCOUNT_PIN_ENABLED !== 'true') {
     throw new Error('Account PIN Production runtime is disabled outside the explicitly enabled Production environment.');
   }
-  if (environment.VERCEL_GIT_COMMIT_REF !== ACCOUNT_PIN_APPROVED_RELEASE_BRANCH
+  if (!isAccountPinApprovedProductionBranch(environment.VERCEL_GIT_COMMIT_REF)
     || environment.VITE_FIREBASE_TARGET !== 'production') {
     throw new Error('Account PIN Production runtime is restricted to the approved release branch and Firebase target.');
   }

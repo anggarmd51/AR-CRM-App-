@@ -3,6 +3,7 @@ import test from 'node:test';
 import type { App, AppOptions } from 'firebase-admin/app';
 import type { ExternalAccountSupplierContext, IdentityPoolClientOptions } from 'google-auth-library';
 import {
+  ACCOUNT_PIN_APPROVED_PRODUCTION_BRANCHES,
   ACCOUNT_PIN_APPROVED_RELEASE_BRANCH,
   ACCOUNT_PIN_PRODUCTION_GCP_PROJECT_NUMBER,
   ACCOUNT_PIN_PRODUCTION_WIF_AUDIENCE,
@@ -51,7 +52,7 @@ test('Production PIN Admin rejects Preview, disabled, wrong-project, and wrong-s
     /disabled outside the explicitly enabled Production environment/,
   );
   assert.throws(
-    () => createProductionFirebaseAdminApp({ ...productionEnvironment, VERCEL_GIT_COMMIT_REF: 'main' }, dependencies),
+    () => createProductionFirebaseAdminApp({ ...productionEnvironment, VERCEL_GIT_COMMIT_REF: 'feature/main' }, dependencies),
     /approved release branch and Firebase target/,
   );
   assert.throws(
@@ -79,6 +80,26 @@ test('Production PIN Admin rejects Preview, disabled, wrong-project, and wrong-s
     /approved Workload Identity Federation provider/,
   );
   assert.equal(initializeCalls, 0);
+});
+
+test('Production WIF guard accepts only exact approved branch refs, including main', () => {
+  const createCredential = (branch: string) => createProductionAccountPinCredential({
+    ...productionEnvironment,
+    VERCEL_GIT_COMMIT_REF: branch,
+  }, {
+    createExternalAccountClient: () => ({
+      credentials: {},
+      async getAccessToken() { return { token: 'synthetic-access-token' }; },
+    }),
+  });
+
+  assert.deepEqual(ACCOUNT_PIN_APPROVED_PRODUCTION_BRANCHES, [ACCOUNT_PIN_APPROVED_RELEASE_BRANCH, 'main']);
+  assert.doesNotThrow(() => createCredential('main'));
+  assert.doesNotThrow(() => createCredential(ACCOUNT_PIN_APPROVED_RELEASE_BRANCH));
+
+  for (const branch of ['Main', 'main/preview', 'prefix-main', 'main-suffix', 'main*', 'cue/firebase-stabilization-extra']) {
+    assert.throws(() => createCredential(branch), /approved release branch and Firebase target/);
+  }
 });
 
 test('Production runtime rejects missing or short pepper before Firebase Admin initialization', () => {
