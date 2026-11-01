@@ -1,7 +1,16 @@
 # AR CRM — Handover Status Proyek
 
-**Diperbarui:** 1 November 2026, 09:22 WIB
-**Status ringkas:** Commit runtime repair `031366eb532d24d1c0370518a666e15b35882607` sudah dipush dan deployment Production Vercel `READY`. Pemilik melaporkan login Google, PIN, dan dashboard berfungsi normal setelah menguji langsung. Rules `597528…dc4d` belum dibaca kembali live; belum ada uji CRUD Production pada deployment baru. Pemilik menyatakan proyek siap digunakan; catatan teknis membedakan laporan pemilik dari gerbang yang belum diverifikasi.
+**Diperbarui:** 1 November 2026, 20:54 WIB
+**Status ringkas:** Sinkronisasi GitHub terakhir yang dikonfirmasi: `cue/firebase-stabilization` pada `f82211626bbb843b4665d49db0e760a7e3a7e8d5`, dan `cue/production-runtime-repair-20261101` pada `c88da3317d806d6a7242a2852447024aabaa81de`. Commit runtime `031366eb532d24d1c0370518a666e15b35882607` sudah dideploy terpisah ke Vercel Production `dpl_HtsnH3Vt6ykiGdCPJoWEYNPm4Jsr` (`READY`, alias `arcrmapp.vercel.app`). Pemilik melaporkan Google login, PIN, dan dashboard berjalan normal. Rules `597528b95e593ec9fdc4157e11128084ba115fa6bb1f2044a60585b51344dc4d` belum dibaca kembali live; hosted CRUD, backup/restore/PITR, offline/multi-tab/storage eviction, dan uji perangkat fisik belum diverifikasi. Tidak ada perubahan Firebase atau Vercel pada sinkronisasi GitHub. Permintaan pembaruan dokumen ini tidak mengizinkan commit/push atau perubahan Production.
+
+## Pembaruan terkini — 1 November 2026, 20:54 WIB
+
+- Branch `cue/firebase-stabilization` terakhir dikonfirmasi dipush ke commit `f82211626bbb843b4665d49db0e760a7e3a7e8d5`. Commit tersebut mencakup `PROJECT_STATE.md`, `firestore.rules.test.ts`, dokumen handover ini, dan tinjauan teknis staging.
+- Branch `cue/production-runtime-repair-20261101` terakhir dikonfirmasi dipush ke commit `c88da3317d806d6a7242a2852447024aabaa81de`, termasuk `FULL_PROJECT_DOCUMENTATION.md`. Runtime commit `031366eb532d24d1c0370518a666e15b35882607` sudah dideploy sebelumnya pada deployment Vercel Production `dpl_HtsnH3Vt6ykiGdCPJoWEYNPm4Jsr`, status `READY`, alias `arcrmapp.vercel.app`.
+- Laporan pemilik menyatakan Google login, PIN, dan dashboard berfungsi normal. Ini tidak membuktikan hosted CRUD atau seluruh layanan cloud.
+- Rules SHA `597528b95e593ec9fdc4157e11128084ba115fa6bb1f2044a60585b51344dc4d` belum dibaca kembali dari Production. Backup/restore/PITR, offline/multi-tab/storage eviction, dan matriks perangkat fisik juga belum diverifikasi.
+- Sinkronisasi GitHub tidak mengubah Firebase atau Vercel. Pembaruan dokumen saat ini bersifat lokal saja; jangan commit/push/merge atau mengubah Production tanpa izin eksplisit. Jaga agar dokumen tetap bebas dari secret, PIN, token, private key, data pelanggan, dan referensi secret.
+- Bagian-bagian di bawah yang memuat deployment lama, hash Rules terdahulu, atau status branch sebelum sinkronisasi ini adalah riwayat. Gunakan pembaruan ini sebagai ringkasan terkini bila ada perbedaan.
 
 ## Addendum terbaru — 1 November 2026, 03:34 WIB
 
@@ -86,15 +95,15 @@
 
 ## Ringkasan untuk agent penerus
 
-- `https://arcrmapp.vercel.app/` menjawab **HTTP 200** pada pemeriksaan langsung 1 Nov sekitar 02:18 WIB. Metadata Vercel untuk deployment saat ini menyatakan `READY`, target `production`, deployment `dpl_6ngo1g9YRkZbbRZe2Jse37NmhA1y`, source SHA `e9213f37189bb07ef8f9b128d45262990723f96b`.
-- Pendaftaran PIN Production pertama **sudah berhasil satu kali**. Sesi CRM logout, login ulang meminta PIN yang sudah ada (bukan formulir pendaftaran), verifikasi berhasil, dan reload mempertahankan sesi pada pemeriksaan browser terakhir sekitar 01:44–01:53 WIB. Pemeriksaan autentikasi yang sudah dilakukan bukan pemeriksaan ulang saat audit ini.
-- Dashboard membaca satu Lead dan satu Activity yang memang sudah ada; antrean lokal pada sesi/browser yang diuji kosong. CSV Lead berhasil diekspor. Tidak ada create/edit/delete Lead/Activity Production atau replay antrean yang dilakukan.
-- Masalah elemen akun/header yang menutupi tombol diperbaiki dan dirilis; klik header Export CSV serta pengalihan Mobile Frame/Full Canvas berhasil diuji sesudah perbaikan.
-- Rules Production terakhir dikonfirmasi diterbitkan dengan SHA-256 **`357eca226d04d7b205d9f8b4af68f20272de9b29f7730c09ffa36b01917f1266`**. Kandidat Rules baru **`597528b95e593ec9fdc4157e11128084ba115fa6bb1f2044a60585b51344dc4d`** masih lokal dan belum memperoleh persetujuan untuk diterbitkan.
-- Satu-satunya PR terbuka adalah [PR #1](https://github.com/anggarmd51/AR-CRM-App-/pull/1); satu-satunya issue terbuka adalah [Issue #2](https://github.com/anggarmd51/AR-CRM-App-/issues/2), tentang kegagalan staging reCAPTCHA Enterprise HTTP 403.
-- **Jangan menganggap Production GO.** Hosted CRUD, cloud restore/PITR, uji perangkat penuh, status flag enrollment, dan enforcement App Check Production belum tuntas atau belum dibuktikan.
+- Push GitHub terakhir yang dikonfirmasi: `cue/firebase-stabilization` pada `f82211626bbb843b4665d49db0e760a7e3a7e8d5` (termasuk handover dan staging review), serta `cue/production-runtime-repair-20261101` pada `c88da3317d806d6a7242a2852447024aabaa81de` (termasuk dokumentasi teknis ini).
+- Runtime commit `031366eb532d24d1c0370518a666e15b35882607` telah dideploy terpisah ke Vercel Production `dpl_HtsnH3Vt6ykiGdCPJoWEYNPm4Jsr`, status `READY`, alias `arcrmapp.vercel.app`. Pemilik melaporkan Google login, PIN, dan dashboard berfungsi normal.
+- Rules SHA `597528b95e593ec9fdc4157e11128084ba115fa6bb1f2044a60585b51344dc4d` belum dibaca kembali live. Hosted CRUD, backup/restore/PITR, offline/multi-tab/storage eviction, dan matriks perangkat fisik belum diverifikasi.
+- Sinkronisasi GitHub tidak mengubah Firebase atau Vercel. Pembaruan dokumen ini tidak mengizinkan commit/push/merge atau perubahan Production; preferensi proyek adalah lokal saja kecuali ada izin eksplisit.
+- Untuk langkah lanjutan, utamakan verifikasi read-only dan gunakan prosedur/otorisasi khusus sebelum menulis data atau mengubah konfigurasi. Jangan masukkan secret, PIN, token, private key, data pelanggan, atau referensi secret ke dokumen.
 
-## 1. Status Production dan pendaftaran PIN
+## 1. Catatan historis: status Production dan pendaftaran PIN
+
+Rincian pada bagian 1–4 berikut menyimpan snapshot dan instruksi dari audit sebelumnya. Jika bertentangan dengan pembaruan terkini di awal dokumen, gunakan pembaruan terkini; jangan menganggap status deployment, branch, atau Rules lama di bawah ini sebagai status live saat ini.
 
 ### Deployment dan kesehatan aplikasi
 

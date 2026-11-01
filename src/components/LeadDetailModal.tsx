@@ -16,6 +16,7 @@ import { Lead, Activity, LeadCorrection, LeadScore, PipelineStage, PIPELINE_STAG
 import { formatCurrency, formatDateDisplay, formatNumber } from '../utils/crmCalculations.ts';
 import { useModalAccessibility } from '../utils/useModalAccessibility.ts';
 import { createEmailComposeHref, createTelHref, detectMobileEmailHandler } from '../utils/leadContact.ts';
+import { downloadIcsFile, isValidCalendarDateInput } from '../utils/calendarSyncHelper.ts';
 
 interface LeadDetailModalProps {
   isOpen: boolean;
@@ -61,7 +62,7 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
 
   useEffect(() => {
     setEditError(null);
-    if (startEditing && lead) {
+    if (startEditing && lead && lead.pipeline_stage !== 'Closing Won') {
       setEditValues({
         company_name: lead.company_name,
         contact_person: lead.contact_person,
@@ -78,12 +79,12 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
     } else {
       setIsEditing(false);
     }
-  }, [lead?.id, startEditing]);
+  }, [lead?.id, lead?.pipeline_stage, startEditing]);
 
   if (!isOpen || !lead) return null;
 
   const beginEditing = () => {
-    if (!lead) return;
+    if (!lead || lead.pipeline_stage === 'Closing Won') return;
     setEditValues({
       company_name: lead.company_name,
       contact_person: lead.contact_person,
@@ -129,12 +130,14 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
   const leadActivities = activities.filter((a) => a.lead_id === lead.id);
   const stageCfg = STAGE_CONFIG[lead.pipeline_stage];
   const isWonArchiveLocked = lead.pipeline_stage === 'Closing Won';
+  const canDownloadFollowupIcs = /^\d{4}-\d{2}-\d{2}$/.test(lead.next_followup_date)
+    && isValidCalendarDateInput(lead.next_followup_date);
   const mobileEmail = typeof navigator !== 'undefined' && detectMobileEmailHandler(navigator.userAgent);
   const callHref = createTelHref(lead.phone);
   const emailHref = createEmailComposeHref(lead.email, mobileEmail);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#1f1f1f]/50 backdrop-blur-xs overflow-y-auto" role="presentation">
+    <div className="modal-safe-area fixed inset-0 z-50 flex items-center justify-center bg-[#1f1f1f]/50 backdrop-blur-xs overflow-y-auto" role="presentation">
       {/* 16px radius, cream canvas, 1px hairline border */}
       <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="lead-detail-modal-title" tabIndex={-1} className="bg-[#fcfcfa] border border-[#1f1f1f] rounded-[16px] w-full max-w-lg max-h-[calc(100dvh-2rem)] flex flex-col overflow-hidden my-2">
         {/* Header */}
@@ -149,7 +152,7 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            {!isEditing && (
+            {!isEditing && !isWonArchiveLocked && (
               <button
                 onClick={beginEditing}
                 aria-label="Edit Lead"
@@ -189,11 +192,17 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
             </div>
           </div>
 
-          {isEditing && (
+          {isWonArchiveLocked && (
+            <p role="note" className="rounded-[8px] border border-[#155e3c]/30 bg-[#edf7f1] px-3 py-2 text-[11px] font-semibold text-[#155e3c]">
+              Closing Won bersifat final. Detail dan tahap Lead ini tidak dapat diubah; arsip transaksi tetap immutable.
+            </p>
+          )}
+
+          {isEditing && !isWonArchiveLocked && (
             <form onSubmit={saveLeadDetails} className="space-y-3 rounded-[16px] border border-[#1f1f1f] bg-[#fff8f3] p-3.5">
               <div>
                 <h4 className="font-bold text-sm text-[#1f1f1f]">Edit data Lead</h4>
-                <p className="mt-0.5 text-[11px] leading-4 text-[#6b665c]">Perubahan disimpan ke Firestore; histori aktivitas tetap dipertahankan.{isWonArchiveLocked ? ' Field identitas/nilai terkunci untuk menjaga arsip Won.' : ''}</p>
+                <p className="mt-0.5 text-[11px] leading-4 text-[#6b665c]">Perubahan disimpan ke Firestore; histori aktivitas tetap dipertahankan.</p>
               </div>
               {editError && <p role="alert" className="rounded-[8px] border border-[#9b2c2c]/30 bg-white p-2 text-[11px] text-[#9b2c2c]">{editError}</p>}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
@@ -277,7 +286,7 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
           )}
 
           {/* Quick Contact & Action Buttons: 8px radius */}
-          <div className="grid grid-cols-2 min-[380px]:grid-cols-4 gap-2">
+          <div className="grid grid-cols-2 min-[380px]:grid-cols-3 sm:grid-cols-5 gap-2">
             {callHref ? (
               <a
                 href={callHref}
@@ -322,6 +331,23 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
             )}
 
             <button
+              type="button"
+              disabled={!canDownloadFollowupIcs}
+              onClick={() => downloadIcsFile({
+                id: `${lead.id}-followup-${lead.next_followup_date}`,
+                title: `Follow-up: ${lead.company_name}`,
+                description: `Follow-up dengan ${lead.contact_person} untuk ${lead.company_name}.`,
+                startDate: lead.next_followup_date,
+                companyName: lead.company_name,
+              })}
+              title={canDownloadFollowupIcs ? 'Unduh pengingat kalender .ics ke perangkat ini' : 'Tanggal follow-up belum valid'}
+              className="py-2.5 px-3 rounded-[8px] bg-[#f8f5ee] hover:bg-[#eae4d5] text-[#1f1f1f] border border-[#1f1f1f] flex flex-col items-center justify-center gap-1 font-semibold transition-all disabled:opacity-40"
+            >
+              <Calendar className="w-4 h-4 text-[#ff4800]" />
+              <span>Unduh .ics</span>
+            </button>
+
+            <button
               onClick={() => onOpenActivityLogger(lead)}
               className="py-2.5 px-3 rounded-[8px] bg-[#ff4800] hover:bg-[#e03f00] text-white border border-[#1f1f1f] flex flex-col items-center justify-center gap-1 font-bold transition-all"
             >
@@ -332,22 +358,26 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
 
           {/* Stage Progression Selector (8px radius) */}
           <div className="space-y-1.5 bg-[#f8f5ee] p-3.5 rounded-[16px] border border-[#1f1f1f]">
-            <span className="text-[#1f1f1f] font-bold block">Update Pipeline Stage:</span>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
-              {PIPELINE_STAGES.map((st) => (
-                <button
-                  key={st}
-                  onClick={() => onUpdateStage(lead.id, st)}
-                  className={`py-1.5 px-2 rounded-[8px] border text-center font-bold text-[11px] transition-all ${
-                    lead.pipeline_stage === st
-                      ? 'bg-[#1f1f1f] border-[#1f1f1f] text-white'
-                      : 'bg-[#fcfcfa] border-[#1f1f1f] text-[#1f1f1f] hover:bg-[#eae4d5]'
-                  }`}
-                >
-                  {st}
-                </button>
-              ))}
-            </div>
+            <span className="text-[#1f1f1f] font-bold block">{isWonArchiveLocked ? 'Closing Won — final' : 'Update Pipeline Stage:'}</span>
+            {isWonArchiveLocked ? (
+              <p className="text-[11px] text-[#155e3c]">Tahap ini tidak dapat dipindah kembali atau diedit.</p>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                {PIPELINE_STAGES.map((st) => (
+                  <button
+                    key={st}
+                    onClick={() => onUpdateStage(lead.id, st)}
+                    className={`py-1.5 px-2 rounded-[8px] border text-center font-bold text-[11px] transition-all ${
+                      lead.pipeline_stage === st
+                        ? 'bg-[#1f1f1f] border-[#1f1f1f] text-white'
+                        : 'bg-[#fcfcfa] border-[#1f1f1f] text-[#1f1f1f] hover:bg-[#eae4d5]'
+                    }`}
+                  >
+                    {st}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Details Overview */}

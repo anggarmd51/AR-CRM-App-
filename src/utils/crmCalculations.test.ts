@@ -119,6 +119,7 @@ test('generateWhatsAppUrl builds valid wa.me link with encoded template', () => 
   assert.ok(url.startsWith('https://wa.me/628123456789?text='));
   assert.ok(url.includes(encodeURIComponent('Alice')));
   assert.ok(url.includes(encodeURIComponent('Alpha Corp')));
+  assert.equal(generateWhatsAppUrl('invalid-phone', 'intro', { contact_person: 'Alice' }), '');
 });
 
 test('toDateStringOnly handles ISO and YYYY-MM-DD correctly', () => {

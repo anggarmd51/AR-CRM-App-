@@ -202,6 +202,7 @@ service cloud.firestore {
         allow update: if ownerMembership(workspaceId)
           && resource.data.ownerId == request.auth.uid
           && resource.data.role == 'owner'
+          && resource.data.pipeline_stage != 'Closing Won'
           && validLeadFields(request.resource.data)
           && immutableLeadIdentity(resource.data, request.resource.data)
           && (request.resource.data.pipeline_stage != 'Closing Won'

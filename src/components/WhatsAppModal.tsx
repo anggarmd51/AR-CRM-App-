@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { X, MessageCircle, Send, Copy, Check } from 'lucide-react';
 import { Lead } from '../types/crm.ts';
 import { WHATSAPP_TEMPLATES } from '../utils/crmCalculations.ts';
-import { copyTextToClipboard, normalizeWhatsAppPhone } from '../utils/whatsapp.ts';
+import { copyTextToClipboard, createWhatsAppHref, normalizeWhatsAppPhone } from '../utils/whatsapp.ts';
 import { useModalAccessibility } from '../utils/useModalAccessibility.ts';
 interface WhatsAppModalProps { isOpen: boolean; onClose: () => void; lead: Lead | null; }
 export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose, lead }) => {
@@ -41,12 +41,13 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose, l
     if (result.ok) copyTimerRef.current = window.setTimeout(() => { if (version === copyVersionRef.current) setCopied(false); }, 2000);
   };
   const handleSend = () => {
-    if (!phone) return;
-    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(customMessage)}`, '_blank', 'noopener,noreferrer');
+    const href = createWhatsAppHref(phone, customMessage);
+    if (!href) return;
+    window.open(href, '_blank', 'noopener,noreferrer');
     onClose();
   };
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#1f1f1f]/50 backdrop-blur-xs overflow-y-auto" role="presentation">
+    <div className="modal-safe-area fixed inset-0 z-50 flex items-center justify-center bg-[#1f1f1f]/50 backdrop-blur-xs overflow-y-auto" role="presentation">
       <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} className="bg-[#fcfcfa] border border-[#1f1f1f] rounded-[16px] w-full max-w-lg max-h-[calc(100dvh-2rem)] flex flex-col overflow-hidden">
         <div className="shrink-0 px-5 py-4 border-b border-[#1f1f1f] flex items-start gap-3 bg-[#f8f5ee]">
           <div className="min-w-0 flex-1">

@@ -1,8 +1,8 @@
 import React from 'react';
-import { LayoutDashboard, Columns3, Compass, History } from 'lucide-react';
+import { LayoutDashboard, Columns3, Compass, History, TrendingUp } from 'lucide-react';
 import { formatNumber } from '../utils/crmCalculations.ts';
 
-export type NavTab = 'dashboard' | 'pipeline' | 'leads_finder' | 'activities' | 'android_code';
+export type NavTab = 'dashboard' | 'pipeline' | 'leads_finder' | 'activities' | 'analytics' | 'android_code';
 
 interface BottomNavBarProps {
   currentTab: NavTab;
@@ -15,7 +15,7 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = ({
   onSelectTab,
   followUpDueCount = 0,
 }) => {
-  // 4 core CRM Sales tabs focused for mobile ergonomics
+  // Five compact CRM views, including a read-only analytics surface.
   const tabs = [
     {
       id: 'dashboard' as NavTab,
@@ -31,7 +31,7 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = ({
     },
     {
       id: 'leads_finder' as NavTab,
-      label: 'Lead Finder',
+      label: 'Prospek Lokal',
       icon: Compass,
       badge: null,
     },
@@ -41,11 +41,17 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = ({
       icon: History,
       badge: null,
     },
+    {
+      id: 'analytics' as NavTab,
+      label: 'Analitik',
+      icon: TrendingUp,
+      badge: null,
+    },
   ];
 
   return (
     <nav className="sticky bottom-0 z-30 border-t border-[#1f1f1f] bg-[#fcfcfa] px-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] pt-2">
-      <div className="max-w-md mx-auto grid grid-cols-4 gap-1">
+      <div className="max-w-md mx-auto grid grid-cols-5 gap-1">
         {tabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = currentTab === tab.id;

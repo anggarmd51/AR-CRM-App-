@@ -89,7 +89,7 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#1f1f1f]/50 backdrop-blur-xs overflow-y-auto" role="presentation">
+    <div className="modal-safe-area fixed inset-0 z-50 flex items-center justify-center bg-[#1f1f1f]/50 backdrop-blur-xs overflow-y-auto" role="presentation">
       {/* 16px radius, cream canvas, 1px hairline border */}
       <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="quick-lead-modal-title" tabIndex={-1} className="bg-[#fcfcfa] border border-[#1f1f1f] rounded-[16px] w-full max-w-lg max-h-[calc(100dvh-2rem)] flex flex-col overflow-hidden my-2">
         {/* Header */}

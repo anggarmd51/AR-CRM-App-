@@ -20,6 +20,15 @@
   }
 }
 
+@layer components {
+  .modal-safe-area {
+    padding-top: max(1rem, env(safe-area-inset-top));
+    padding-right: max(1rem, env(safe-area-inset-right));
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+    padding-left: max(1rem, env(safe-area-inset-left));
+  }
+}
+
 /* Custom scrollbar for Kanban & code without heavy shadows */
 ::-webkit-scrollbar {
   width: 6px;

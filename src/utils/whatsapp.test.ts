@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { copyTextToClipboard, isValidWhatsAppPhone, normalizeWhatsAppPhone } from './whatsapp.ts';
+import { copyTextToClipboard, createWhatsAppHref, interpolateWhatsAppTemplate, isValidWhatsAppPhone, normalizeWhatsAppPhone } from './whatsapp.ts';
 
 test('normalizes valid Indonesian WhatsApp numbers conservatively', () => {
   assert.equal(normalizeWhatsAppPhone('0812 3456 7890'), '6281234567890');
@@ -32,4 +32,14 @@ test('accepts explicit international numbers but rejects misplaced plus markers'
   assert.equal(normalizeWhatsAppPhone('62+812345678'), '');
   assert.equal(normalizeWhatsAppPhone('++62812345678'), '');
   assert.equal(normalizeWhatsAppPhone('+01234567890'), '');
+});
+
+test('formats WhatsApp templates and encodes the message only for a valid recipient', () => {
+  const message = interpolateWhatsAppTemplate('Halo {{contact_person}} — {{company_name}} ({{missing}})', {
+    contact_person: 'Angga',
+    company_name: 'AR, CRM',
+  });
+  assert.equal(message, 'Halo Angga — AR, CRM ([missing])');
+  assert.equal(createWhatsAppHref('08123456789', message), `https://wa.me/628123456789?text=${encodeURIComponent(message)}`);
+  assert.equal(createWhatsAppHref('not a phone', message), undefined);
 });

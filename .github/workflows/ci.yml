@@ -1,0 +1,51 @@
+name: AR CRM Quality Gate
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - cue/firebase-stabilization
+  pull_request:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality-gate:
+    name: Install, Typecheck, Tests, Rules, and Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: TypeScript typecheck
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Firestore Rules emulator tests
+        run: npm run test:firestore
+
+      - name: Production build
+        run: npm run build
+        env:
+          NODE_ENV: production

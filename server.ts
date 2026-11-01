@@ -4,6 +4,9 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
 import makeLeadWebhookHandler from './api/webhooks/make/leads.ts';
+import accountPinStatusHandler from './api/account-pin/status.ts';
+import accountPinEnrollHandler from './api/account-pin/enroll.ts';
+import accountPinVerifyHandler from './api/account-pin/verify.ts';
 
 dotenv.config();
 
@@ -12,6 +15,18 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
+
+// Mirror the three existing Vercel function paths in the custom Express dev server.
+// Their handlers retain the same fail-closed runtime and environment gates.
+app.all('/api/account-pin/status', (req, res) => {
+  void accountPinStatusHandler(req, res);
+});
+app.all('/api/account-pin/enroll', express.json({ limit: '2kb' }), (req, res) => {
+  void accountPinEnrollHandler(req, res);
+});
+app.all('/api/account-pin/verify', express.json({ limit: '2kb' }), (req, res) => {
+  void accountPinVerifyHandler(req, res);
+});
 
 // The webhook has its own small parser cap; keep existing body limits elsewhere.
 app.all('/api/webhooks/make/leads', express.json({ limit: '32kb' }), (req, res) => {

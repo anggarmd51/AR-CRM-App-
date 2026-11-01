@@ -26,6 +26,7 @@ const DashboardView = lazy(() => import('./components/DashboardView.tsx').then((
 const PipelineKanbanView = lazy(() => import('./components/PipelineKanbanView.tsx').then(({ PipelineKanbanView }) => ({ default: PipelineKanbanView })));
 const GlobalLeadsView = lazy(() => import('./components/GlobalLeadsView.tsx').then(({ GlobalLeadsView }) => ({ default: GlobalLeadsView })));
 const ActivitiesListView = lazy(() => import('./components/ActivitiesListView.tsx').then(({ ActivitiesListView }) => ({ default: ActivitiesListView })));
+const AdvancedAnalyticsView = lazy(() => import('./components/AdvancedAnalyticsView.tsx').then(({ AdvancedAnalyticsView }) => ({ default: AdvancedAnalyticsView })));
 const AndroidCodeExplorer = lazy(() => import('./components/AndroidCodeExplorer.tsx').then(({ AndroidCodeExplorer }) => ({ default: AndroidCodeExplorer })));
 const QuickLeadModal = lazy(() => import('./components/QuickLeadModal.tsx').then(({ QuickLeadModal }) => ({ default: QuickLeadModal })));
 const ActivityLoggerModal = lazy(() => import('./components/ActivityLoggerModal.tsx').then(({ ActivityLoggerModal }) => ({ default: ActivityLoggerModal })));
@@ -46,7 +47,7 @@ const ModalChunkFallback = () => (
   </div>
 );
 
-const APP_TABS: readonly NavTab[] = ['dashboard', 'pipeline', 'leads_finder', 'activities', 'android_code'];
+const APP_TABS: readonly NavTab[] = ['dashboard', 'pipeline', 'leads_finder', 'activities', 'analytics', 'android_code'];
 
 export default function App() {
   const useLocalSecurityVault = shouldUseLocalSecurityVault(firebaseTarget);
@@ -341,6 +342,10 @@ export default function App() {
       showToast('Stage tidak dapat diubah karena lead atau sesi owner tidak tersedia.');
       return;
     }
+    if (previousLead.pipeline_stage === 'Closing Won') {
+      showToast('Closing Won bersifat final; stage Lead ini tidak dapat diubah.');
+      return;
+    }
     const token = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     stageOverlayRef.current.apply(leadId, token, newStage, nextFollowupDate);
     const optimisticFields = {
@@ -377,6 +382,9 @@ export default function App() {
     const previousLead = leads.find((lead) => lead.id === leadId);
     const ownerId = getFirebaseAuth().currentUser?.uid;
     if (!previousLead || !ownerId) throw new Error('Lead atau sesi owner tidak tersedia untuk koreksi.');
+    if (previousLead.pipeline_stage === 'Closing Won') {
+      throw new Error('Closing Won bersifat final; detail Lead ini tidak dapat diubah.');
+    }
 
     const token = `details-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     stageOverlayRef.current.applyDetails(leadId, token, changes);
@@ -541,9 +549,11 @@ export default function App() {
       case 'pipeline':
         return 'Sales Pipeline';
       case 'leads_finder':
-        return 'Lead Finder';
+        return 'Direktori Prospek Lokal';
       case 'activities':
         return 'Field Activities';
+      case 'analytics':
+        return 'Analitik Penjualan';
       case 'android_code':
         return 'Android Architecture';
       default:
@@ -641,6 +651,16 @@ export default function App() {
           {currentTab === 'leads_finder' && (
             <Suspense fallback={<AppChunkFallback />}>
               <GlobalLeadsView />
+            </Suspense>
+          )}
+
+          {currentTab === 'analytics' && (
+            <Suspense fallback={<AppChunkFallback />}>
+              <AdvancedAnalyticsView
+                leads={leads}
+                onBackToDashboard={() => changeTabWithHistory('dashboard')}
+                onSelectLead={openLeadDetail}
+              />
             </Suspense>
           )}
 

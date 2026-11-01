@@ -379,6 +379,8 @@ test('lead and activity schemas reject tampered ownership, role, type, malformed
   await assertFails(setDoc(doc(db, 'workspaces', workspace, 'activities', 'summary-without-source'), { ...validActivity('owned-lead'), ai_summary: 'Ringkasan sintetis.' }));
   await assertFails(setDoc(doc(db, 'workspaces', workspace, 'activities', 'bad-summary-source'), { ...validActivity('owned-lead'), ai_summary: 'Ringkasan sintetis.', ai_summary_source: 'unknown' }));
   await assertFails(setDoc(doc(db, 'workspaces', workspace, 'activities', 'unknown-field'), { ...validActivity('owned-lead'), unknown_field: 'denied' }));
+  await assertFails(setDoc(doc(db, 'workspaces', workspace, 'activities', 'photo-url-field'), { ...validActivity('owned-lead'), photo_url: 'https://example.invalid/photo.jpg' }));
+  await assertFails(setDoc(doc(db, 'workspaces', workspace, 'activities', 'photoUrl-field'), { ...validActivity('owned-lead'), photoUrl: 'https://example.invalid/photo.jpg' }));
 });
 
 test('activity accepts bounded summary provenance and explicitly captured GPS only', async () => {
@@ -486,7 +488,7 @@ test('an existing lead cannot enter Won without a matching archive in the same a
   }));
 });
 
-test('re-win preserves the immutable first-win archive and rejects a changed archived snapshot', async () => {
+test('Closing Won lead is immutable after its first-win archive is written', async () => {
   const db = ownerWithActivePinSession();
   const leadRef = doc(db, 'workspaces', workspace, 'leads', 'immutable-rewin');
   const archiveRef = doc(db, 'workspaces', workspace, 'wonDealArchives', 'immutable-rewin');
@@ -496,14 +498,11 @@ test('re-win preserves the immutable first-win archive and rejects a changed arc
     transaction.set(archiveRef, { ...validWonArchive('immutable-rewin'), archived_at: serverTimestamp() });
   }));
   const firstArchive = (await getDoc(archiveRef)).data();
-  await assertSucceeds(updateDoc(leadRef, { pipeline_stage: 'Closing Lost', updated_at: serverTimestamp() }));
-  await assertSucceeds(updateDoc(leadRef, { pipeline_stage: 'Closing Won', updated_at: serverTimestamp() }));
-  // A contact correction is allowed, but never rewrites the historical first win.
-  await assertSucceeds(updateDoc(leadRef, { contact_person: 'Corrected Synthetic Contact', deal_value: 100, updated_at: serverTimestamp() }));
-  assert.deepEqual((await getDoc(archiveRef)).data(), firstArchive);
-  await assertSucceeds(updateDoc(leadRef, { pipeline_stage: 'Negotiation', updated_at: serverTimestamp() }));
+  await assertFails(updateDoc(leadRef, { pipeline_stage: 'Closing Lost', updated_at: serverTimestamp() }));
   await assertFails(updateDoc(leadRef, { pipeline_stage: 'Closing Won', updated_at: serverTimestamp() }));
-  assert.equal((await getDoc(leadRef)).get('pipeline_stage'), 'Negotiation');
+  await assertFails(updateDoc(leadRef, { contact_person: 'Corrected Synthetic Contact', deal_value: 100, updated_at: serverTimestamp() }));
+  await assertFails(updateDoc(leadRef, { email: 'changed@example.id', next_followup_date: '2026-11-02', updated_at: serverTimestamp() }));
+  assert.equal((await getDoc(leadRef)).get('pipeline_stage'), 'Closing Won');
   assert.deepEqual((await getDoc(archiveRef)).data(), firstArchive);
 });
 

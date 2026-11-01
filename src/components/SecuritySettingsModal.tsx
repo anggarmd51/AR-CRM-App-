@@ -73,7 +73,7 @@ export const SecuritySettingsModal: React.FC<SecuritySettingsModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#1f1f1f]/50 backdrop-blur-xs overflow-y-auto" role="presentation">
+    <div className="modal-safe-area fixed inset-0 z-50 flex items-center justify-center bg-[#1f1f1f]/50 backdrop-blur-xs overflow-y-auto" role="presentation">
       <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="security-settings-modal-title" tabIndex={-1} className="bg-[#fcfcfa] border border-[#1f1f1f] rounded-[16px] w-full max-w-md max-h-[calc(100dvh-2rem)] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150 my-2">
         {/* Header */}
         <div className="px-5 py-4 border-b border-[#1f1f1f] flex items-center justify-between bg-[#f8f5ee]">

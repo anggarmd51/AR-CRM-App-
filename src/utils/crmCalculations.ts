@@ -21,6 +21,7 @@ const dateTimeDisplayFormatter = new Intl.DateTimeFormat('id-ID', {
   minute: '2-digit',
   timeZone: INDONESIAN_TIME_ZONE,
 });
+import { createWhatsAppHref, interpolateWhatsAppTemplate } from './whatsapp.ts';
 
 /**
  * Calculates comprehensive CRM financial & pipeline metrics.
@@ -187,26 +188,34 @@ export const WHATSAPP_TEMPLATES: WhatsAppTemplate[] = [
   {
     id: 'intro',
     title: 'Intro & Connect',
-    message: (l) =>
-      `Hi ${l.contact_person || 'there'}, I hope you're having a productive week. Reaching out from our commercial team regarding ${l.company_name || 'your business'}. Would you be open to a quick 10-minute catchup this week?`,
+    message: (l) => interpolateWhatsAppTemplate(
+      "Hi {{contact_person}}, I hope you're having a productive week. Reaching out from our commercial team regarding {{company_name}}. Would you be open to a quick 10-minute catchup this week?",
+      { contact_person: l.contact_person || 'there', company_name: l.company_name || 'your business' },
+    ),
   },
   {
     id: 'meeting_confirm',
     title: 'Meeting Confirmation',
-    message: (l) =>
-      `Hi ${l.contact_person || 'there'}, confirming our upcoming meeting for ${l.company_name || 'our discussion'}. Looking forward to connecting! Please let me know if you need to adjust the timing.`,
+    message: (l) => interpolateWhatsAppTemplate(
+      'Hi {{contact_person}}, confirming our upcoming meeting for {{company_name}}. Looking forward to connecting! Please let me know if you need to adjust the timing.',
+      { contact_person: l.contact_person || 'there', company_name: l.company_name || 'our discussion' },
+    ),
   },
   {
     id: 'proposal_followup',
     title: 'Proposal Follow-up',
-    message: (l) =>
-      `Hi ${l.contact_person || 'there'}, following up on the commercial proposal we shared for ${l.company_name || 'your project'}. Have you had a chance to review with your team? Happy to address any questions.`,
+    message: (l) => interpolateWhatsAppTemplate(
+      'Hi {{contact_person}}, following up on the commercial proposal we shared for {{company_name}}. Have you had a chance to review with your team? Happy to address any questions.',
+      { contact_person: l.contact_person || 'there', company_name: l.company_name || 'your project' },
+    ),
   },
   {
     id: 'checkin',
     title: 'Quick Check-in',
-    message: (l) =>
-      `Hi ${l.contact_person || 'there'}, just checking in to see how everything is progressing at ${l.company_name || 'your company'}. Let me know if there's anything our team can support you with!`,
+    message: (l) => interpolateWhatsAppTemplate(
+      "Hi {{contact_person}}, just checking in to see how everything is progressing at {{company_name}}. Let me know if there's anything our team can support you with!",
+      { contact_person: l.contact_person || 'there', company_name: l.company_name || 'your company' },
+    ),
   },
 ];
 
@@ -218,10 +227,9 @@ export function generateWhatsAppUrl(
   templateId: string,
   lead: Partial<Lead>
 ): string {
-  const cleaned = cleanPhoneNumber(phone);
   const template = WHATSAPP_TEMPLATES.find((t) => t.id === templateId) || WHATSAPP_TEMPLATES[0];
   const text = template.message(lead);
-  return `https://wa.me/${cleaned}?text=${encodeURIComponent(text)}`;
+  return createWhatsAppHref(phone, text) ?? '';
 }
 
 /**

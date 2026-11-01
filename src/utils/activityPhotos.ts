@@ -1,5 +1,11 @@
-export const MAX_ACTIVITY_PHOTO_INPUT_BYTES = 12 * 1024 * 1024;
-export const MAX_ACTIVITY_PHOTO_BYTES = 900 * 1024;
+import {
+  compressImageFile,
+  MAX_COMPRESSED_IMAGE_BYTES,
+  MAX_IMAGE_INPUT_BYTES,
+} from './imageCompression.ts';
+
+export const MAX_ACTIVITY_PHOTO_INPUT_BYTES = MAX_IMAGE_INPUT_BYTES;
+export const MAX_ACTIVITY_PHOTO_BYTES = MAX_COMPRESSED_IMAGE_BYTES;
 const MAX_ACTIVITY_PHOTO_DIMENSION = 1440;
 const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/avif', 'image/heic', 'image/heif']);
 const DATABASE_NAME = 'ar-crm-local-activity-photos';
@@ -13,35 +19,13 @@ export function validateActivityPhotoMetadata(file: Pick<Blob, 'type' | 'size'>)
   return undefined;
 }
 
-function canvasBlob(canvas: HTMLCanvasElement, quality: number): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Browser tidak dapat memproses foto.')), 'image/jpeg', quality);
-  });
-}
-
 export async function compressActivityPhoto(file: File): Promise<Blob> {
   const validationError = validateActivityPhotoMetadata(file);
   if (validationError) throw new Error(validationError);
-  if (typeof createImageBitmap !== 'function' || typeof document === 'undefined') {
-    throw new Error('Pemrosesan foto tidak tersedia di browser ini.');
-  }
-  const bitmap = await createImageBitmap(file);
-  try {
-    const scale = Math.min(1, MAX_ACTIVITY_PHOTO_DIMENSION / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-    const context = canvas.getContext('2d', { alpha: false });
-    if (!context) throw new Error('Browser tidak dapat membuka kanvas foto.');
-    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    for (const quality of [0.82, 0.72, 0.62, 0.52, 0.42]) {
-      const compressed = await canvasBlob(canvas, quality);
-      if (compressed.size <= MAX_ACTIVITY_PHOTO_BYTES) return compressed;
-    }
-    throw new Error('Foto masih terlalu besar setelah diperkecil. Pilih foto yang lebih kecil.');
-  } finally {
-    bitmap.close();
-  }
+  return compressImageFile(file, {
+    maxDimension: MAX_ACTIVITY_PHOTO_DIMENSION,
+    maxBytes: MAX_ACTIVITY_PHOTO_BYTES,
+  });
 }
 
 interface StoredPhoto {
@@ -66,7 +50,8 @@ function openPhotoDatabase(): Promise<IDBDatabase> {
 }
 
 export async function storeActivityPhoto(activityId: string, photo: Blob): Promise<void> {
-  if (!activityId.trim() || activityId.length > 150 || photo.type !== 'image/jpeg' || photo.size > MAX_ACTIVITY_PHOTO_BYTES) {
+  if (!activityId.trim() || activityId.length > 150 || photo.type !== 'image/jpeg'
+    || photo.size <= 0 || photo.size > MAX_ACTIVITY_PHOTO_BYTES) {
     throw new Error('Foto aktivitas tidak lolos pemeriksaan penyimpanan lokal.');
   }
   const database = await openPhotoDatabase();
