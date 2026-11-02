@@ -4,7 +4,6 @@ import {
   AccountPinClientError,
   type AccountPinClient,
   type AccountPinClientStatus,
-  type AccountPinRedirectErrorCode,
 } from '../accountPinClient.ts';
 
 type AccountPinGateState = 'checking' | 'pin-required' | 'enrollment-available' | 'enrollment-blocked' | 'unavailable';
@@ -14,8 +13,6 @@ interface AccountPinGateProps {
   client: AccountPinClient;
   state: AccountPinGateState;
   status?: AccountPinClientStatus;
-  reauthenticationRedirect: boolean;
-  redirectErrorCode?: AccountPinRedirectErrorCode;
   onRetry: () => void;
   onSignOut: () => void;
 }
@@ -53,24 +50,7 @@ function localizedError(error: unknown, operation: 'verify' | 'enroll'): string 
   }
 }
 
-function localizedRedirectError(code: AccountPinRedirectErrorCode): string {
-  switch (code) {
-    case 'auth/network-request-failed':
-      return 'Koneksi Google/Auth gagal. Pendaftaran PIN diblokir dan tidak ada permintaan enrollment dikirim. Periksa koneksi; jika diulang, hentikan uji dan periksa konfigurasi redirect staging.';
-    case 'auth/unauthorized-domain':
-      return 'Domain staging belum diizinkan untuk Google Auth. Pendaftaran PIN diblokir dan tidak ada permintaan enrollment dikirim. Hentikan uji sampai konfigurasi domain redirect diperiksa.';
-    case 'auth/operation-not-allowed':
-      return 'Penyedia Google Auth tidak mengizinkan alur ini. Pendaftaran PIN diblokir dan tidak ada permintaan enrollment dikirim. Periksa konfigurasi provider staging sebelum melanjutkan.';
-    case 'auth/invalid-credential':
-      return 'Google tidak mengembalikan kredensial re-authentication yang valid. Pendaftaran PIN diblokir dan tidak ada permintaan enrollment dikirim. Hentikan uji sampai alur redirect staging diperiksa.';
-    case 'auth/internal-error':
-      return 'Firebase Auth mengalami kesalahan internal. Pendaftaran PIN diblokir dan tidak ada permintaan enrollment dikirim. Hentikan uji dan periksa konfigurasi redirect staging.';
-    case 'redirect_result_missing':
-      return 'Google tidak mengembalikan hasil re-authentication yang dapat diverifikasi. Pendaftaran PIN diblokir dan tidak ada permintaan enrollment dikirim. Muat ulang hanya setelah penyebab redirect staging diperiksa.';
-  }
-}
-
-export function AccountPinGate({ user, client, state, status, reauthenticationRedirect, redirectErrorCode, onRetry, onSignOut }: AccountPinGateProps) {
+export function AccountPinGate({ user, client, state, status, onRetry, onSignOut }: AccountPinGateProps) {
   const [pin, setPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
   const [busy, setBusy] = useState(false);
@@ -110,9 +90,7 @@ export function AccountPinGate({ user, client, state, status, reauthenticationRe
     detail = 'Masukkan PIN akun 6–12 angka untuk membuka sesi cloud. PIN hanya dikirim ke server melalui HTTPS dan tidak disimpan aplikasi di browser.';
   } else if (state === 'enrollment-available') {
     title = 'Daftarkan PIN akun pertama';
-    detail = reauthenticationRedirect
-      ? 'Pendaftaran hanya tersedia jika server mengonfirmasi belum ada credential. Anda akan diarahkan ke Google pada tab ini; setelah kembali, masukkan ulang PIN. PIN tidak disimpan selama redirect.'
-      : 'Pendaftaran hanya tersedia jika server mengonfirmasi belum ada credential. Google akan diminta re-authentication baru; server membuat verifier scrypt dan menyimpannya pada dokumen Firestore server-only.';
+    detail = 'Pendaftaran hanya tersedia jika server mengonfirmasi belum ada credential. Google akan diminta re-authentication baru melalui popup; server membuat verifier scrypt dan menyimpannya pada dokumen Firestore server-only.';
   } else if (state === 'enrollment-blocked') {
     title = 'PIN akun belum terdaftar';
     detail = 'Pendaftaran aman belum diaktifkan di lingkungan ini. CRM, Firestore, dan antrean tetap ditahan. Jangan masukkan PIN lokal sebagai pengganti.';
@@ -126,10 +104,9 @@ export function AccountPinGate({ user, client, state, status, reauthenticationRe
       <section className="w-full max-w-md space-y-4 rounded-[12px] border border-[#eae4d5] bg-white p-6 shadow-sm">
         <h1 className="text-xl font-bold text-[#1f1f1f]">{title}</h1>
         <p className="text-sm leading-6 text-[#6b665c]">{detail}</p>
-        {redirectErrorCode && <p role="alert" className="text-xs leading-5 text-[#9b2c2c]">{localizedRedirectError(redirectErrorCode)}</p>}
         {state === 'checking' && <p role="status" className="text-xs text-[#6b665c]">Sesi antrean dan data CRM belum diaktifkan.</p>}
 
-        {(state === 'pin-required' || (isEnrollment && !redirectErrorCode)) && (
+        {(state === 'pin-required' || isEnrollment) && (
           <form onSubmit={handleSubmit} autoComplete="off" className="space-y-3">
             {isEnrollment && (
               <div role="note" className="rounded-[8px] border border-[#9b2c2c]/30 bg-[#fff5f0] p-3 text-xs leading-5 text-[#9b2c2c]">
@@ -178,11 +155,7 @@ export function AccountPinGate({ user, client, state, status, reauthenticationRe
               disabled={busy || pin.length < 6 || (isEnrollment && (confirmPin.length < 6 || pin !== confirmPin))}
               className="w-full rounded-[8px] bg-[#ff4800] px-4 py-2.5 text-sm font-bold text-white hover:bg-[#d93d00] disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {busy
-                ? isEnrollment && reauthenticationRedirect ? 'Mengalihkan ke Google…' : 'Memverifikasi…'
-                : isEnrollment
-                  ? reauthenticationRedirect ? 'Lanjutkan ke Google' : 'Re-auth Google dan daftarkan PIN'
-                  : 'Verifikasi PIN akun'}
+              {busy ? 'Memverifikasi…' : isEnrollment ? 'Re-auth Google dan daftarkan PIN' : 'Verifikasi PIN akun'}
             </button>
           </form>
         )}

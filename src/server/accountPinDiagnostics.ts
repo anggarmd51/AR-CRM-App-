@@ -16,6 +16,8 @@ export type AccountPinDiagnosticStage = typeof ACCOUNT_PIN_DIAGNOSTIC_STAGES[num
 export const ACCOUNT_PIN_REQUEST_DIAGNOSTIC_TAGS = [
   'auth_bearer_missing',
   'auth_token_verify_failed',
+  'auth_token_claims_invalid',
+  'auth_token_auth_time_invalid',
   'forbidden_origin_mismatch',
   'forbidden_owner_uid_mismatch',
 ] as const;

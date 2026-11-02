@@ -58,6 +58,13 @@ test('owner bootstrap exposes UID/email only and keeps unconfigured CRM children
   assert.doesNotMatch(authGate, /getIdToken|accessToken|refreshToken|credentialFromResult|localStorage|setDoc|addDoc|onSnapshot/);
 });
 
+test('Firebase login and account PIN re-authentication use popups without redirect storage', () => {
+  assert.match(authGate, /signInWithPopup/);
+  assert.match(authGate, /reauthenticateWithPopup/);
+  assert.doesNotMatch(authGate, /signInWithRedirect|reauthenticateWithRedirect|getRedirectResult|sessionStorage|completeRedirectReauthentication/);
+  assert.doesNotMatch(accountPinClient, /Redirect|redirect/);
+});
+
 test('hosted CRM opens only after the signed claim and server session document are verified', () => {
   assert.match(authGate, /onIdTokenChanged/);
   assert.match(authGate, /const status = await accountPinClient\.fetchStatus\(nextUser\)/);

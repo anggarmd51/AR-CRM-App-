@@ -18,10 +18,12 @@ import {
   createAccountPinStatusService,
   createAccountPinVerificationService,
   createAccountPinVerifier,
+  FirebaseIdTokenValidationError,
   verifyAccountPinVerifier,
   type PinVerificationDependencies,
   type PinVerificationRequest,
   type PinVerificationResponse,
+  type VerifiedFirebaseIdentity,
 } from './accountPinVerification.ts';
 
 export const ACCOUNT_PIN_STAGING_PROJECT_ID = 'ar-crm-staging-angga-20261027';
@@ -307,6 +309,23 @@ function getStagingAdminApp(environment: Environment) {
   }, STAGING_ADMIN_APP_NAME);
 }
 
+export function validateFirebaseIdTokenClaims(
+  decoded: { aud: unknown; iss: unknown; auth_time: unknown; uid: string; pinSessionId?: unknown },
+  projectId: string,
+): VerifiedFirebaseIdentity {
+  if (decoded.aud !== projectId || decoded.iss !== `https://securetoken.google.com/${projectId}`) {
+    throw new FirebaseIdTokenValidationError('auth_token_claims_invalid');
+  }
+  if (typeof decoded.auth_time !== 'number' || !Number.isInteger(decoded.auth_time)) {
+    throw new FirebaseIdTokenValidationError('auth_token_auth_time_invalid');
+  }
+  return {
+    uid: decoded.uid,
+    authTimeSeconds: decoded.auth_time,
+    ...(typeof decoded.pinSessionId === 'string' ? { pinSessionId: decoded.pinSessionId } : {}),
+  };
+}
+
 function createAccountPinRuntime(
   environment: Environment,
   projectId: string,
@@ -342,16 +361,7 @@ function createAccountPinRuntime(
     ownerUid,
     async verifyFirebaseIdToken(idToken) {
       const decoded = await auth.verifyIdToken(idToken, true);
-      if (decoded.aud !== projectId
-        || decoded.iss !== `https://securetoken.google.com/${projectId}`
-        || !Number.isInteger(decoded.auth_time)) {
-        throw new Error('Firebase ID token audience, issuer, or authentication time mismatch.');
-      }
-      return {
-        uid: decoded.uid,
-        authTimeSeconds: decoded.auth_time,
-        ...(typeof decoded.pinSessionId === 'string' ? { pinSessionId: decoded.pinSessionId } : {}),
-      };
+      return validateFirebaseIdTokenClaims(decoded, projectId);
     },
     credentials: store,
     verifyAccountPin: (pin, verifier) => verifyAccountPinVerifier(pin, verifier, pepper),

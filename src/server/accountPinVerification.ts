@@ -70,6 +70,15 @@ export class AccountPinCredentialAlreadyExistsError extends Error {
   }
 }
 
+export type FirebaseIdTokenDiagnosticTag = 'auth_token_claims_invalid' | 'auth_token_auth_time_invalid';
+
+export class FirebaseIdTokenValidationError extends Error {
+  constructor(readonly diagnosticTag: FirebaseIdTokenDiagnosticTag) {
+    super('Firebase ID token validation failed.');
+    this.name = 'FirebaseIdTokenValidationError';
+  }
+}
+
 export interface VerifiedFirebaseIdentity {
   uid: string;
   authTimeSeconds: number;
@@ -220,7 +229,10 @@ async function authenticateOwner(
     return { identity };
   } catch (error) {
     try {
-      dependencies.onRequestDiagnostic?.('auth_token_verify_failed', error);
+      const diagnosticTag = error instanceof FirebaseIdTokenValidationError
+        ? error.diagnosticTag
+        : 'auth_token_verify_failed';
+      dependencies.onRequestDiagnostic?.(diagnosticTag, error);
     } catch {
       // Diagnostic logging must never alter the fail-closed API response.
     }

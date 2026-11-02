@@ -126,3 +126,12 @@ test('arbitrary non-authentication error messages remain redacted', () => {
   assert.equal(diagnostic.message, '[redacted:unrecognized_error_message]');
   assert.doesNotMatch(JSON.stringify(diagnostic), /Unexpected private response|phone-5550100|raw-key-ABC/);
 });
+
+test('token claim and auth_time request diagnostics emit only fixed safe tags', () => {
+  assert.deepEqual(captureRequestDiagnostic('auth_token_claims_invalid', new Error('private aud and issuer details')), {
+    tag: 'auth_token_claims_invalid',
+  });
+  assert.deepEqual(captureRequestDiagnostic('auth_token_auth_time_invalid', new Error('private auth_time detail')), {
+    tag: 'auth_token_auth_time_invalid',
+  });
+});

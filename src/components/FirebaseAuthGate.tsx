@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import {
-  getRedirectResult,
   onIdTokenChanged,
   reauthenticateWithPopup,
-  reauthenticateWithRedirect,
   signInWithCustomToken,
   signInWithPopup,
   signOut,
@@ -23,50 +21,15 @@ import { activateFirestoreWriteQueue, deactivateFirestoreWriteQueue } from '../f
 import { firestoreWriteQueue } from '../utils/offlineWriteQueue.ts';
 import { isOwnerBootstrapEnabled } from '../utils/ownerBootstrap.ts';
 import { requiresServerIssuedPinSession } from '../accountPinPolicy.ts';
-import { isStagingAccountPinRedirectEnabled } from '../accountPinReauthentication.ts';
-import {
-  createAccountPinClient,
-  safeAccountPinRedirectErrorCode,
-  type AccountPinClientStatus,
-  type AccountPinRedirectErrorCode,
-} from '../accountPinClient.ts';
+import { createAccountPinClient, type AccountPinClientStatus } from '../accountPinClient.ts';
 import { AccountPinGate } from './AccountPinGate.tsx';
-
-const ACCOUNT_PIN_REDIRECT_PENDING_KEY = 'arcrm:account-pin:reauth-redirect-pending';
-const useStagingAccountPinRedirect = isStagingAccountPinRedirectEnabled(
-  firebaseTarget,
-  typeof window === 'undefined' ? '' : window.location.origin,
-);
 
 const accountPinClient = createAccountPinClient({
   fetch: (...args) => fetch(...args),
   getAuth: getFirebaseAuth,
   getGoogleProvider,
-  requireRedirectResultForEnrollment: useStagingAccountPinRedirect,
   reauthenticate: async (user, provider) => {
-    if (!useStagingAccountPinRedirect) {
-      await reauthenticateWithPopup(user, provider);
-      return;
-    }
-    window.sessionStorage.setItem(ACCOUNT_PIN_REDIRECT_PENDING_KEY, 'pending');
-    try {
-      await reauthenticateWithRedirect(user, provider);
-      return 'redirect-started';
-    } catch (cause) {
-      try { window.sessionStorage.removeItem(ACCOUNT_PIN_REDIRECT_PENDING_KEY); } catch { /* fail closed */ }
-      throw cause;
-    }
-  },
-  consumeRedirectReauthentication: async () => {
-    if (!useStagingAccountPinRedirect
-      || window.sessionStorage.getItem(ACCOUNT_PIN_REDIRECT_PENDING_KEY) !== 'pending') return undefined;
-    window.sessionStorage.removeItem(ACCOUNT_PIN_REDIRECT_PENDING_KEY);
-    try {
-      const result = await getRedirectResult(getFirebaseAuth());
-      return result ? { userUid: result.user.uid } : { errorCode: 'redirect_result_missing' };
-    } catch (cause) {
-      return { errorCode: safeAccountPinRedirectErrorCode(cause) };
-    }
+    await reauthenticateWithPopup(user, provider);
   },
   signInWithCustomToken,
 });
@@ -90,7 +53,6 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
   const [startupError, setStartupError] = useState<string | null>(null);
   const [accountPinGateState, setAccountPinGateState] = useState<AccountPinGateState>('checking');
   const [accountPinStatus, setAccountPinStatus] = useState<AccountPinClientStatus | undefined>();
-  const [accountPinRedirectError, setAccountPinRedirectError] = useState<AccountPinRedirectErrorCode | undefined>();
   const [sessionExpiresAt, setSessionExpiresAt] = useState<string | undefined>();
   const [sessionRevalidating, setSessionRevalidating] = useState(false);
   const [sessionCheckTrigger, setSessionCheckTrigger] = useState(0);
@@ -110,9 +72,6 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
       try {
         await verifyFirebaseStartup();
         if (!active) return;
-        const redirectErrorCode = await accountPinClient.completeRedirectReauthentication();
-        if (!active) return;
-        setAccountPinRedirectError(redirectErrorCode);
         unsubscribe = onIdTokenChanged(getFirebaseAuth(), (nextUser) => {
           const eventGeneration = ++generation;
           setReady(false);
@@ -322,8 +281,6 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
         client={accountPinClient}
         state={sessionRevalidating || accountPinGateState === 'verified' ? 'checking' : accountPinGateState}
         status={accountPinStatus}
-        reauthenticationRedirect={useStagingAccountPinRedirect}
-        redirectErrorCode={accountPinRedirectError}
         onRetry={() => setPinRefreshTrigger((value) => value + 1)}
         onSignOut={handleSignOut}
       />

@@ -1,29 +1,5 @@
 import type { Auth, GoogleAuthProvider, User } from 'firebase/auth';
 
-const ACCOUNT_PIN_REDIRECT_ERROR_CODES = [
-  'auth/invalid-credential',
-  'auth/network-request-failed',
-  'auth/operation-not-allowed',
-  'auth/unauthorized-domain',
-  'auth/internal-error',
-] as const;
-
-export type AccountPinRedirectErrorCode = typeof ACCOUNT_PIN_REDIRECT_ERROR_CODES[number] | 'redirect_result_missing';
-
-export function safeAccountPinRedirectErrorCode(cause: unknown): AccountPinRedirectErrorCode {
-  const code = cause && typeof cause === 'object' && 'code' in cause
-    ? (cause as { code?: unknown }).code
-    : undefined;
-  return typeof code === 'string' && (ACCOUNT_PIN_REDIRECT_ERROR_CODES as readonly string[]).includes(code)
-    ? code as AccountPinRedirectErrorCode
-    : 'redirect_result_missing';
-}
-
-type RedirectReauthenticationResult =
-  | { userUid: string }
-  | { errorCode: AccountPinRedirectErrorCode }
-  | undefined;
-
 export interface AccountPinClientStatus {
   credentialRegistered: boolean;
   enrollmentEnabled: boolean;
@@ -42,9 +18,7 @@ export interface AccountPinClientDependencies {
   fetch: typeof fetch;
   getAuth(): Auth | Promise<Auth>;
   getGoogleProvider(): GoogleAuthProvider | Promise<GoogleAuthProvider>;
-  reauthenticate(user: User, provider: GoogleAuthProvider): Promise<'redirect-started' | void>;
-  consumeRedirectReauthentication?(): Promise<RedirectReauthenticationResult>;
-  requireRedirectResultForEnrollment?: boolean;
+  reauthenticate(user: User, provider: GoogleAuthProvider): Promise<void>;
   signInWithCustomToken(auth: Auth, token: string): Promise<unknown>;
 }
 
@@ -119,42 +93,14 @@ export function createAccountPinClient(dependencies: AccountPinClientDependencie
     await dependencies.signInWithCustomToken(await dependencies.getAuth(), response.customToken);
   }
 
-  let redirectReauthenticatedUid: string | undefined;
-  let redirectReauthenticationError: AccountPinRedirectErrorCode | undefined;
-
   return {
-    async completeRedirectReauthentication(): Promise<AccountPinRedirectErrorCode | undefined> {
-      redirectReauthenticatedUid = undefined;
-      redirectReauthenticationError = undefined;
-      const result = await dependencies.consumeRedirectReauthentication?.();
-      if (!result) return undefined;
-      if ('errorCode' in result) {
-        redirectReauthenticationError = result.errorCode;
-        return result.errorCode;
-      }
-      redirectReauthenticatedUid = result.userUid;
-      return undefined;
-    },
     fetchStatus,
     async verifyAndExchange(user: User, pin: string): Promise<void> {
       await exchangeCustomToken(user, '/api/account-pin/verify', { pin });
     },
-    async enrollAndExchange(user: User, pin: string, confirmPin: string): Promise<boolean> {
-      const matchingRedirectResult = redirectReauthenticatedUid === user.uid;
-      if (matchingRedirectResult) {
-        redirectReauthenticatedUid = undefined;
-      } else {
-        if (redirectReauthenticationError) {
-          throw new AccountPinClientError(redirectReauthenticationError, 'Google redirect reauthentication could not be verified.');
-        }
-        const reauthentication = await dependencies.reauthenticate(user, await dependencies.getGoogleProvider());
-        if (reauthentication === 'redirect-started') return false;
-      }
-      if (dependencies.requireRedirectResultForEnrollment && !matchingRedirectResult) {
-        throw new AccountPinClientError('redirect_result_missing', 'A matching Google redirect result is required for enrollment.');
-      }
+    async enrollAndExchange(user: User, pin: string, confirmPin: string): Promise<void> {
+      await dependencies.reauthenticate(user, await dependencies.getGoogleProvider());
       await exchangeCustomToken(user, '/api/account-pin/enroll', { pin, confirmPin }, true);
-      return true;
     },
   };
 }

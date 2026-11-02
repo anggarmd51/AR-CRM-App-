@@ -17,7 +17,9 @@ import {
   createProductionAccountPinRuntime,
   createProductionFirebaseAdminApp,
   resolveProductionAccountPinOwnerUid,
+  validateFirebaseIdTokenClaims,
 } from './accountPinFirebaseAdmin.ts';
+import { FirebaseIdTokenValidationError } from './accountPinVerification.ts';
 import { logAccountPinDiagnostic, markAccountPinDiagnostic } from './accountPinDiagnostics.ts';
 import { FIREBASE_RULES_OWNER_UID, FIREBASE_RULES_WORKSPACE_ID } from '../firebaseRulesBinding.ts';
 
@@ -492,4 +494,31 @@ test('Production Firebase Admin refuses non-WIF reuse and logs granular initiali
     return true;
   });
   assert.equal(firestoreAppPassed?.options.projectId, ACCOUNT_PIN_PRODUCTION_PROJECT_ID);
+});
+
+test('Firebase ID token claims and auth_time failures receive distinct safe validation tags', () => {
+  const projectId = ACCOUNT_PIN_PRODUCTION_PROJECT_ID;
+  const validClaims = {
+    aud: projectId,
+    iss: `https://securetoken.google.com/${projectId}`,
+    auth_time: 1_800_000_000,
+    uid: 'synthetic-owner-uid',
+    pinSessionId: 'S'.repeat(43),
+  };
+  assert.deepEqual(validateFirebaseIdTokenClaims(validClaims, projectId), {
+    uid: 'synthetic-owner-uid',
+    authTimeSeconds: 1_800_000_000,
+    pinSessionId: 'S'.repeat(43),
+  });
+
+  assert.throws(
+    () => validateFirebaseIdTokenClaims({ ...validClaims, aud: 'private-wrong-project' }, projectId),
+    (error: unknown) => error instanceof FirebaseIdTokenValidationError
+      && error.diagnosticTag === 'auth_token_claims_invalid',
+  );
+  assert.throws(
+    () => validateFirebaseIdTokenClaims({ ...validClaims, auth_time: Number.NaN }, projectId),
+    (error: unknown) => error instanceof FirebaseIdTokenValidationError
+      && error.diagnosticTag === 'auth_token_auth_time_invalid',
+  );
 });

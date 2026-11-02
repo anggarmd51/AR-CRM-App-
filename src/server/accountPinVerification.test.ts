@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   AccountPinCredentialAlreadyExistsError,
   ACCOUNT_PIN_SESSION_TTL_MS,
+  FirebaseIdTokenValidationError,
   createAccountPinEnrollmentService,
   createAccountPinStatusService,
   createAccountPinVerificationService,
@@ -361,4 +362,17 @@ test('Firebase Admin runtime refuses production and any non-staging branch/proje
   assert.throws(() => createStagingAccountPinRuntime({ ...sharedPreviewEnv, VERCEL_ENV: 'production' }), /disabled outside the approved staging Preview/);
   assert.throws(() => createStagingAccountPinRuntime({ ...sharedPreviewEnv, FIREBASE_ADMIN_PROJECT_ID: 'not-the-staging-project' }), /restricted to the staging Firebase project/);
   assert.throws(() => createStagingAccountPinRuntime({ ...sharedPreviewEnv, VERCEL_GIT_COMMIT_REF: 'main' }), /disabled outside the approved staging Preview/);
+});
+
+test('invalid Firebase claims and auth_time map to fixed diagnostics before PIN attempt reservation', async () => {
+  for (const tag of ['auth_token_claims_invalid', 'auth_token_auth_time_invalid'] as const) {
+    const testHarness = harness({
+      verifyToken: async () => { throw new FirebaseIdTokenValidationError(tag); },
+    });
+    const tags: string[] = [];
+    testHarness.dependencies.onRequestDiagnostic = (diagnosticTag) => { tags.push(diagnosticTag); };
+    assert.equal((await testHarness.verify(request())).statusCode, 401);
+    assert.deepEqual(tags, [tag]);
+    assert.equal(testHarness.calls.reserved, 0);
+  }
 });
