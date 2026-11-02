@@ -9,6 +9,7 @@ import { FIREBASE_RULES_WORKSPACE_ID, firebaseOwnerBindingMatchesRules } from '.
 import { reserveAiUsage } from './leadFinderQuota.ts';
 import {
   logAccountPinDiagnostic,
+  logAccountPinRequestDiagnostic,
   markAccountPinDiagnostic,
   type AccountPinDiagnosticStage,
 } from './accountPinDiagnostics.ts';
@@ -313,6 +314,7 @@ function createAccountPinRuntime(
   pepper: string,
   app: App,
   onDiagnostic?: (stage: AccountPinDiagnosticStage, error: unknown) => void,
+  onRequestDiagnostic?: PinVerificationDependencies['onRequestDiagnostic'],
   adminDependencies: ProductionAdminDependencies = {},
 ): AccountPinRuntime {
   let auth: ReturnType<typeof getAuth>;
@@ -358,6 +360,7 @@ function createAccountPinRuntime(
     sessions: store,
     createCustomToken: (uid, claims) => auth.createCustomToken(uid, claims),
     ...(onDiagnostic ? { onDiagnostic } : {}),
+    ...(onRequestDiagnostic ? { onRequestDiagnostic } : {}),
   };
 
   const enrollmentEnabled = isAccountPinEnrollmentFlagEnabled(environment);
@@ -433,6 +436,7 @@ export function createProductionAccountPinRuntime(
       pepper,
       app,
       (stage, error) => logAccountPinDiagnostic(error, stage),
+      (tag, error) => logAccountPinRequestDiagnostic(tag, error),
       dependencies,
     );
   } catch (error) {

@@ -137,21 +137,41 @@ function harness(options: {
 
 test('verification accepts only same-origin HTTPS POST with one PIN field', async () => {
   const testHarness = harness();
+  const diagnosticTags: string[] = [];
+  testHarness.dependencies.onRequestDiagnostic = (tag) => { diagnosticTags.push(tag); };
   assert.equal((await testHarness.verify(request({ pin: '123456' }, { method: 'GET' }))).statusCode, 405);
   assert.equal((await testHarness.verify(request({ pin: '123456' }, { forwardedProto: 'http' }))).statusCode, 403);
   assert.equal((await testHarness.verify(request({ pin: '123456' }, { origin: undefined, fetchSite: 'same-origin' }))).statusCode, 403);
   assert.equal((await testHarness.verify(request({ pin: '123456' }, { origin: 'https://attacker.example.test' }))).statusCode, 403);
   assert.equal((await testHarness.verify(request({ pin: '123456', ownerUid: OWNER_UID }))).statusCode, 400);
+  assert.deepEqual(diagnosticTags, [
+    'forbidden_origin_mismatch',
+    'forbidden_origin_mismatch',
+    'forbidden_origin_mismatch',
+  ]);
   assert.equal(testHarness.calls.reserved, 0);
 });
 
 test('rejects missing, invalid, and non-owner Firebase identity before reserving PIN attempts', async () => {
-  const invalidToken = harness({ verifyToken: async () => { throw new Error('invalid'); } });
+  const invalidToken = harness({ verifyToken: async () => {
+    throw Object.assign(new Error('private token and uid must not be logged'), { code: 'auth/id-token-expired' });
+  } });
+  const authDiagnostics: Array<{ tag: string; error?: unknown }> = [];
+  invalidToken.dependencies.onRequestDiagnostic = (tag, error) => { authDiagnostics.push({ tag, error }); };
   assert.equal((await invalidToken.verify(request({ pin: '123456' }, { authorization: 'Bearer malformed token' }))).statusCode, 401);
+  assert.equal((await invalidToken.verify(request())).statusCode, 401);
+  assert.deepEqual(authDiagnostics.map(({ tag }) => tag), [
+    'auth_bearer_missing',
+    'auth_token_verify_failed',
+  ]);
+  assert.equal((authDiagnostics[1]?.error as { code?: string }).code, 'auth/id-token-expired');
   assert.equal(invalidToken.calls.reserved, 0);
 
   const nonOwner = harness({ verifyToken: async () => ({ uid: 'different-user', authTimeSeconds: 0 }) });
+  const ownerTags: string[] = [];
+  nonOwner.dependencies.onRequestDiagnostic = (tag) => { ownerTags.push(tag); };
   assert.equal((await nonOwner.verify(request())).statusCode, 403);
+  assert.deepEqual(ownerTags, ['forbidden_owner_uid_mismatch']);
   assert.equal(nonOwner.calls.reserved, 0);
 });
 

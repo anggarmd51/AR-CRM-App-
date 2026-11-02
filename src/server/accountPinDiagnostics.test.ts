@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { logAccountPinDiagnostic } from './accountPinDiagnostics.ts';
+import {
+  logAccountPinDiagnostic,
+  logAccountPinRequestDiagnostic,
+  type AccountPinRequestDiagnosticTag,
+} from './accountPinDiagnostics.ts';
 
 function captureDiagnostic(error: unknown): Record<string, unknown> {
   const logged: string[] = [];
@@ -8,6 +12,18 @@ function captureDiagnostic(error: unknown): Record<string, unknown> {
   console.error = (...values: unknown[]) => { logged.push(values.map(String).join(' ')); };
   try {
     logAccountPinDiagnostic(error, 'firestore_client_get');
+  } finally {
+    console.error = originalConsoleError;
+  }
+  return JSON.parse(logged[0]?.replace(/^account_pin_diagnostic /, '') ?? '{}') as Record<string, unknown>;
+}
+
+function captureRequestDiagnostic(tag: AccountPinRequestDiagnosticTag, error?: unknown): Record<string, unknown> {
+  const logged: string[] = [];
+  const originalConsoleError = console.error;
+  console.error = (...values: unknown[]) => { logged.push(values.map(String).join(' ')); };
+  try {
+    logAccountPinRequestDiagnostic(tag, error);
   } finally {
     console.error = originalConsoleError;
   }
@@ -86,6 +102,23 @@ test('unrecognized provider text and details remain redacted even when the code 
   assert.equal(diagnostic.message, '[redacted:unrecognized_error_message]');
   assert.ok((diagnostic.signals as string[]).includes('invalid-grant'));
   assert.doesNotMatch(JSON.stringify(diagnostic), /private opening text|raw-bearer-secret-and-project-id/);
+
+  assert.deepEqual(captureRequestDiagnostic('auth_token_verify_failed', Object.assign(new Error('private token'), {
+    code: 'auth/id-token-expired',
+    uid: 'owner-private-uid',
+  })), {
+    tag: 'auth_token_verify_failed',
+    code: 'auth/id-token-expired',
+  });
+  assert.deepEqual(captureRequestDiagnostic('auth_token_verify_failed', Object.assign(new Error('private token'), {
+    code: 'auth/id-token-expired;token=secret',
+  })), {
+    tag: 'auth_token_verify_failed',
+    code: 'unknown_error',
+  });
+  assert.deepEqual(captureRequestDiagnostic('forbidden_origin_mismatch'), {
+    tag: 'forbidden_origin_mismatch',
+  });
 });
 
 test('arbitrary non-authentication error messages remain redacted', () => {

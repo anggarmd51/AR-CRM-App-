@@ -13,6 +13,15 @@ export const ACCOUNT_PIN_DIAGNOSTIC_STAGES = [
 
 export type AccountPinDiagnosticStage = typeof ACCOUNT_PIN_DIAGNOSTIC_STAGES[number];
 
+export const ACCOUNT_PIN_REQUEST_DIAGNOSTIC_TAGS = [
+  'auth_bearer_missing',
+  'auth_token_verify_failed',
+  'forbidden_origin_mismatch',
+  'forbidden_owner_uid_mismatch',
+] as const;
+
+export type AccountPinRequestDiagnosticTag = typeof ACCOUNT_PIN_REQUEST_DIAGNOSTIC_TAGS[number];
+
 interface DiagnosticContext {
   stage: AccountPinDiagnosticStage;
   code?: string;
@@ -52,6 +61,20 @@ const ALLOWED_ERROR_CODES = new Set([
   'EAI_AGAIN',
   'ENOTFOUND',
   'ETIMEDOUT',
+]);
+
+const ALLOWED_FIREBASE_AUTH_ERROR_CODES = new Set([
+  'auth/argument-error',
+  'auth/id-token-expired',
+  'auth/id-token-revoked',
+  'auth/insufficient-permission',
+  'auth/internal-error',
+  'auth/invalid-credential',
+  'auth/invalid-id-token',
+  'auth/invalid-tenant-id',
+  'auth/tenant-id-mismatch',
+  'auth/user-disabled',
+  'auth/user-not-found',
 ]);
 
 const ALLOWED_ERROR_CODE_ALIASES = new Map<string, string>([
@@ -131,6 +154,17 @@ const ERROR_SIGNAL_PATTERNS = [
 function errorRecord(error: unknown): Record<string, unknown> | undefined {
   if (!error || (typeof error !== 'object' && typeof error !== 'function')) return undefined;
   return error as Record<string, unknown>;
+}
+
+function safeFirebaseAuthErrorCode(error: unknown): string {
+  try {
+    const code = errorRecord(error)?.code;
+    return typeof code === 'string' && ALLOWED_FIREBASE_AUTH_ERROR_CODES.has(code)
+      ? code
+      : 'unknown_error';
+  } catch {
+    return 'unknown_error';
+  }
 }
 
 function safeErrorCode(error: unknown): string {
@@ -247,6 +281,18 @@ export function logAccountPinDiagnostic(
     name: safeErrorName(error),
     message: safeErrorMessage(error),
     signals: safeErrorSignals(error),
+  };
+  console.error('account_pin_diagnostic', JSON.stringify(fields));
+}
+
+/** Emits only the fixed request tag and a strictly allowlisted Firebase Auth code. */
+export function logAccountPinRequestDiagnostic(
+  tag: AccountPinRequestDiagnosticTag,
+  error?: unknown,
+): void {
+  const fields = {
+    tag,
+    ...(tag === 'auth_token_verify_failed' ? { code: safeFirebaseAuthErrorCode(error) } : {}),
   };
   console.error('account_pin_diagnostic', JSON.stringify(fields));
 }

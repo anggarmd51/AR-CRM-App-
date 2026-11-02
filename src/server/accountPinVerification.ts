@@ -1,5 +1,8 @@
 import { randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
-import type { AccountPinDiagnosticStage } from './accountPinDiagnostics.ts';
+import type {
+  AccountPinDiagnosticStage,
+  AccountPinRequestDiagnosticTag,
+} from './accountPinDiagnostics.ts';
 
 const SCRYPT_N = 16_384;
 const SCRYPT_R = 8;
@@ -99,6 +102,7 @@ export interface PinVerificationDependencies {
   sessions: AccountPinSessionStore;
   createCustomToken(uid: string, claims: { pinSessionId: string }): Promise<string>;
   onDiagnostic?: (stage: AccountPinDiagnosticStage, error: unknown) => void;
+  onRequestDiagnostic?: (tag: AccountPinRequestDiagnosticTag, error?: unknown) => void;
   now?: () => Date;
   createSessionId?: () => string;
 }
@@ -176,9 +180,15 @@ function requestFailure(
   request: PinVerificationRequest,
   method: 'GET' | 'POST',
   allowMissingOriginForSameOriginGet = false,
+  onRequestDiagnostic?: PinVerificationDependencies['onRequestDiagnostic'],
 ): PinVerificationResponse | undefined {
   if (request.method !== method) return result(405, { code: 'method_not_allowed', error: 'Method not allowed.' }, { allow: method });
   if (!originIsSameSecureOrigin(request, allowMissingOriginForSameOriginGet)) {
+    try {
+      onRequestDiagnostic?.('forbidden_origin_mismatch');
+    } catch {
+      // Diagnostic logging must never alter the fail-closed API response.
+    }
     return result(403, { code: 'forbidden', error: 'Forbidden.' });
   }
   return undefined;
@@ -189,14 +199,31 @@ async function authenticateOwner(
   dependencies: PinVerificationDependencies,
 ): Promise<{ identity: VerifiedFirebaseIdentity } | { response: PinVerificationResponse }> {
   const token = bearerToken(request.authorization);
-  if (!token) return { response: result(401, { code: 'invalid_credentials', error: 'Invalid credentials.' }) };
+  if (!token) {
+    try {
+      dependencies.onRequestDiagnostic?.('auth_bearer_missing');
+    } catch {
+      // Diagnostic logging must never alter the fail-closed API response.
+    }
+    return { response: result(401, { code: 'invalid_credentials', error: 'Invalid credentials.' }) };
+  }
   try {
     const identity = await dependencies.verifyFirebaseIdToken(token);
     if (!identity?.uid || identity.uid !== dependencies.ownerUid) {
+      try {
+        dependencies.onRequestDiagnostic?.('forbidden_owner_uid_mismatch');
+      } catch {
+        // Diagnostic logging must never alter the fail-closed API response.
+      }
       return { response: result(403, { code: 'forbidden', error: 'Forbidden.' }) };
     }
     return { identity };
-  } catch {
+  } catch (error) {
+    try {
+      dependencies.onRequestDiagnostic?.('auth_token_verify_failed', error);
+    } catch {
+      // Diagnostic logging must never alter the fail-closed API response.
+    }
     return { response: result(401, { code: 'invalid_credentials', error: 'Invalid credentials.' }) };
   }
 }
@@ -254,7 +281,7 @@ export function createAccountPinVerificationService(dependencies: PinVerificatio
   const now = dependencies.now ?? (() => new Date());
 
   return async (request: PinVerificationRequest): Promise<PinVerificationResponse> => {
-    const failedRequest = requestFailure(request, 'POST');
+    const failedRequest = requestFailure(request, 'POST', false, dependencies.onRequestDiagnostic);
     if (failedRequest) return failedRequest;
     if (!isPinBody(request.body)) return result(400, { code: 'invalid_request', error: 'Invalid request.' });
 
@@ -291,7 +318,7 @@ export function createAccountPinEnrollmentService(dependencies: PinVerificationD
   const now = dependencies.now ?? (() => new Date());
 
   return async (request: PinVerificationRequest): Promise<PinVerificationResponse> => {
-    const failedRequest = requestFailure(request, 'POST');
+    const failedRequest = requestFailure(request, 'POST', false, dependencies.onRequestDiagnostic);
     if (failedRequest) return failedRequest;
     if (!isEnrollmentBody(request.body)) return result(400, { code: 'invalid_request', error: 'Invalid request.' });
 
@@ -350,7 +377,7 @@ export function createAccountPinStatusService(
   const now = dependencies.now ?? (() => new Date());
 
   return async (request: PinVerificationRequest): Promise<PinVerificationResponse> => {
-    const failedRequest = requestFailure(request, 'GET', true);
+    const failedRequest = requestFailure(request, 'GET', true, dependencies.onRequestDiagnostic);
     if (failedRequest) return failedRequest;
     const authentication = await authenticateOwner(request, dependencies);
     if ('response' in authentication) return authentication.response;
