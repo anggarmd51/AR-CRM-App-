@@ -312,6 +312,11 @@ function createAccountPinRuntime(
   let firestore: ReturnType<typeof getFirestore>;
   try {
     auth = (adminDependencies.getAuth ?? getAuth)(app);
+  } catch (error) {
+    markAccountPinDiagnostic(error, 'auth_client_get');
+    throw error;
+  }
+  try {
     firestore = (adminDependencies.getFirestore ?? getFirestore)(app);
   } catch (error) {
     markAccountPinDiagnostic(error, 'firestore_client_get');

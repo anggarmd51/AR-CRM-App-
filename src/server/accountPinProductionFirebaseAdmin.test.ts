@@ -277,17 +277,21 @@ test('google-auth-library accepts the real WIF configuration without requesting 
     const providerError = Object.assign(new Error('private provider response'), { code: 'permission-denied' });
     markAccountPinDiagnostic(providerError, 'wif_token_exchange');
     logAccountPinDiagnostic(providerError, 'status_handler');
+    logAccountPinDiagnostic(new Error('The default Firebase app does not exist. Make sure you call initializeApp() before using any of the Firebase services.'), 'status_handler');
   } finally {
     console.error = originalConsoleError;
   }
-  assert.equal(logged.length, 2);
+  assert.equal(logged.length, 3);
   assert.match(logged[0] ?? '', /\"stage\":\"status_handler\"/);
   assert.match(logged[0] ?? '', /\"code\":\"unknown_error\"/);
   assert.match(logged[0] ?? '', /\"name\":\"Error\"/);
+  assert.match(logged[0] ?? '', /\"message\":\"\[redacted:unrecognized_error_message\]\"/);
   assert.doesNotMatch(logged[0] ?? '', /raw token|pepper/);
   assert.match(logged[1] ?? '', /\"stage\":\"wif_token_exchange\"/);
   assert.match(logged[1] ?? '', /\"code\":\"permission-denied\"/);
+  assert.match(logged[1] ?? '', /\"message\":\"\[redacted:unrecognized_error_message\]\"/);
   assert.doesNotMatch(logged[1] ?? '', /private provider response/);
+  assert.match(logged[2] ?? '', /\"message\":\"The default Firebase app does not exist\. Make sure you call initializeApp\(\) before using any of the Firebase services\.\"/);
 });
 
 test('Production Firebase Admin refuses non-WIF reuse and logs granular initialization stages safely', () => {
@@ -326,6 +330,7 @@ test('Production Firebase Admin refuses non-WIF reuse and logs granular initiali
       stage: 'wif_credential_build',
       code: 'permission-denied',
       name: 'Error',
+      message: '[redacted:unrecognized_error_message]',
     });
     return true;
   });
@@ -343,11 +348,34 @@ test('Production Firebase Admin refuses non-WIF reuse and logs granular initiali
       stage: 'admin_app_initialize',
       code: 'unknown_error',
       name: 'Error',
+      message: '[redacted:unrecognized_error_message]',
     });
     return true;
   });
 
   const firestoreClientError = Object.assign(new Error('private endpoint and token'), { code: 'permission-denied' });
+  const authClientError = new Error('The default Firebase app does not exist. Make sure you call initializeApp() before using any of the Firebase services.');
+  let firestoreCalledAfterAuthFailure = false;
+  assert.throws(() => createProductionAccountPinRuntime({
+    ...productionEnvironment,
+    ACCOUNT_PIN_PEPPER: 'p'.repeat(32),
+  }, {
+    getApps: () => [],
+    createCredential: () => validCredential,
+    initializeApp: (options, name) => ({ name: name ?? '[DEFAULT]', options }) as App,
+    getAuth: () => { throw authClientError; },
+    getFirestore: () => { firestoreCalledAfterAuthFailure = true; return {} as never; },
+  }), (error: unknown) => {
+    assert.deepEqual(captureDiagnostic(error), {
+      stage: 'auth_client_get',
+      code: 'unknown_error',
+      name: 'Error',
+      message: 'The default Firebase app does not exist. Make sure you call initializeApp() before using any of the Firebase services.',
+    });
+    return true;
+  });
+  assert.equal(firestoreCalledAfterAuthFailure, false);
+
   assert.throws(() => createProductionAccountPinRuntime({
     ...productionEnvironment,
     ACCOUNT_PIN_PEPPER: 'p'.repeat(32),
@@ -362,6 +390,7 @@ test('Production Firebase Admin refuses non-WIF reuse and logs granular initiali
       stage: 'firestore_client_get',
       code: 'permission-denied',
       name: 'Error',
+      message: '[redacted:unrecognized_error_message]',
     });
     return true;
   });

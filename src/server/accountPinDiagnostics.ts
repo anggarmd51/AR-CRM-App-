@@ -6,6 +6,7 @@ export const ACCOUNT_PIN_DIAGNOSTIC_STAGES = [
   'wif_token_exchange',
   'admin_app_initialize',
   'firebase_admin_app',
+  'auth_client_get',
   'firestore_client_get',
   'firestore_status_verification',
 ] as const;
@@ -79,6 +80,13 @@ const ALLOWED_GRPC_CODES: Record<number, string> = {
   16: 'unauthenticated',
 };
 
+const ALLOWED_ERROR_MESSAGES = new Set([
+  'The default Firebase app does not exist. Make sure you call initializeApp() before using any of the Firebase services.',
+  "No Firebase App '[DEFAULT]' has been created - call initializeApp() first",
+  'Firebase app named "[DEFAULT]" does not exist. Make sure you call initializeApp() before using any of the Firebase services.',
+  'Missing or insufficient permissions.',
+]);
+
 function errorRecord(error: unknown): Record<string, unknown> | undefined {
   if (!error || (typeof error !== 'object' && typeof error !== 'function')) return undefined;
   return error as Record<string, unknown>;
@@ -113,6 +121,21 @@ function safeErrorName(error: unknown): string {
   }
 }
 
+function safeErrorMessage(error: unknown): string {
+  try {
+    const message = errorRecord(error)?.message;
+    if (typeof message !== 'string') return '[redacted:unrecognized_error_message]';
+    const normalized = message.trim();
+    if (ALLOWED_ERROR_MESSAGES.has(normalized)) return normalized;
+    const firebaseError = /^Firebase: Error \(([^)]+)\)\.$/.exec(normalized);
+    const code = firebaseError?.[1];
+    if (code && ALLOWED_ERROR_CODES.has(code)) return `Firebase error (${code}).`;
+  } catch {
+    // Error messages are untrusted input and must never interfere with logging.
+  }
+  return '[redacted:unrecognized_error_message]';
+}
+
 export function markAccountPinDiagnostic(
   error: unknown,
   stage: AccountPinDiagnosticStage,
@@ -127,7 +150,7 @@ export function markAccountPinDiagnostic(
   });
 }
 
-/** Emits only fixed stage, allowlisted provider code, and allowlisted exception name. */
+/** Emits fixed stage, allowlisted provider code/name, and only allowlisted error-message text. */
 export function logAccountPinDiagnostic(
   error: unknown,
   fallbackStage: AccountPinDiagnosticStage,
@@ -139,6 +162,7 @@ export function logAccountPinDiagnostic(
     stage: context?.stage ?? fallbackStage,
     code: context?.code ?? safeErrorCode(error),
     name: safeErrorName(error),
+    message: safeErrorMessage(error),
   };
   console.error('account_pin_diagnostic', JSON.stringify(fields));
 }
