@@ -84,6 +84,8 @@ interface ProductionAdminDependencies {
   getApps?: () => App[];
   initializeApp?: (options: AppOptions, name?: string) => App;
   createCredential?: (environment: Environment) => Credential;
+  getAuth?: typeof getAuth;
+  getFirestore?: typeof getFirestore;
 }
 
 const keylessWifCredentials = new WeakSet<object>();
@@ -233,19 +235,30 @@ export function createProductionFirebaseAdminApp(
     return existing;
   }
 
-  const credential = dependencies.createCredential
-    ? dependencies.createCredential(environment)
-    : createProductionAccountPinCredential(environment);
+  let credential: Credential;
+  try {
+    credential = dependencies.createCredential
+      ? dependencies.createCredential(environment)
+      : createProductionAccountPinCredential(environment);
+  } catch (error) {
+    markAccountPinDiagnostic(error, 'wif_credential_build');
+    throw error;
+  }
   if (!keylessWifCredentials.has(credential as object)) {
     throw new Error('Account PIN Production runtime requires the approved keyless WIF credential.');
   }
 
   const initializeAdminApp = dependencies.initializeApp ?? initializeApp;
-  return initializeAdminApp({
-    credential,
-    projectId: config.projectId,
-    serviceAccountId: config.serviceAccountId,
-  }, PRODUCTION_ADMIN_APP_NAME);
+  try {
+    return initializeAdminApp({
+      credential,
+      projectId: config.projectId,
+      serviceAccountId: config.serviceAccountId,
+    }, PRODUCTION_ADMIN_APP_NAME);
+  } catch (error) {
+    markAccountPinDiagnostic(error, 'admin_app_initialize');
+    throw error;
+  }
 }
 
 function getStagingAdminApp(environment: Environment) {
@@ -293,9 +306,17 @@ function createAccountPinRuntime(
   pepper: string,
   app: App,
   onDiagnostic?: (stage: AccountPinDiagnosticStage, error: unknown) => void,
+  adminDependencies: ProductionAdminDependencies = {},
 ): AccountPinRuntime {
-  const auth = getAuth(app);
-  const firestore = getFirestore(app);
+  let auth: ReturnType<typeof getAuth>;
+  let firestore: ReturnType<typeof getFirestore>;
+  try {
+    auth = (adminDependencies.getAuth ?? getAuth)(app);
+    firestore = (adminDependencies.getFirestore ?? getFirestore)(app);
+  } catch (error) {
+    markAccountPinDiagnostic(error, 'firestore_client_get');
+    throw error;
+  }
   const store = new FirestoreAccountPinStore(firestore);
   const dependencies: PinVerificationDependencies = {
     ownerUid,
@@ -352,7 +373,10 @@ export function createStagingAccountPinRuntime(environment: Environment = proces
 }
 
 /** This runtime is prepared for a later gated rollout; current API handlers intentionally remain Preview-only. */
-export function createProductionAccountPinRuntime(environment: Environment = process.env): AccountPinRuntime {
+export function createProductionAccountPinRuntime(
+  environment: Environment = process.env,
+  dependencies: ProductionAdminDependencies = {},
+): AccountPinRuntime {
   let config: ProductionWifConfig;
   try {
     config = getProductionWifConfig(environment);
@@ -378,7 +402,7 @@ export function createProductionAccountPinRuntime(environment: Environment = pro
 
   let app: App;
   try {
-    app = createProductionFirebaseAdminApp(environment);
+    app = createProductionFirebaseAdminApp(environment, dependencies);
   } catch (error) {
     markAccountPinDiagnostic(error, 'firebase_admin_app');
     throw error;
@@ -391,6 +415,7 @@ export function createProductionAccountPinRuntime(environment: Environment = pro
       pepper,
       app,
       (stage, error) => logAccountPinDiagnostic(error, stage),
+      dependencies,
     );
   } catch (error) {
     markAccountPinDiagnostic(error, 'firebase_admin_app');

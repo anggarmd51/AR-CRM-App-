@@ -290,7 +290,7 @@ test('google-auth-library accepts the real WIF configuration without requesting 
   assert.doesNotMatch(logged[1] ?? '', /private provider response/);
 });
 
-test('Production Firebase Admin refuses to reuse an app with a non-WIF credential', () => {
+test('Production Firebase Admin refuses non-WIF reuse and logs granular initialization stages safely', () => {
   const app = {
     name: 'ar-crm-account-pin-production-wif',
     options: {
@@ -304,4 +304,65 @@ test('Production Firebase Admin refuses to reuse an app with a non-WIF credentia
     () => createProductionFirebaseAdminApp(productionEnvironment, { getApps: () => [app] }),
     /not bound to the approved keyless Production configuration/,
   );
+
+  const captureDiagnostic = (error: unknown): Record<string, unknown> => {
+    const logged: string[] = [];
+    const originalConsoleError = console.error;
+    console.error = (...values: unknown[]) => { logged.push(values.map(String).join(' ')); };
+    try {
+      logAccountPinDiagnostic(error, 'status_handler');
+    } finally {
+      console.error = originalConsoleError;
+    }
+    return JSON.parse(logged[0]?.replace(/^account_pin_diagnostic /, '') ?? '{}') as Record<string, unknown>;
+  };
+
+  const credentialBuildError = Object.assign(new Error('private token and pepper'), { code: 'permission-denied' });
+  assert.throws(() => createProductionFirebaseAdminApp(productionEnvironment, {
+    getApps: () => [],
+    createCredential: () => { throw credentialBuildError; },
+  }), (error: unknown) => {
+    assert.deepEqual(captureDiagnostic(error), {
+      stage: 'wif_credential_build',
+      code: 'permission-denied',
+      name: 'Error',
+    });
+    return true;
+  });
+
+  const validCredential = createProductionAccountPinCredential(productionEnvironment, {
+    createExternalAccountClient: () => ({ credentials: {}, async getAccessToken() { return { token: 'mock-token' }; } }),
+  });
+  const appInitializationError = Object.assign(new Error('private provider response'), { code: 'unlisted-secret-code' });
+  assert.throws(() => createProductionFirebaseAdminApp(productionEnvironment, {
+    getApps: () => [],
+    createCredential: () => validCredential,
+    initializeApp: () => { throw appInitializationError; },
+  }), (error: unknown) => {
+    assert.deepEqual(captureDiagnostic(error), {
+      stage: 'admin_app_initialize',
+      code: 'unknown_error',
+      name: 'Error',
+    });
+    return true;
+  });
+
+  const firestoreClientError = Object.assign(new Error('private endpoint and token'), { code: 'permission-denied' });
+  assert.throws(() => createProductionAccountPinRuntime({
+    ...productionEnvironment,
+    ACCOUNT_PIN_PEPPER: 'p'.repeat(32),
+  }, {
+    getApps: () => [],
+    createCredential: () => validCredential,
+    initializeApp: (options, name) => ({ name: name ?? '[DEFAULT]', options }) as App,
+    getAuth: () => ({} as never),
+    getFirestore: () => { throw firestoreClientError; },
+  }), (error: unknown) => {
+    assert.deepEqual(captureDiagnostic(error), {
+      stage: 'firestore_client_get',
+      code: 'permission-denied',
+      name: 'Error',
+    });
+    return true;
+  });
 });

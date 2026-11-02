@@ -2,8 +2,11 @@ export const ACCOUNT_PIN_DIAGNOSTIC_STAGES = [
   'status_handler',
   'production_runtime_configuration',
   'owner_binding_configuration',
+  'wif_credential_build',
   'wif_token_exchange',
+  'admin_app_initialize',
   'firebase_admin_app',
+  'firestore_client_get',
   'firestore_status_verification',
 ] as const;
 
@@ -117,6 +120,7 @@ export function markAccountPinDiagnostic(
 ): void {
   const record = errorRecord(error);
   if (!record) return;
+  if (diagnosticContexts.has(record)) return;
   diagnosticContexts.set(record, {
     stage,
     ...(code && ALLOWED_ERROR_CODES.has(code) ? { code } : {}),
