@@ -293,6 +293,7 @@ test('google-auth-library accepts the real WIF configuration without requesting 
       name: 'FirebaseFirestoreError',
       message: '[redacted:unrecognized_error_message]',
       signals: [
+        'token',
         'grpc',
         'transport',
         'channel',
@@ -361,7 +362,7 @@ test('Production Firebase Admin refuses non-WIF reuse and logs granular initiali
       code: 'permission-denied',
       name: 'Error',
       message: '[redacted:unrecognized_error_message]',
-      signals: ['permission-denied'],
+      signals: ['token', 'permission-denied'],
     });
     return true;
   });
@@ -425,7 +426,7 @@ test('Production Firebase Admin refuses non-WIF reuse and logs granular initiali
       code: 'permission-denied',
       name: 'Error',
       message: '[redacted:unrecognized_error_message]',
-      signals: ['permission-denied'],
+      signals: ['token', 'permission-denied'],
     });
     return true;
   });

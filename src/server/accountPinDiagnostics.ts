@@ -33,8 +33,11 @@ const ALLOWED_ERROR_CODES = new Set([
   'invalid-argument',
   'invalid_grant',
   'invalid_access_token',
+  'invalid_client',
   'invalid_credential',
+  'invalid-credential',
   'invalid_request',
+  'firestore/invalid-credential',
   'not-found',
   'permission-denied',
   'resource-exhausted',
@@ -91,6 +94,7 @@ const ALLOWED_GRPC_CODES: Record<number, string> = {
 };
 
 const ALLOWED_ERROR_MESSAGES = new Set([
+  'Failed to initialize Google Cloud Firestore client with the available credentials. Must initialize the SDK with a certificate credential or application default credentials to use Cloud Firestore API.',
   'The default Firebase app does not exist. Make sure you call initializeApp() before using any of the Firebase services.',
   "No Firebase App '[DEFAULT]' has been created - call initializeApp() first",
   'Firebase app named "[DEFAULT]" does not exist. Make sure you call initializeApp() before using any of the Firebase services.',
@@ -98,6 +102,14 @@ const ALLOWED_ERROR_MESSAGES = new Set([
 ]);
 
 const ERROR_SIGNAL_PATTERNS = [
+  ['google-auth-default-credentials', /\bcould not load the default credentials\b/i],
+  ['invalid-grant', /\binvalid_grant\b/i],
+  ['invalid-client', /\binvalid_client\b/i],
+  ['service-account-impersonation', /\bservice account\b|\bimpersonat(?:e|ion|ing)\b/i],
+  ['sts-token-exchange', /\b(?:sts|security token service)\b/i],
+  ['audience', /\baudienc(?:e|es)\b/i],
+  ['token', /\btoken\b/i],
+  ['invalid-credential', /\binvalid[-_]credential\b/i],
   ['grpc', /\bgrpc\b/i],
   ['transport', /\btransport\b/i],
   ['channel', /\bchannel\b/i],
@@ -163,6 +175,21 @@ function safeErrorMessage(error: unknown): string {
     const firebaseError = /^Firebase: Error \(([^)]+)\)\.$/.exec(normalized);
     const code = firebaseError?.[1];
     if (code && ALLOWED_ERROR_CODES.has(code)) return `Firebase error (${code}).`;
+    if (/\bcould not load the default credentials\b/i.test(normalized)) {
+      return 'Could not load the default credentials.';
+    }
+    if (/\binvalid_grant\b/i.test(normalized)) return 'Google authentication failed (invalid_grant).';
+    if (/\binvalid_client\b/i.test(normalized)) return 'Google authentication failed (invalid_client).';
+    if (/\bservice account\b|\bimpersonat(?:e|ion|ing)\b/i.test(normalized)) {
+      return 'Google service-account impersonation failure.';
+    }
+    if (/\b(?:sts|security token service)\b/i.test(normalized)) {
+      return 'Google STS token-exchange failure.';
+    }
+    if (/\baudienc(?:e|es)\b/i.test(normalized)) return 'Google authentication audience validation failure.';
+    if (/\b(?:google|oauth|oidc|workload identity|sts)\b.{0,80}\btoken\b|\btoken\b.{0,80}\b(?:google|oauth|oidc|workload identity|sts)\b/i.test(normalized)) {
+      return 'Google authentication token failure.';
+    }
   } catch {
     // Error messages are untrusted input and must never interfere with logging.
   }
