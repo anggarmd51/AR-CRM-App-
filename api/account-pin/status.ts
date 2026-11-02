@@ -1,4 +1,5 @@
 import type { ServerResponse } from 'node:http';
+import { logAccountPinDiagnostic } from '../../src/server/accountPinDiagnostics.ts';
 import {
   accountPinRequest,
   getAccountPinRuntime,
@@ -29,7 +30,8 @@ export default async function handler(request: AccountPinHttpRequest, response: 
       return;
     }
     sendServiceResponse(response, await runtime.status(accountPinRequest(request)));
-  } catch {
+  } catch (error) {
+    logAccountPinDiagnostic(error, 'status_handler');
     sendAccountPinJson(response, 503, { code: 'service_unavailable', error: 'PIN status is temporarily unavailable.' });
   }
 }

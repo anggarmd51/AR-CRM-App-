@@ -8,6 +8,11 @@ import { isAccountPinEnrollmentFlagEnabled } from './accountPinEnrollmentPolicy.
 import { FIREBASE_RULES_WORKSPACE_ID, firebaseOwnerBindingMatchesRules } from '../firebaseRulesBinding.ts';
 import { reserveAiUsage } from './leadFinderQuota.ts';
 import {
+  logAccountPinDiagnostic,
+  markAccountPinDiagnostic,
+  type AccountPinDiagnosticStage,
+} from './accountPinDiagnostics.ts';
+import {
   createAccountPinEnrollmentService,
   createAccountPinStatusService,
   createAccountPinVerificationService,
@@ -184,19 +189,26 @@ export function createProductionAccountPinCredential(
 
   const credential: Credential = {
     async getAccessToken() {
-      const tokenResponse = await externalAccountClient.getAccessToken();
-      const expiryDate = externalAccountClient.credentials.expiry_date;
-      const expiresIn = typeof expiryDate === 'number' && Number.isFinite(expiryDate)
-        ? Math.floor((expiryDate - now()) / 1_000)
-        : 0;
-      if (typeof tokenResponse.token !== 'string' || tokenResponse.token.trim().length === 0
-        || expiresIn < 1) {
-        throw new Error('Google Workload Identity Federation returned an invalid access token.');
+      try {
+        const tokenResponse = await externalAccountClient.getAccessToken();
+        const expiryDate = externalAccountClient.credentials.expiry_date;
+        const expiresIn = typeof expiryDate === 'number' && Number.isFinite(expiryDate)
+          ? Math.floor((expiryDate - now()) / 1_000)
+          : 0;
+        if (typeof tokenResponse.token !== 'string' || tokenResponse.token.trim().length === 0
+          || expiresIn < 1) {
+          const error = new Error('Google Workload Identity Federation returned an invalid access token.');
+          markAccountPinDiagnostic(error, 'wif_token_exchange', 'invalid_access_token');
+          throw error;
+        }
+        return {
+          access_token: tokenResponse.token,
+          expires_in: expiresIn,
+        };
+      } catch (error) {
+        markAccountPinDiagnostic(error, 'wif_token_exchange');
+        throw error;
       }
-      return {
-        access_token: tokenResponse.token,
-        expires_in: expiresIn,
-      };
     },
   };
   keylessWifCredentials.add(credential as object);
@@ -280,6 +292,7 @@ function createAccountPinRuntime(
   ownerUid: string,
   pepper: string,
   app: App,
+  onDiagnostic?: (stage: AccountPinDiagnosticStage, error: unknown) => void,
 ): AccountPinRuntime {
   const auth = getAuth(app);
   const firestore = getFirestore(app);
@@ -305,6 +318,7 @@ function createAccountPinRuntime(
     rateLimiter: store,
     sessions: store,
     createCustomToken: (uid, claims) => auth.createCustomToken(uid, claims),
+    ...(onDiagnostic ? { onDiagnostic } : {}),
   };
 
   const enrollmentEnabled = isAccountPinEnrollmentFlagEnabled(environment);
@@ -339,11 +353,47 @@ export function createStagingAccountPinRuntime(environment: Environment = proces
 
 /** This runtime is prepared for a later gated rollout; current API handlers intentionally remain Preview-only. */
 export function createProductionAccountPinRuntime(environment: Environment = process.env): AccountPinRuntime {
-  const config = getProductionWifConfig(environment);
-  const ownerUid = resolveProductionAccountPinOwnerUid(environment);
-  const pepper = required(environment, 'ACCOUNT_PIN_PEPPER');
-  if (Buffer.byteLength(pepper, 'utf8') < 32) throw new Error('Account PIN server configuration is incomplete.');
+  let config: ProductionWifConfig;
+  try {
+    config = getProductionWifConfig(environment);
+  } catch (error) {
+    markAccountPinDiagnostic(error, 'production_runtime_configuration');
+    throw error;
+  }
+  let ownerUid: string;
+  try {
+    ownerUid = resolveProductionAccountPinOwnerUid(environment);
+  } catch (error) {
+    markAccountPinDiagnostic(error, 'owner_binding_configuration');
+    throw error;
+  }
+  let pepper: string;
+  try {
+    pepper = required(environment, 'ACCOUNT_PIN_PEPPER');
+    if (Buffer.byteLength(pepper, 'utf8') < 32) throw new Error('Account PIN server configuration is incomplete.');
+  } catch (error) {
+    markAccountPinDiagnostic(error, 'production_runtime_configuration');
+    throw error;
+  }
 
-  const app = createProductionFirebaseAdminApp(environment);
-  return createAccountPinRuntime(environment, config.projectId, ownerUid, pepper, app);
+  let app: App;
+  try {
+    app = createProductionFirebaseAdminApp(environment);
+  } catch (error) {
+    markAccountPinDiagnostic(error, 'firebase_admin_app');
+    throw error;
+  }
+  try {
+    return createAccountPinRuntime(
+      environment,
+      config.projectId,
+      ownerUid,
+      pepper,
+      app,
+      (stage, error) => logAccountPinDiagnostic(error, stage),
+    );
+  } catch (error) {
+    markAccountPinDiagnostic(error, 'firebase_admin_app');
+    throw error;
+  }
 }

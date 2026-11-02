@@ -16,6 +16,7 @@ import {
   createProductionFirebaseAdminApp,
   resolveProductionAccountPinOwnerUid,
 } from './accountPinFirebaseAdmin.ts';
+import { logAccountPinDiagnostic, markAccountPinDiagnostic } from './accountPinDiagnostics.ts';
 import { FIREBASE_RULES_OWNER_UID, FIREBASE_RULES_WORKSPACE_ID } from '../firebaseRulesBinding.ts';
 
 const productionEnvironment = {
@@ -267,6 +268,26 @@ test('google-auth-library accepts the real WIF configuration without requesting 
 
   assert.equal(typeof credential.getAccessToken, 'function');
   assert.equal(oidcTokenRequests, 0);
+
+  const logged: string[] = [];
+  const originalConsoleError = console.error;
+  console.error = (...values: unknown[]) => { logged.push(values.map(String).join(' ')); };
+  try {
+    logAccountPinDiagnostic(new Error('raw token and pepper must never be logged'), 'status_handler');
+    const providerError = Object.assign(new Error('private provider response'), { code: 'permission-denied' });
+    markAccountPinDiagnostic(providerError, 'wif_token_exchange');
+    logAccountPinDiagnostic(providerError, 'status_handler');
+  } finally {
+    console.error = originalConsoleError;
+  }
+  assert.equal(logged.length, 2);
+  assert.match(logged[0] ?? '', /\"stage\":\"status_handler\"/);
+  assert.match(logged[0] ?? '', /\"code\":\"unknown_error\"/);
+  assert.match(logged[0] ?? '', /\"name\":\"Error\"/);
+  assert.doesNotMatch(logged[0] ?? '', /raw token|pepper/);
+  assert.match(logged[1] ?? '', /\"stage\":\"wif_token_exchange\"/);
+  assert.match(logged[1] ?? '', /\"code\":\"permission-denied\"/);
+  assert.doesNotMatch(logged[1] ?? '', /private provider response/);
 });
 
 test('Production Firebase Admin refuses to reuse an app with a non-WIF credential', () => {

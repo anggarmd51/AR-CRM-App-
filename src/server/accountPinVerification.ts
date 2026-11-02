@@ -1,4 +1,5 @@
 import { randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
+import type { AccountPinDiagnosticStage } from './accountPinDiagnostics.ts';
 
 const SCRYPT_N = 16_384;
 const SCRYPT_R = 8;
@@ -97,6 +98,7 @@ export interface PinVerificationDependencies {
   rateLimiter: AccountPinRateLimiter;
   sessions: AccountPinSessionStore;
   createCustomToken(uid: string, claims: { pinSessionId: string }): Promise<string>;
+  onDiagnostic?: (stage: AccountPinDiagnosticStage, error: unknown) => void;
   now?: () => Date;
   createSessionId?: () => string;
 }
@@ -372,7 +374,12 @@ export function createAccountPinStatusService(
         sessionActive,
         ...(sessionExpiresAt ? { sessionExpiresAt } : {}),
       });
-    } catch {
+    } catch (error) {
+      try {
+        dependencies.onDiagnostic?.('firestore_status_verification', error);
+      } catch {
+        // Diagnostic logging must never alter the fail-closed API response.
+      }
       return result(503, { code: 'service_unavailable', error: 'PIN session status is temporarily unavailable.' });
     }
   };

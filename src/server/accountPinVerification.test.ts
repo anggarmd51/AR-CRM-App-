@@ -296,8 +296,12 @@ test('status requires authenticated same-origin GET and fails closed on storage 
   assert.equal((await testHarness.status(statusRequest({ forwardedProto: 'http' }))).statusCode, 403);
   assert.equal((await testHarness.status(request())).statusCode, 405);
   const failedStorage = harness();
-  failedStorage.dependencies.credentials.getCredential = async () => { throw new Error('storage failure'); };
+  let diagnostic: { stage: string; error: unknown } | undefined;
+  const storageError = new Error('storage failure');
+  failedStorage.dependencies.onDiagnostic = (stage, error) => { diagnostic = { stage, error }; };
+  failedStorage.dependencies.credentials.getCredential = async () => { throw storageError; };
   assert.equal((await failedStorage.status(statusRequest())).statusCode, 503);
+  assert.deepEqual(diagnostic, { stage: 'firestore_status_verification', error: storageError });
 });
 
 test('status accepts missing Origin only for same-origin HTTPS GET and rejects cross-origin or ambiguous requests', async () => {
