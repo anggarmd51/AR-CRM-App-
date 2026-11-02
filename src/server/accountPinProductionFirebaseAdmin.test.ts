@@ -278,10 +278,40 @@ test('google-auth-library accepts the real WIF configuration without requesting 
     markAccountPinDiagnostic(providerError, 'wif_token_exchange');
     logAccountPinDiagnostic(providerError, 'status_handler');
     logAccountPinDiagnostic(new Error('The default Firebase app does not exist. Make sure you call initializeApp() before using any of the Firebase services.'), 'status_handler');
+    const firestoreError = Object.assign(
+      new Error('gRPC transport channel database project credential scope UNAVAILABLE private-token pepper phone-5550100'),
+      {
+        name: 'FirebaseFirestoreError',
+        code: 'PERMISSION_DENIED',
+        details: 'NOT_FOUND invalid_argument MODULE_NOT_FOUND private-key-value',
+      },
+    );
+    logAccountPinDiagnostic(firestoreError, 'firestore_client_get');
+    assert.deepEqual(JSON.parse(logged[3]?.replace(/^account_pin_diagnostic /, '') ?? '{}'), {
+      stage: 'firestore_client_get',
+      code: 'permission-denied',
+      name: 'FirebaseFirestoreError',
+      message: '[redacted:unrecognized_error_message]',
+      signals: [
+        'grpc',
+        'transport',
+        'channel',
+        'database',
+        'project',
+        'credential',
+        'scope',
+        'unavailable',
+        'permission-denied',
+        'not-found',
+        'invalid-argument',
+        'module-not-found',
+      ],
+    });
+    assert.doesNotMatch(logged[3] ?? '', /private-token|pepper|phone-5550100|private-key-value/);
   } finally {
     console.error = originalConsoleError;
   }
-  assert.equal(logged.length, 3);
+  assert.equal(logged.length, 4);
   assert.match(logged[0] ?? '', /\"stage\":\"status_handler\"/);
   assert.match(logged[0] ?? '', /\"code\":\"unknown_error\"/);
   assert.match(logged[0] ?? '', /\"name\":\"Error\"/);
@@ -331,6 +361,7 @@ test('Production Firebase Admin refuses non-WIF reuse and logs granular initiali
       code: 'permission-denied',
       name: 'Error',
       message: '[redacted:unrecognized_error_message]',
+      signals: ['permission-denied'],
     });
     return true;
   });
@@ -349,6 +380,7 @@ test('Production Firebase Admin refuses non-WIF reuse and logs granular initiali
       code: 'unknown_error',
       name: 'Error',
       message: '[redacted:unrecognized_error_message]',
+      signals: [],
     });
     return true;
   });
@@ -356,6 +388,7 @@ test('Production Firebase Admin refuses non-WIF reuse and logs granular initiali
   const firestoreClientError = Object.assign(new Error('private endpoint and token'), { code: 'permission-denied' });
   const authClientError = new Error('The default Firebase app does not exist. Make sure you call initializeApp() before using any of the Firebase services.');
   let firestoreCalledAfterAuthFailure = false;
+  let firestoreAppPassed: App | undefined;
   assert.throws(() => createProductionAccountPinRuntime({
     ...productionEnvironment,
     ACCOUNT_PIN_PEPPER: 'p'.repeat(32),
@@ -371,6 +404,7 @@ test('Production Firebase Admin refuses non-WIF reuse and logs granular initiali
       code: 'unknown_error',
       name: 'Error',
       message: 'The default Firebase app does not exist. Make sure you call initializeApp() before using any of the Firebase services.',
+      signals: [],
     });
     return true;
   });
@@ -384,14 +418,16 @@ test('Production Firebase Admin refuses non-WIF reuse and logs granular initiali
     createCredential: () => validCredential,
     initializeApp: (options, name) => ({ name: name ?? '[DEFAULT]', options }) as App,
     getAuth: () => ({} as never),
-    getFirestore: () => { throw firestoreClientError; },
+    getFirestore: (...args: unknown[]) => { firestoreAppPassed = args[0] as App; throw firestoreClientError; },
   }), (error: unknown) => {
     assert.deepEqual(captureDiagnostic(error), {
       stage: 'firestore_client_get',
       code: 'permission-denied',
       name: 'Error',
       message: '[redacted:unrecognized_error_message]',
+      signals: ['permission-denied'],
     });
     return true;
   });
+  assert.equal(firestoreAppPassed?.options.projectId, ACCOUNT_PIN_PRODUCTION_PROJECT_ID);
 });

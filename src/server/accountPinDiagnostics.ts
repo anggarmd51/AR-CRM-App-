@@ -51,12 +51,22 @@ const ALLOWED_ERROR_CODES = new Set([
   'ETIMEDOUT',
 ]);
 
+const ALLOWED_ERROR_CODE_ALIASES = new Map<string, string>([
+  ['UNAVAILABLE', 'unavailable'],
+  ['PERMISSION_DENIED', 'permission-denied'],
+  ['NOT_FOUND', 'not-found'],
+  ['invalid_argument', 'invalid-argument'],
+  ['MODULE_NOT_FOUND', 'module-not-found'],
+]);
+
 const ALLOWED_ERROR_NAMES = new Set([
   'AbortError',
   'ApiError',
   'Error',
   'FetchError',
+  'FirebaseAppError',
   'FirebaseError',
+  'FirebaseFirestoreError',
   'FirestoreError',
   'GaxiosError',
   'GoogleAuthError',
@@ -87,6 +97,25 @@ const ALLOWED_ERROR_MESSAGES = new Set([
   'Missing or insufficient permissions.',
 ]);
 
+const ERROR_SIGNAL_PATTERNS = [
+  ['grpc', /\bgrpc\b/i],
+  ['transport', /\btransport\b/i],
+  ['channel', /\bchannel\b/i],
+  ['database', /\bdatabase\b/i],
+  ['project', /\bproject\b/i],
+  ['credential', /\bcredential\b/i],
+  ['scope', /\bscope\b/i],
+  ['unavailable', /\bunavailable\b/i],
+  ['permission-denied', /\bpermission[-_]denied\b/i],
+  ['not-found', /\bnot[-_]found\b/i],
+  ['invalid-argument', /\binvalid[-_]argument\b/i],
+  ['module-not-found', /\bMODULE_NOT_FOUND\b/i],
+  ['connection-reset', /\bECONNRESET\b/i],
+  ['connection-refused', /\bECONNREFUSED\b/i],
+  ['dns-lookup', /\b(?:EAI_AGAIN|ENOTFOUND)\b/i],
+  ['timeout', /\b(?:ETIMEDOUT|DEADLINE[_-]EXCEEDED)\b/i],
+] as const;
+
 function errorRecord(error: unknown): Record<string, unknown> | undefined {
   if (!error || (typeof error !== 'object' && typeof error !== 'function')) return undefined;
   return error as Record<string, unknown>;
@@ -96,6 +125,10 @@ function safeErrorCode(error: unknown): string {
   try {
     const record = errorRecord(error);
     const code = record?.code;
+    if (typeof code === 'string') {
+      const alias = ALLOWED_ERROR_CODE_ALIASES.get(code);
+      if (alias) return alias;
+    }
     if (typeof code === 'string' && ALLOWED_ERROR_CODES.has(code)) return code;
     if (typeof code === 'number' && Number.isInteger(code) && ALLOWED_GRPC_CODES[code]) {
       return ALLOWED_GRPC_CODES[code];
@@ -136,6 +169,29 @@ function safeErrorMessage(error: unknown): string {
   return '[redacted:unrecognized_error_message]';
 }
 
+function safeErrorSignals(error: unknown): string[] {
+  const record = errorRecord(error);
+  if (!record) return [];
+
+  const sources: string[] = [];
+  for (const key of ['code', 'details', 'message'] as const) {
+    try {
+      const value = record[key];
+      if (typeof value === 'string') {
+        sources.push(value, ALLOWED_ERROR_CODE_ALIASES.get(value) ?? '');
+      } else if (key === 'code' && typeof value === 'number' && Number.isInteger(value)) {
+        sources.push(ALLOWED_GRPC_CODES[value] ?? '');
+      }
+    } catch {
+      // Provider properties are untrusted; ignore unreadable values.
+    }
+  }
+
+  return ERROR_SIGNAL_PATTERNS
+    .filter(([, pattern]) => sources.some((source) => pattern.test(source)))
+    .map(([signal]) => signal);
+}
+
 export function markAccountPinDiagnostic(
   error: unknown,
   stage: AccountPinDiagnosticStage,
@@ -150,7 +206,7 @@ export function markAccountPinDiagnostic(
   });
 }
 
-/** Emits fixed stage, allowlisted provider code/name, and only allowlisted error-message text. */
+/** Emits fixed stage, allowlisted code/name/signals, and only allowlisted error-message text. */
 export function logAccountPinDiagnostic(
   error: unknown,
   fallbackStage: AccountPinDiagnosticStage,
@@ -163,6 +219,7 @@ export function logAccountPinDiagnostic(
     code: context?.code ?? safeErrorCode(error),
     name: safeErrorName(error),
     message: safeErrorMessage(error),
+    signals: safeErrorSignals(error),
   };
   console.error('account_pin_diagnostic', JSON.stringify(fields));
 }
