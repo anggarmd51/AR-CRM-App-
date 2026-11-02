@@ -1,6 +1,6 @@
 import { getVercelOidcToken } from '@vercel/oidc';
-import { ExternalAccountClient, type IdentityPoolClientOptions } from 'google-auth-library';
-import { cert, getApps, initializeApp, type App, type AppOptions, type Credential } from 'firebase-admin/app';
+import { ExternalAccountClient, GoogleAuth, type AuthClient, type IdentityPoolClientOptions } from 'google-auth-library';
+import { applicationDefault, cert, getApps, initializeApp, type App, type AppOptions, type Credential } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { FirestoreAccountPinStore } from './accountPinFirestoreStore.ts';
@@ -89,6 +89,7 @@ interface ProductionAdminDependencies {
 }
 
 const keylessWifCredentials = new WeakSet<object>();
+const keylessWifAuthClients = new WeakMap<object, AuthClient>();
 
 function required(environment: Environment, name: string): string {
   const value = environment[name]?.trim();
@@ -189,8 +190,13 @@ export function createProductionAccountPinCredential(
   const externalAccountClient = createExternalAccountClient(externalAccountOptions);
   if (!externalAccountClient) throw new Error('Unable to initialize the approved Google external account client.');
 
-  const credential: Credential = {
-    async getAccessToken() {
+  // Firebase Admin's Firestore adapter accepts only its built-in certificate or
+  // Application Default credential classes. Reuse the official ADC prototype,
+  // while replacing token acquisition with the keyless WIF client.
+  const credential = Object.create(Object.getPrototypeOf(applicationDefault())) as Credential;
+  Object.defineProperty(credential, 'getAccessToken', {
+    enumerable: true,
+    value: async () => {
       try {
         const tokenResponse = await externalAccountClient.getAccessToken();
         const expiryDate = externalAccountClient.credentials.expiry_date;
@@ -212,8 +218,9 @@ export function createProductionAccountPinCredential(
         throw error;
       }
     },
-  };
+  });
   keylessWifCredentials.add(credential as object);
+  keylessWifAuthClients.set(credential as object, externalAccountClient as unknown as AuthClient);
   return credential;
 }
 
@@ -318,6 +325,12 @@ function createAccountPinRuntime(
   }
   try {
     firestore = (adminDependencies.getFirestore ?? getFirestore)(app);
+    const wifAuthClient = keylessWifAuthClients.get(app.options.credential as object);
+    if (wifAuthClient) {
+      // Firestore's GAPIC transport uses google-auth-library independently of
+      // FirebaseApp.INTERNAL, so explicitly hand it the same WIF auth client.
+      firestore.settings({ auth: new GoogleAuth({ authClient: wifAuthClient }) } as never);
+    }
   } catch (error) {
     markAccountPinDiagnostic(error, 'firestore_client_get');
     throw error;

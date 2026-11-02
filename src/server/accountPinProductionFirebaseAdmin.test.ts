@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
 import test from 'node:test';
-import type { App, AppOptions } from 'firebase-admin/app';
-import type { ExternalAccountSupplierContext, IdentityPoolClientOptions } from 'google-auth-library';
+import { deleteApp, initializeApp, type App, type AppOptions } from 'firebase-admin/app';
+import { getFirestore } from 'firebase-admin/firestore';
+import { ExternalAccountClient, type ExternalAccountSupplierContext, type IdentityPoolClientOptions } from 'google-auth-library';
 import {
   ACCOUNT_PIN_APPROVED_PRODUCTION_BRANCHES,
   ACCOUNT_PIN_APPROVED_RELEASE_BRANCH,
@@ -323,6 +325,65 @@ test('google-auth-library accepts the real WIF configuration without requesting 
   assert.match(logged[1] ?? '', /\"message\":\"\[redacted:unrecognized_error_message\]\"/);
   assert.doesNotMatch(logged[1] ?? '', /private provider response/);
   assert.match(logged[2] ?? '', /\"message\":\"The default Firebase app does not exist\. Make sure you call initializeApp\(\) before using any of the Firebase services\.\"/);
+});
+
+test('Firebase Admin getFirestore uses the WIF AuthClient over a local Firestore transport without a service-account key', async () => {
+  let createdExternalAccountClient: NonNullable<ReturnType<typeof ExternalAccountClient.fromJSON>> | undefined;
+  const credential = createProductionAccountPinCredential(productionEnvironment, {
+    createExternalAccountClient: (options) => {
+      const client = ExternalAccountClient.fromJSON(options);
+      assert.ok(client);
+      client.setCredentials({ access_token: 'mock-wif-access-token', expiry_date: Date.now() + 3_600_000 });
+      client.getAccessToken = async () => ({ token: 'mock-wif-access-token' });
+      createdExternalAccountClient = client;
+      return client;
+    },
+  });
+  assert.ok(createdExternalAccountClient);
+  const externalAccountClient = createdExternalAccountClient;
+  const app = initializeApp({
+    credential,
+    projectId: ACCOUNT_PIN_PRODUCTION_PROJECT_ID,
+    serviceAccountId: ACCOUNT_PIN_PRODUCTION_SERVICE_ACCOUNT_ID,
+  }, 'ar-crm-account-pin-production-wif');
+  const authorizationHeaders: string[] = [];
+  const server = createServer((request, response) => {
+    authorizationHeaders.push(String(request.headers.authorization ?? ''));
+    response.statusCode = 200;
+    response.setHeader('content-type', 'application/json');
+    response.end('[]');
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+
+  try {
+    createProductionAccountPinRuntime({
+      ...productionEnvironment,
+      ACCOUNT_PIN_PEPPER: 'p'.repeat(32),
+    }, { getApps: () => [app] });
+
+    const firestore = getFirestore(app);
+    const firestoreAuth = (firestore as unknown as {
+      _settings: { auth?: { getClient(): Promise<unknown> } };
+    })._settings.auth;
+    assert.ok(firestoreAuth, 'Firestore should receive the WIF GoogleAuth instance');
+    assert.equal(await firestoreAuth.getClient(), externalAccountClient);
+
+    const settings = (firestore as unknown as { _settings: Record<string, unknown> })._settings;
+    const port = (server.address() as { port: number }).port;
+    Object.assign(settings, {
+      preferRest: true,
+      host: `127.0.0.1:${port}`,
+      port,
+      ssl: false,
+      servicePath: '127.0.0.1',
+      apiEndpoint: '127.0.0.1',
+    });
+    await assert.rejects(firestore.collection('probe').doc('doc').get(), /Did not receive document/);
+    assert.ok(authorizationHeaders.some((header) => header === 'Bearer mock-wif-access-token'));
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await deleteApp(app);
+  }
 });
 
 test('Production Firebase Admin refuses non-WIF reuse and logs granular initialization stages safely', () => {
