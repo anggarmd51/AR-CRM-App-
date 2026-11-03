@@ -453,10 +453,59 @@ test('failed manual replay preserves the pending record and payload unchanged', 
     assert.equal(queue.startManualReplay(), 1);
     await waitFor(() => queue.getSnapshot().failedCount === 1);
     assert.equal(calls, 1);
+    const failedOperation = queue.getSnapshot().operations.find((operation) => operation.id === record.id);
+    assert.equal(failedOperation?.permanentFailure, true);
+    assert.ok(typeof failedOperation?.failedAt === 'number');
     const [preserved] = await store.list(ownerScope);
     assert.equal(preserved?.id, record.id);
     assert.equal(preserved?.state, 'failed');
+    assert.equal(preserved?.permanentFailure, true);
+    assert.ok(typeof preserved?.failedAt === 'number');
     assert.deepEqual(preserved?.payload, record.payload, 'a failed replay does not alter the original payload');
+
+    const restoredQueue = new OfflineWriteQueue(new FakeConnectivity(true), store);
+    try {
+      await restoredQueue.activateScope(ownerScope, async () => { assert.fail('failed operations must wait for owner replay'); });
+      const restoredOperation = restoredQueue.getSnapshot().operations.find((operation) => operation.id === record.id);
+      assert.equal(restoredOperation?.state, 'failed');
+      assert.equal(restoredOperation?.permanentFailure, true);
+      assert.equal(restoredOperation?.failedAt, failedOperation?.failedAt);
+    } finally { restoredQueue.dispose(); }
+  } finally { queue.dispose(); }
+});
+
+test('legacy permanent Firestore failures receive a fresh grace timestamp while unknown failures remain unclassified', async () => {
+  const store = new MemoryOutboxStore();
+  const legacyPermanent = leadRecord('legacy-permanent-failure');
+  const unknownFailure = leadRecord('legacy-local-failure');
+  await store.insert({
+    ...legacyPermanent,
+    attempts: 1,
+    state: 'failed',
+    errorMessage: 'Firestore menolak operasi (akses atau validasi). Periksa akun/data sebelum mencoba lagi.',
+  } as DurableQueueRecord);
+  await store.insert({
+    ...unknownFailure,
+    attempts: 1,
+    state: 'failed',
+    errorMessage: 'Tidak dapat memperbarui status antrean lokal; operasi tidak dikirim.',
+  } as DurableQueueRecord);
+
+  const queue = new OfflineWriteQueue(new FakeConnectivity(true), store);
+  try {
+    await queue.activateScope(ownerScope, async () => { assert.fail('restored failed operations wait for owner replay'); });
+    const operations = queue.getSnapshot().operations;
+    const migratedFailure = operations.find((operation) => operation.id === legacyPermanent.id);
+    const unclassifiedFailure = operations.find((operation) => operation.id === unknownFailure.id);
+    assert.equal(migratedFailure?.permanentFailure, true);
+    assert.ok(typeof migratedFailure?.failedAt === 'number');
+    assert.equal(unclassifiedFailure?.permanentFailure, undefined);
+    assert.equal(unclassifiedFailure?.failedAt, undefined);
+
+    const persisted = await store.list(ownerScope);
+    const migratedRecord = persisted.find((record) => record.id === legacyPermanent.id);
+    assert.equal(migratedRecord?.permanentFailure, true);
+    assert.equal(migratedRecord?.failedAt, migratedFailure?.failedAt);
   } finally { queue.dispose(); }
 });
 

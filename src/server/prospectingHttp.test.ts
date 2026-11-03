@@ -4,14 +4,14 @@ import { createProspectingHttpHandler } from './prospectingHttp.ts';
 import type { ProspectingHttpRequest } from './prospectingHttp.ts';
 
 const token = `Bearer ${'a'.repeat(80)}`;
-function request(body: unknown, options: { method?: string; auth?: string; origin?: string; proto?: string; contentType?: string } = {}): ProspectingHttpRequest {
+function request(body: unknown, options: { method?: string; auth?: string; origin?: string; proto?: string | string[] | null; contentType?: string } = {}): ProspectingHttpRequest {
   return {
     method: options.method ?? 'POST',
     body,
     headers: {
       host: 'crm.example.test',
       origin: options.origin ?? 'https://crm.example.test',
-      'x-forwarded-proto': options.proto ?? 'https',
+      'x-forwarded-proto': options.proto === undefined ? 'https' : options.proto ?? undefined,
       'content-type': options.contentType ?? 'application/json',
       'content-length': '20',
       authorization: options.auth ?? token,
@@ -43,7 +43,7 @@ function setup(overrides: Partial<Parameters<typeof createProspectingHttpHandler
       async reserveAiUsage() { calls.quota += 1; return true; },
     }),
     async profile(query) { calls.profile += 1; return { target_roles: `roles:${query}`, email_pattern: 'generic', google_dorks: 'dorks' }; },
-    environment: {},
+    environment: { VERCEL: '1' },
     ...overrides,
   });
   return { handler, calls };
@@ -68,6 +68,22 @@ test('valid owner request reserves quota and returns the exact JSON result schem
   });
   assert.deepEqual(calls, { auth: 1, quota: 1, profile: 1 });
   assert.equal(response.headers.get('cache-control'), 'no-store, max-age=0');
+});
+
+test('same-origin HTTPS requires an exact singleton Vercel x-forwarded-proto value', async () => {
+  for (const proto of [null, 'http', 'https,http', 'https, http', ['https', 'https']]) {
+    const { handler, calls } = setup();
+    const response = responseRecorder();
+    await handler(request({ query: 'Company' }, { proto }), response as never);
+    assert.equal(response.statusCode, 403, `proto ${JSON.stringify(proto)} must fail closed`);
+    assert.equal(calls.auth + calls.quota + calls.profile, 0);
+  }
+
+  const customServer = setup({ environment: {} });
+  const customResponse = responseRecorder();
+  await customServer.handler(request({ query: 'Company' }, { proto: 'https' }), customResponse as never);
+  assert.equal(customResponse.statusCode, 403, 'custom servers must not trust caller-supplied forwarded headers');
+  assert.equal(customServer.calls.auth, 0);
 });
 
 test('missing active PIN session or invalid same-origin requests stop before quota/provider calls', async () => {

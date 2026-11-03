@@ -6,10 +6,18 @@ import {
 export const MAX_ACTIVITY_PHOTO_INPUT_BYTES = MAX_IMAGE_INPUT_BYTES;
 export const MAX_ACTIVITY_PHOTO_BYTES = 500_000;
 export const ACTIVITY_PHOTO_ORPHAN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+export const ACTIVITY_PHOTO_FAILED_OPERATION_GRACE_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_ACTIVITY_PHOTO_DIMENSION = 1440;
 const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/avif', 'image/heic', 'image/heif']);
 const DATABASE_NAME = 'ar-crm-local-activity-photos';
 const STORE_NAME = 'photos';
+
+export interface ActivityPhotoOutboxOperation {
+  id: string;
+  state: 'pending' | 'syncing' | 'failed' | 'acknowledged';
+  permanentFailure?: boolean;
+  failedAt?: number;
+}
 
 export function validateActivityPhotoMetadata(file: Pick<Blob, 'type' | 'size'>): string | undefined {
   if (!ALLOWED_IMAGE_TYPES.has(file.type.toLowerCase())) return 'Pilih foto JPG, PNG, WebP, AVIF, atau HEIC.';
@@ -102,6 +110,35 @@ export async function pruneOrphanedActivityPhotos(
   } finally {
     database.close();
   }
+}
+
+export async function cleanupOrphanedActivityPhotos(options: {
+  serverActivityIds: ReadonlySet<string>;
+  operations: readonly ActivityPhotoOutboxOperation[];
+  isOnline: boolean;
+  isOutboxRestoring: boolean;
+  now?: number;
+}): Promise<number> {
+  if (!options.isOnline || options.isOutboxRestoring) return 0;
+  const now = options.now ?? Date.now();
+  if (!Number.isFinite(now)) throw new Error('Waktu pembersihan foto tidak valid.');
+
+  const retainedActivityIds = new Set(options.serverActivityIds);
+  const activityOperationPrefix = 'activity-create:';
+  for (const operation of options.operations) {
+    if (!operation.id.startsWith(activityOperationPrefix)) continue;
+    const activityId = operation.id.slice(activityOperationPrefix.length);
+    const failureExpired = operation.state === 'failed'
+      && operation.permanentFailure === true
+      && typeof operation.failedAt === 'number'
+      && Number.isFinite(operation.failedAt)
+      && operation.failedAt <= now - ACTIVITY_PHOTO_FAILED_OPERATION_GRACE_MS;
+    if (operation.state !== 'acknowledged' && !failureExpired) {
+      retainedActivityIds.add(activityId);
+    }
+  }
+
+  return pruneOrphanedActivityPhotos(retainedActivityIds, now);
 }
 
 export async function loadActivityPhoto(activityId: string): Promise<Blob | undefined> {

@@ -40,11 +40,11 @@ function firstHeader(value: string | string[] | undefined): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
-function sameOriginHttps(request: ProspectingHttpRequest): boolean {
+function sameOriginHttps(request: ProspectingHttpRequest, environment: Record<string, string | undefined>): boolean {
   const origin = firstHeader(request.headers.origin);
   const host = request.headers.host?.trim().toLowerCase();
-  const forwardedProto = firstHeader(request.headers['x-forwarded-proto'])?.split(',')[0]?.trim().toLowerCase();
-  if (!origin || !host || forwardedProto !== 'https') return false;
+  const forwardedProto = request.headers['x-forwarded-proto'];
+  if (environment.VERCEL !== '1' || !origin || !host || forwardedProto !== 'https') return false;
   try {
     const parsed = new URL(origin);
     return parsed.protocol === 'https:' && parsed.host.toLowerCase() === host;
@@ -81,7 +81,7 @@ export function createProspectingHttpHandler(dependencies: ProspectingHttpDepend
       sendJson(response, 503, { code: 'feature_disabled', error: 'Prospecting AI is not enabled.' });
       return;
     }
-    if (!sameOriginHttps(request)) {
+    if (!sameOriginHttps(request, dependencies.environment)) {
       sendJson(response, 403, { code: 'origin_not_allowed', error: 'Request origin is not allowed.' });
       return;
     }

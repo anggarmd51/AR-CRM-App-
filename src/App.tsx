@@ -20,7 +20,7 @@ import { createActivity, createLead, deleteLead, subscribeToActivities, subscrib
 import { OptimisticLeadStageOverlay, type LeadSnapshotState } from './utils/optimisticLeadStages.ts';
 import { firestoreWriteQueue, type SyncQueueSnapshot } from './utils/offlineWriteQueue.ts';
 import { reconcileDocumentSyncStatuses } from './utils/syncStatus.ts';
-import { pruneOrphanedActivityPhotos, storeActivityPhoto } from './utils/activityPhotos.ts';
+import { cleanupOrphanedActivityPhotos, storeActivityPhoto } from './utils/activityPhotos.ts';
 import { canonicalizeModalHistoryState, createAppHistoryState, getModalLeadId, readAppHistoryState, type AppHistoryState, type AppModalName } from './utils/appHistory.ts';
 const DashboardView = lazy(() => import('./components/DashboardView.tsx').then(({ DashboardView }) => ({ default: DashboardView })));
 const PipelineKanbanView = lazy(() => import('./components/PipelineKanbanView.tsx').then(({ PipelineKanbanView }) => ({ default: PipelineKanbanView })));
@@ -288,18 +288,16 @@ export default function App() {
   useEffect(() => {
     if (!isOnline || !snapshotReadiness.activities || snapshotCacheState.activities
       || syncQueueSnapshot.isRestoring || photoCleanupInFlightRef.current) return;
-    const retainedActivityIds = new Set(activities.map((activity) => activity.id));
-    const activityOperationPrefix = 'activity-create:';
-    for (const operation of syncQueueSnapshot.operations) {
-      if (operation.id.startsWith(activityOperationPrefix)) {
-        retainedActivityIds.add(operation.id.slice(activityOperationPrefix.length));
-      }
-    }
     photoCleanupInFlightRef.current = true;
-    void pruneOrphanedActivityPhotos(retainedActivityIds)
+    void cleanupOrphanedActivityPhotos({
+      serverActivityIds: new Set(activities.map((activity) => activity.id)),
+      operations: syncQueueSnapshot.operations,
+      isOnline,
+      isOutboxRestoring: syncQueueSnapshot.isRestoring,
+    })
       .then((deletedCount) => {
         if (deletedCount > 0) {
-          showToast(`${formatNumber(deletedCount)} foto lokal tanpa Activity yang tercatat lebih dari 30 hari dibersihkan.`);
+          showToast(`${formatNumber(deletedCount)} foto Activity orphan yang melewati masa retensi lokal dibersihkan.`);
         }
       })
       .catch(() => undefined)

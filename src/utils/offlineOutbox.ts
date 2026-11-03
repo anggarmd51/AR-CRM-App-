@@ -68,6 +68,8 @@ interface DurableQueueMetadata extends QueueOwnerScope {
   createdAt: number;
   attempts: number;
   state: DurableQueueState;
+  permanentFailure?: boolean;
+  failedAt?: number;
   errorMessage?: string;
   dependsOn?: string;
 }
@@ -117,6 +119,8 @@ interface StoredOperation {
   createdAt: number;
   attempts: number;
   state: DurableQueueState;
+  permanentFailure?: boolean;
+  failedAt?: number;
   errorMessage?: string;
   dependsOn?: string;
   cryptoVersion?: number;
@@ -413,6 +417,8 @@ export class IndexedDbOfflineOutboxStore implements OfflineOutboxStore {
       createdAt: record.createdAt,
       attempts: record.attempts,
       state,
+      ...(record.permanentFailure ? { permanentFailure: true } : {}),
+      ...(typeof record.failedAt === 'number' ? { failedAt: record.failedAt } : {}),
       ...(record.errorMessage ? { errorMessage: record.errorMessage } : {}),
       ...(record.dependsOn ? { dependsOn: record.dependsOn } : {}),
     };
@@ -457,6 +463,8 @@ export class IndexedDbOfflineOutboxStore implements OfflineOutboxStore {
         createdAt: row.createdAt,
         attempts: row.attempts,
         state: row.state,
+        ...(row.permanentFailure ? { permanentFailure: true } : {}),
+        ...(typeof row.failedAt === 'number' ? { failedAt: row.failedAt } : {}),
         ...(row.errorMessage ? { errorMessage: row.errorMessage } : {}),
         ...(row.dependsOn ? { dependsOn: row.dependsOn } : {}),
       };
@@ -523,7 +531,13 @@ export class IndexedDbOfflineOutboxStore implements OfflineOutboxStore {
     const existing = await requestResult(store.get(key) as IDBRequest<StoredOperation | undefined>);
     if (existing) {
       const { iv: _iv, ciphertext: _ciphertext, ...metadata } = existing;
-      store.put({ ...metadata, state: 'acknowledged', errorMessage: undefined } satisfies StoredOperation);
+      store.put({
+        ...metadata,
+        state: 'acknowledged',
+        permanentFailure: undefined,
+        failedAt: undefined,
+        errorMessage: undefined,
+      } satisfies StoredOperation);
     }
     await done;
   }

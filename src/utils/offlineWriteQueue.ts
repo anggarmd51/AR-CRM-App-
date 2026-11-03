@@ -18,6 +18,8 @@ export interface SyncQueueOperation {
   state: SyncOperationState;
   attempts: number;
   canRetry: boolean;
+  permanentFailure?: boolean;
+  failedAt?: number;
   dependencyBlocked: boolean;
   requiresManualReplay: boolean;
   errorMessage?: string;
@@ -72,6 +74,8 @@ interface QueuedOperation<T = unknown> {
   persisted: boolean;
   requiresManualReplay: boolean;
   errorMessage?: string;
+  permanentFailure?: boolean;
+  failedAt?: number;
   currentAttempt?: Promise<void>;
   acceptedPromise: Promise<void>;
   acknowledgement: Deferred<T>;
@@ -114,6 +118,7 @@ const PERMANENT_FIRESTORE_ERRORS = new Set([
   'already-exists',
   'out-of-range',
 ]);
+const PERMANENT_FIRESTORE_ERROR_MESSAGE = 'Firestore menolak operasi (akses atau validasi). Periksa akun/data sebelum mencoba lagi.';
 
 function safeErrorMessage(error: unknown): string {
   const rawCode = error && typeof error === 'object' && 'code' in error
@@ -121,7 +126,7 @@ function safeErrorMessage(error: unknown): string {
     : '';
   const code = rawCode.slice(rawCode.lastIndexOf('/') + 1);
   if (PERMANENT_FIRESTORE_ERRORS.has(code)) {
-    return 'Firestore menolak operasi (akses atau validasi). Periksa akun/data sebelum mencoba lagi.';
+    return PERMANENT_FIRESTORE_ERROR_MESSAGE;
   }
   return 'Gangguan sementara. Operasi tetap tersimpan lokal dan akan dicoba lagi saat koneksi tersedia.';
 }
@@ -208,6 +213,8 @@ export class OfflineWriteQueue {
         attempts: operation.attempts,
         canRetry: !operation.inFlight && !this.isDependencyBlocked(operation)
           && (operation.state === 'pending' || operation.state === 'failed'),
+        ...(operation.permanentFailure ? { permanentFailure: true } : {}),
+        ...(typeof operation.failedAt === 'number' ? { failedAt: operation.failedAt } : {}),
         dependencyBlocked: this.isDependencyBlocked(operation),
         requiresManualReplay: operation.requiresManualReplay,
         ...(operation.errorMessage ? { errorMessage: operation.errorMessage } : {}),
@@ -256,9 +263,19 @@ export class OfflineWriteQueue {
           continue;
         }
         if (!record.payload) throw new Error('Pending outbox record has no recoverable payload.');
+        const isLegacyPermanentFailure = record.state === 'failed'
+          && record.errorMessage === PERMANENT_FIRESTORE_ERROR_MESSAGE
+          && record.permanentFailure !== true;
+        const permanentFailure = record.state === 'failed'
+          && (record.permanentFailure === true || isLegacyPermanentFailure);
+        const failedAt = record.state === 'failed'
+          ? (typeof record.failedAt === 'number' ? record.failedAt : isLegacyPermanentFailure ? Date.now() : undefined)
+          : undefined;
         const restoredRecord: RestoredQueueRecord = {
           ...record,
           state: record.state === 'syncing' ? 'pending' : record.state,
+          ...(permanentFailure ? { permanentFailure: true } : {}),
+          ...(typeof failedAt === 'number' ? { failedAt } : {}),
         };
         const durable = {
           id: record.id,
@@ -284,12 +301,14 @@ export class OfflineWriteQueue {
           requiresManualReplay: true,
           activationVersion: version,
           enqueueOrder: this.enqueueSequence++,
+          ...(permanentFailure ? { permanentFailure: true } : {}),
+          ...(typeof failedAt === 'number' ? { failedAt } : {}),
         });
         if (version !== this.activationVersion) return;
         operation.errorMessage = record.state === 'syncing' ? undefined : record.errorMessage;
         this.operations.set(operation.id, operation);
-        if (record.state === 'syncing') {
-          await this.store.update(this.toRecord(operation));
+        if (record.state === 'syncing' || isLegacyPermanentFailure) {
+          await this.store.update(this.toRecord(operation, record.state === 'syncing' ? 'pending' : 'failed'));
           if (version !== this.activationVersion) return;
         }
       }
@@ -357,6 +376,8 @@ export class OfflineWriteQueue {
         operation.accepted = true;
         operation.persisted = false;
         operation.state = 'failed';
+        operation.permanentFailure = undefined;
+        operation.failedAt = undefined;
         operation.errorMessage = 'Tidak dapat menyimpan antrean lokal dengan aman; operasi belum dikirim ke Firestore.';
         operation.acknowledgement.reject(error);
         this.notify();
@@ -396,6 +417,8 @@ export class OfflineWriteQueue {
       if (operation.state === 'failed') {
         operation.state = 'pending';
         operation.errorMessage = undefined;
+        operation.permanentFailure = undefined;
+        operation.failedAt = undefined;
       }
     }
     if (awaitingOwner.length > 0) {
@@ -431,9 +454,13 @@ export class OfflineWriteQueue {
     const previousRecord = operation.durable;
     const previousError = operation.errorMessage;
     const previousManualReplayRequired = operation.requiresManualReplay;
+    const previousPermanentFailure = operation.permanentFailure;
+    const previousFailedAt = operation.failedAt;
     operation.durable = { ...previousRecord, payload: sanitized.payload } as DurableOperationInput;
     operation.state = 'pending';
     operation.errorMessage = undefined;
+    operation.permanentFailure = undefined;
+    operation.failedAt = undefined;
     operation.requiresManualReplay = false;
     try {
       if (!this.scope || !scopeMatches(operation.durable, this.scope)) throw new Error('Queue owner/workspace is not active.');
@@ -445,6 +472,8 @@ export class OfflineWriteQueue {
       operation.state = 'failed';
       operation.errorMessage = previousError ?? 'Koreksi belum tersimpan ke outbox lokal; operasi tidak dikirim.';
       operation.requiresManualReplay = previousManualReplayRequired;
+      operation.permanentFailure = previousPermanentFailure;
+      operation.failedAt = previousFailedAt;
       this.notify();
       throw error;
     }
@@ -493,6 +522,8 @@ export class OfflineWriteQueue {
     accepted: boolean;
     persisted: boolean;
     requiresManualReplay: boolean;
+    permanentFailure?: boolean;
+    failedAt?: number;
   }): QueuedOperation<T> {
     const acknowledgement = createDeferred<T>();
     const operation = {
@@ -511,6 +542,10 @@ export class OfflineWriteQueue {
       ...operation.durable,
       attempts,
       state,
+      ...(state === 'failed' && operation.permanentFailure ? { permanentFailure: true } : {}),
+      ...(state === 'failed' && operation.permanentFailure && typeof operation.failedAt === 'number'
+        ? { failedAt: operation.failedAt }
+        : {}),
       ...(operation.errorMessage ? { errorMessage: operation.errorMessage } : {}),
     } as DurableQueueRecord;
   }
@@ -545,6 +580,8 @@ export class OfflineWriteQueue {
     }
     operation.state = 'pending';
     operation.errorMessage = undefined;
+    operation.permanentFailure = undefined;
+    operation.failedAt = undefined;
     this.notify();
     return this.runOperation(operation);
   }
@@ -574,6 +611,8 @@ export class OfflineWriteQueue {
     operation.state = 'syncing';
     operation.attempts += 1;
     operation.errorMessage = undefined;
+    operation.permanentFailure = undefined;
+    operation.failedAt = undefined;
     this.notify();
 
     if (operation.durable && operation.persisted) {
@@ -586,6 +625,8 @@ export class OfflineWriteQueue {
         }
         operation.state = 'failed';
         operation.errorMessage = 'Tidak dapat memperbarui status antrean lokal; operasi tidak dikirim.';
+        operation.permanentFailure = undefined;
+        operation.failedAt = undefined;
         operation.acknowledgement.reject(error);
         operation.inFlight = false;
         this.notify();
@@ -623,6 +664,8 @@ export class OfflineWriteQueue {
       const code = rawCode.slice(rawCode.lastIndexOf('/') + 1);
       const permanent = PERMANENT_FIRESTORE_ERRORS.has(code);
       operation.state = permanent ? 'failed' : 'pending';
+      operation.permanentFailure = permanent || undefined;
+      operation.failedAt = permanent ? Date.now() : undefined;
       operation.errorMessage = safeErrorMessage(error);
       if (permanent) operation.acknowledgement.reject(error);
       if (operation.durable && operation.persisted) {
