@@ -135,20 +135,20 @@ test('Production owner UID falls back to the server VITE binding and rejects emp
   }
 });
 
-test('mocked Production WIF uses the exact audience and service account, and adapts OAuth access tokens for Firebase Admin without network calls', async () => {
+test('Production WIF preserves the default Vercel OIDC audience and the exact STS provider/service account', async () => {
   const now = 1_800_000_000_000;
   const environmentWithUnusedLegacyKey = {
     ...productionEnvironment,
     FIREBASE_ADMIN_SERVICE_ACCOUNT_JSON: '{"type":"service_account","private_key":"synthetic-test-only"}',
   };
   let capturedExternalOptions: IdentityPoolClientOptions | undefined;
-  let requestedAudience: string | undefined;
+  const oidcTokenArguments: unknown[][] = [];
   let capturedAppOptions: AppOptions | undefined;
   let capturedAppName: string | undefined;
   const credential = createProductionAccountPinCredential(environmentWithUnusedLegacyKey, {
     now: () => now,
-    getVercelOidcToken: async ({ audience }) => {
-      requestedAudience = audience;
+    getVercelOidcToken: async (...args: unknown[]) => {
+      oidcTokenArguments.push(args);
       return 'mock-vercel-oidc-subject-token';
     },
     createExternalAccountClient: (options) => {
@@ -190,7 +190,7 @@ test('mocked Production WIF uses the exact audience and service account, and ada
   assert.equal(token.expires_in, 3_600);
 
   const expectedAudience = ACCOUNT_PIN_PRODUCTION_WIF_AUDIENCE;
-  assert.equal(requestedAudience, expectedAudience);
+  assert.deepEqual(oidcTokenArguments, [[]], 'custom OIDC audience would be rejected by the configured Allowed audiences provider');
   assert.equal(capturedExternalOptions?.audience, expectedAudience);
   assert.equal('credential_source' in (capturedExternalOptions ?? {}), false);
   assert.equal('private_key' in (capturedExternalOptions ?? {}), false);

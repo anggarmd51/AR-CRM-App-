@@ -69,6 +69,7 @@ const ALLOWED_ERROR_CODES = new Set([
 ]);
 
 const ALLOWED_FIREBASE_AUTH_ERROR_CODES = new Set([
+  'app/invalid-credential',
   'auth/argument-error',
   'auth/id-token-expired',
   'auth/id-token-revoked',
@@ -77,6 +78,7 @@ const ALLOWED_FIREBASE_AUTH_ERROR_CODES = new Set([
   'auth/invalid-credential',
   'auth/invalid-id-token',
   'auth/invalid-tenant-id',
+  'auth/network-request-failed',
   'auth/tenant-id-mismatch',
   'auth/user-disabled',
   'auth/user-not-found',
@@ -96,6 +98,7 @@ const ALLOWED_ERROR_NAMES = new Set([
   'Error',
   'FetchError',
   'FirebaseAppError',
+  'FirebaseAuthError',
   'FirebaseError',
   'FirebaseFirestoreError',
   'FirestoreError',
@@ -181,6 +184,12 @@ function safeFirebaseAuthErrorReason(error: unknown): string {
         return 'token_expired';
       case 'auth/id-token-revoked':
         return 'revoked';
+      case 'app/invalid-credential':
+      case 'auth/invalid-credential':
+      case 'auth/insufficient-permission':
+        return 'credentials_error';
+      case 'auth/network-request-failed':
+        return 'network_error';
       default:
         break;
     }
@@ -331,7 +340,7 @@ export function logAccountPinDiagnostic(
   console.error('account_pin_diagnostic', JSON.stringify(fields));
 }
 
-/** Emits only the fixed request tag and a strictly allowlisted Firebase Auth code. */
+/** Emits only fixed request tags and allowlisted SDK names, codes and reasons. */
 export function logAccountPinRequestDiagnostic(
   tag: AccountPinRequestDiagnosticTag,
   error?: unknown,
@@ -341,6 +350,7 @@ export function logAccountPinRequestDiagnostic(
     ...(tag === 'auth_token_verify_failed' ? { stage: 'auth_token_verify' as const } : {}),
     ...(tag === 'auth_token_verify_failed' ? {
       code: safeFirebaseAuthErrorCode(error),
+      name: safeErrorName(error),
       reason: safeFirebaseAuthErrorReason(error),
     } : {}),
     ...(tag === 'auth_token_claims_invalid' && errorRecord(error)

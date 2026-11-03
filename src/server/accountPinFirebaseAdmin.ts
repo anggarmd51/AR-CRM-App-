@@ -74,7 +74,7 @@ interface ExternalAccountTokenClient {
   credentials: { expiry_date?: number | null };
 }
 
-type OidcTokenGetter = (options: { audience: string }) => Promise<string>;
+type OidcTokenGetter = () => Promise<string>;
 type ExternalAccountClientFactory = (options: IdentityPoolClientOptions) => ExternalAccountTokenClient | null;
 
 interface ProductionCredentialDependencies {
@@ -181,7 +181,9 @@ export function createProductionAccountPinCredential(
         if (context.audience !== config.audience) {
           throw new Error('Vercel OIDC audience does not match the approved Google identity provider.');
         }
-        const subjectToken = await getOidcToken({ audience: config.audience });
+        // The approved provider allows Vercel's default team audience. The STS
+        // audience above identifies the provider; it must not override the OIDC aud.
+        const subjectToken = await getOidcToken();
         if (typeof subjectToken !== 'string' || subjectToken.trim().length === 0) {
           throw new Error('Vercel OIDC did not return a valid subject token.');
         }

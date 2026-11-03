@@ -110,6 +110,7 @@ test('unrecognized provider text and details remain redacted even when the code 
     tag: 'auth_token_verify_failed',
     stage: 'auth_token_verify',
     code: 'auth/id-token-expired',
+    name: 'Error',
     reason: 'token_expired',
   });
   assert.deepEqual(captureRequestDiagnostic('auth_token_verify_failed', Object.assign(new Error('private token'), {
@@ -118,6 +119,7 @@ test('unrecognized provider text and details remain redacted even when the code 
     tag: 'auth_token_verify_failed',
     stage: 'auth_token_verify',
     code: 'unknown_error',
+    name: 'Error',
     reason: 'unknown_error',
   });
   assert.deepEqual(captureRequestDiagnostic('forbidden_origin_mismatch'), {
@@ -163,6 +165,7 @@ test('Firebase Admin verification logs only allowlisted codes and generic reason
       tag: 'auth_token_verify_failed',
       stage: 'auth_token_verify',
       code: entry.code === 'provider-private-error' ? 'unknown_error' : entry.code,
+      name: 'Error',
       reason: entry.reason === 'signing_key_not_found' ? 'signature_error'
         : entry.reason === 'token_decode_failed' || entry.reason === 'unrecognized_firebase_auth_error'
           ? 'unknown_error' : entry.reason,
@@ -181,6 +184,10 @@ test('token verification reasons are static, evidence-based, and redact hostile 
   const cases = [
     ['auth/id-token-expired', 'provider text', 'token_expired'],
     ['auth/id-token-revoked', 'provider text', 'revoked'],
+    ['app/invalid-credential', 'private provider response; token=PRIVATE', 'credentials_error'],
+    ['auth/invalid-credential', 'private provider response; token=PRIVATE', 'credentials_error'],
+    ['auth/insufficient-permission', 'private provider response; token=PRIVATE', 'credentials_error'],
+    ['auth/network-request-failed', 'private network response; token=PRIVATE', 'network_error'],
     ['auth/argument-error', 'Firebase ID token project ID does not match the configured project; secret=PRIVATE', 'project_mismatch'],
     ['auth/argument-error', 'Firebase ID token has incorrect "aud" (audience) claim; token=PRIVATE', 'audience_mismatch'],
     ['auth/argument-error', 'Firebase ID token has incorrect "iss" (issuer) claim; token=PRIVATE', 'issuer_mismatch'],
@@ -201,12 +208,14 @@ test('token verification reasons are static, evidence-based, and redact hostile 
 
   const hostile = Object.create(null) as Record<string, unknown>;
   Object.defineProperty(hostile, 'code', { get() { throw new Error('secret-code'); } });
+  Object.defineProperty(hostile, 'name', { get() { throw new Error('secret-name'); } });
   Object.defineProperty(hostile, 'message', { get() { throw new Error('secret-message'); } });
   const unknown = captureRequestDiagnostic('auth_token_verify_failed', hostile);
   assert.deepEqual(unknown, {
     tag: 'auth_token_verify_failed',
     stage: 'auth_token_verify',
     code: 'unknown_error',
+    name: 'Error',
     reason: 'unknown_error',
   });
   assert.doesNotMatch(JSON.stringify(unknown), /secret/);
