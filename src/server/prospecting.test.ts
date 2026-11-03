@@ -122,6 +122,42 @@ test('missing keys never trigger external fetch', async () => {
   assert.equal(PROSPECTING_TOTAL_DEADLINE_MS, 7_500);
 });
 
+test('final Cohere v2 fallback sends stream false and parses message content', async () => {
+  const calls: string[] = [];
+  const response = await profileProspectWithFallback('Distributor alat industri', {
+    environment: allKeys,
+    fetchImpl: async (input, init) => {
+      const url = String(input);
+      calls.push(url);
+      if (!url.includes('api.cohere.ai/v2/chat')) return new Response('{}', { status: 429 });
+
+      assert.equal(init?.method, 'POST');
+      assert.equal((init?.headers as Record<string, string>).authorization, 'Bearer test-cohere');
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      assert.equal(body.model, 'command-a-plus-05-2026');
+      assert.equal(body.stream, false);
+      assert.deepEqual((body.messages as Array<{ role: string }>).map((message) => message.role), ['system', 'user']);
+
+      return new Response(JSON.stringify({
+        message: { content: [{ type: 'text', text: JSON.stringify({
+          target_roles: 'Owner / Founder',
+          email_pattern: 'nama@<domain-perusahaan>',
+          google_dorks: 'site:linkedin.com/in',
+        }) }] },
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    },
+  });
+
+  assert.deepEqual(calls, [
+    'https://api.groq.com/openai/v1/chat/completions',
+    'https://api.deepseek.com/chat/completions',
+    'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent',
+    'https://openrouter.ai/api/v1/chat/completions',
+    'https://api.cohere.ai/v2/chat',
+  ]);
+  assert.equal(response.target_roles, 'Owner / Founder');
+});
+
 test('non-retryable responses do not expose upstream details', async () => {
   await assert.rejects(profileProspectWithFallback('Company', {
     environment: allKeys,

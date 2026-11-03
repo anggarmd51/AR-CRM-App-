@@ -185,6 +185,7 @@ function buildProviderRequest(
         ],
         temperature: 0.2,
         max_tokens: 600,
+        stream: false,
       };
     }
   }

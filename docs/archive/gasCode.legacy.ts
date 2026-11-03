@@ -7,6 +7,10 @@
  * - CORS-compliant JSON outputs
  */
 
+/* Archived from src/data/gasCode.ts; last updated in source commit fcc36977eb8be228611227be3959c7215855f24e.
+ * Retained as a historical reference only; the application does not import this file at runtime.
+ */
+
 export const GAS_BACKEND_CODE = `/**
  * AR Personal CRM Enterprise - Google Apps Script Backend (Code.gs v2.2.0)
  * Spreadsheet: "Personal CRM Data"
