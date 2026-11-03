@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import {
   AlertTriangle,
   Building2,
+  ExternalLink,
   HardDrive,
   MapPin,
   Pencil,
@@ -9,6 +10,7 @@ import {
   Save,
   Search,
   ShieldCheck,
+  Sparkles,
   Trash2,
   X,
 } from 'lucide-react';
@@ -21,6 +23,11 @@ import {
   type LocalProspectInput,
   type LocalProspectRecord,
 } from '../utils/localProspectDirectory.ts';
+import {
+  buildLinkedInPeopleSearchUrl,
+  researchProspectWithGemini,
+  type ProspectResearchResult,
+} from '../utils/prospectResearch.ts';
 
 const EMPTY_FORM: LocalProspectInput = {
   companyName: '',
@@ -30,6 +37,7 @@ const EMPTY_FORM: LocalProspectInput = {
 };
 
 const inputClassName = 'w-full rounded-[8px] border border-[#1f1f1f]/35 bg-white px-3 py-2.5 text-sm text-[#1f1f1f] placeholder:text-[#8b8579] focus:border-[#ff4800] focus:outline-none focus:ring-2 focus:ring-[#ff4800]/20';
+const LINKEDIN_JOB_TITLES = ['Owner', 'Founder', 'CEO', 'COO', 'CFO', 'CTO', 'Sales Director', 'Procurement Director'];
 
 export const GlobalLeadsView: React.FC = () => {
   const [prospects, setProspects] = useState<LocalProspectRecord[]>(() => readLocalProspects());
@@ -39,6 +47,12 @@ export const GlobalLeadsView: React.FC = () => {
   const [formOpen, setFormOpen] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [storageWarning, setStorageWarning] = useState<string | null>(null);
+  const [geminiApiKey, setGeminiApiKey] = useState('');
+  const [geminiConsent, setGeminiConsent] = useState(false);
+  const [researchResults, setResearchResults] = useState<Record<string, ProspectResearchResult>>({});
+  const [researchErrors, setResearchErrors] = useState<Record<string, string>>({});
+  const [researchingId, setResearchingId] = useState<string | null>(null);
+  const [linkedinJobTitles, setLinkedinJobTitles] = useState<Record<string, string>>({});
 
   const visibleProspects = useMemo(
     () => searchLocalProspects(prospects, query),
@@ -93,6 +107,23 @@ export const GlobalLeadsView: React.FC = () => {
     if (editingId === record.id) closeForm();
   };
 
+  const handleResearch = async (record: LocalProspectRecord) => {
+    if (!geminiApiKey.trim() || !geminiConsent || researchingId) return;
+    setResearchingId(record.id);
+    setResearchErrors((current) => ({ ...current, [record.id]: '' }));
+    try {
+      const result = await researchProspectWithGemini(geminiApiKey, record.companyName, record.industry);
+      setResearchResults((current) => ({ ...current, [record.id]: result }));
+    } catch (error) {
+      setResearchErrors((current) => ({
+        ...current,
+        [record.id]: error instanceof Error ? error.message : 'Riset gagal. Periksa kuota/koneksi dan coba lagi.',
+      }));
+    } finally {
+      setResearchingId(null);
+    }
+  };
+
   return (
     <div className="space-y-4 pb-24">
       <header className="flex flex-col gap-3 border-b border-[#1f1f1f]/10 pb-4 sm:flex-row sm:items-center sm:justify-between">
@@ -134,6 +165,46 @@ export const GlobalLeadsView: React.FC = () => {
           <span>Disimpan hanya di penyimpanan browser ini, tidak disinkronkan ke Firebase atau CRM, dan dapat hilang jika penyimpanan browser dibersihkan.</span>
         </p>
         {storageWarning && <p role="status" className="text-[11px] font-semibold text-[#9b2c2c]">{storageWarning}</p>}
+      </section>
+
+      <section aria-label="Pengaturan riset Gemini" className="space-y-3 rounded-[12px] border border-[#1f1f1f]/20 bg-[#f8f5ee] p-4">
+        <div className="flex items-center gap-2">
+          <Sparkles className="h-4 w-4 text-[#ff4800]" />
+          <h3 className="text-sm font-bold text-[#1f1f1f]">Pengaturan riset PIC — Gemini</h3>
+        </div>
+        <p className="text-[11px] leading-4 text-[#6b665c]">
+          Masukkan kunci Gemini API milik Anda sendiri. Kunci hanya berada di memori halaman ini (tidak disimpan); browser mengirim permintaan langsung ke Google, sehingga kunci dapat terlihat oleh pengguna/perangkat dan skrip pada origin ini. Gunakan kunci khusus yang dibatasi ke Gemini API.
+        </p>
+        <p className="text-[11px] leading-4 text-[#6b665c]">
+          Saat menekan “Riset PIC”, hanya nama perusahaan dan industri yang dikirim. Tier gratis Gemini 2.5 Flash tercantum di harga Google saat ini, tetapi kuota/kelayakan dapat berubah; jika proyek Anda memakai tier berbayar, penggunaan dapat dikenai biaya. Tier gratis juga dapat memakai input untuk peningkatan produk. Aplikasi ini tidak dapat menjamin biaya Rp0.
+        </p>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <label className="min-w-0 flex-1 space-y-1 text-xs font-semibold text-[#6b665c]" htmlFor="prospect-gemini-api-key">
+            <span>Kunci Gemini API (tidak disimpan)</span>
+            <input
+              id="prospect-gemini-api-key"
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              value={geminiApiKey}
+              onChange={(event) => setGeminiApiKey(event.target.value)}
+              placeholder="Tempel kunci Gemini API Anda"
+              className={inputClassName}
+            />
+          </label>
+          <button type="button" onClick={() => setGeminiApiKey('')} className="min-h-11 self-end rounded-[8px] border border-[#1f1f1f]/30 bg-white px-3 py-2 text-xs font-semibold text-[#1f1f1f] hover:border-[#ff4800]">
+            Hapus kunci
+          </button>
+        </div>
+        <label className="flex items-start gap-2 text-[11px] leading-4 text-[#1f1f1f]">
+          <input type="checkbox" checked={geminiConsent} onChange={(event) => setGeminiConsent(event.target.checked)} className="mt-0.5" />
+          <span>Saya setuju mengirim nama perusahaan dan industri ke Gemini. Saya tidak akan memasukkan data rahasia/pribadi dan memahami dugaan maupun pola email wajib diverifikasi; Google dapat memakai data pada tier gratis untuk peningkatan produk.</span>
+        </label>
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
+          <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="font-semibold text-[#1f1f1f] underline">Kelola kunci di Google AI Studio</a>
+          <a href="https://ai.google.dev/gemini-api/docs/api-key" target="_blank" rel="noopener noreferrer" className="font-semibold text-[#1f1f1f] underline">Panduan keamanan kunci Google</a>
+          <a href="https://ai.google.dev/gemini-api/docs/pricing" target="_blank" rel="noopener noreferrer" className="font-semibold text-[#1f1f1f] underline">Harga dan tier Gemini</a>
+        </div>
       </section>
 
       <section className="rounded-[12px] border border-[#1f1f1f]/15 bg-[#f8f5ee] p-3 sm:p-4">
@@ -222,14 +293,51 @@ export const GlobalLeadsView: React.FC = () => {
                   <ShieldCheck className="h-3.5 w-3.5" />
                   Perlu Verifikasi Manual
                 </p>
+                {researchResults[record.id] && (
+                  <section aria-label={`Hasil dugaan PIC ${record.companyName}`} className="space-y-2 rounded-[8px] border border-[#ff4800]/30 bg-[#fffaf5] p-3">
+                    <h4 className="text-xs font-bold text-[#1f1f1f]">Dugaan AI — bukan data terverifikasi</h4>
+                    <div className="space-y-1">
+                      <p className="text-[10px] font-bold text-[#6b665c]">Jabatan yang mungkin relevan</p>
+                      {researchResults[record.id].roles.length ? researchResults[record.id].roles.map((role) => (
+                        <p key={role.id} className="text-[11px] leading-4 text-[#1f1f1f]">
+                          <strong>{role.title}</strong> (confidence {role.confidence})
+                        </p>
+                      )) : <p className="text-[11px] text-[#6b665c]">Belum ada jabatan yang cukup masuk akal untuk diperkirakan.</p>}
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-[10px] font-bold text-[#6b665c]">Pola email generik untuk diuji — bukan alamat publik</p>
+                      {researchResults[record.id].emailPatterns.length ? researchResults[record.id].emailPatterns.map((pattern) => (
+                        <p key={pattern.id} className="break-all text-[11px] leading-4 text-[#1f1f1f]">
+                          <strong>{pattern.pattern}</strong> (confidence {pattern.confidence})
+                        </p>
+                      )) : <p className="text-[11px] text-[#6b665c]">Tidak ada pola yang dapat diperkirakan.</p>}
+                    </div>
+                    <p className="text-[10px] leading-4 text-[#9b2c2c]">Tidak ada pencarian web atau verifikasi sumber. Jangan gunakan hasil ini sebagai identitas PIC atau alamat email aktual.</p>
+                  </section>
+                )}
+                {researchErrors[record.id] && <p role="alert" className="text-[11px] font-semibold text-[#9b2c2c]">{researchErrors[record.id]}</p>}
               </div>
-              <div className="mt-4 flex flex-col gap-2 border-t border-[#1f1f1f]/10 pt-3 min-[380px]:flex-row min-[380px]:justify-end">
-                <button type="button" onClick={() => startEdit(record)} className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-[8px] border border-[#1f1f1f]/25 bg-white px-3 py-2 text-xs font-semibold text-[#1f1f1f] hover:border-[#ff4800]">
+              <div className="mt-4 space-y-2 border-t border-[#1f1f1f]/10 pt-3">
+                <label className="block space-y-1 text-[10px] font-semibold text-[#6b665c]">
+                  <span>Jabatan untuk pencarian LinkedIn</span>
+                  <select value={linkedinJobTitles[record.id] ?? 'Owner'} onChange={(event) => setLinkedinJobTitles((current) => ({ ...current, [record.id]: event.target.value }))} className={`${inputClassName} py-2 text-xs`}>
+                    {LINKEDIN_JOB_TITLES.map((title) => <option key={title} value={title}>{title}</option>)}
+                  </select>
+                </label>
+                <div className="flex flex-col gap-2 min-[380px]:flex-row">
+                  <a href={buildLinkedInPeopleSearchUrl(record.companyName, linkedinJobTitles[record.id] ?? 'Owner')} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-[8px] border border-[#1f1f1f]/25 bg-white px-3 py-2 text-xs font-semibold text-[#1f1f1f] hover:border-[#ff4800]">
+                    <ExternalLink className="h-3.5 w-3.5" /> Riset di LinkedIn
+                  </a>
+                  <button type="button" onClick={() => void handleResearch(record)} disabled={!geminiApiKey.trim() || !geminiConsent || researchingId !== null} className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-[8px] border border-[#1f1f1f] bg-[#1f1f1f] px-3 py-2 text-xs font-semibold text-white hover:bg-[#393939] disabled:cursor-not-allowed disabled:opacity-40">
+                    <Sparkles className="h-3.5 w-3.5 text-[#ff4800]" /> {researchingId === record.id ? 'Meriset…' : 'Riset PIC'}
+                  </button>
+                  <button type="button" onClick={() => startEdit(record)} className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-[8px] border border-[#1f1f1f]/25 bg-white px-3 py-2 text-xs font-semibold text-[#1f1f1f] hover:border-[#ff4800]">
                   <Pencil className="h-3.5 w-3.5" /> Edit
-                </button>
-                <button type="button" onClick={() => handleDelete(record)} className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-[8px] border border-[#9b2c2c]/30 bg-white px-3 py-2 text-xs font-semibold text-[#9b2c2c] hover:border-[#9b2c2c]">
+                  </button>
+                  <button type="button" onClick={() => handleDelete(record)} className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-[8px] border border-[#9b2c2c]/30 bg-white px-3 py-2 text-xs font-semibold text-[#9b2c2c] hover:border-[#9b2c2c]">
                   <Trash2 className="h-3.5 w-3.5" /> Hapus
-                </button>
+                  </button>
+                </div>
               </div>
             </article>
           ))}

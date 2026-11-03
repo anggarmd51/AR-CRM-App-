@@ -60,17 +60,22 @@ export async function compressImageFile(
     if (!Number.isFinite(bitmap.width) || !Number.isFinite(bitmap.height) || bitmap.width <= 0 || bitmap.height <= 0) {
       throw new Error('Dimensi foto tidak valid.');
     }
-    const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-    const context = canvas.getContext('2d', { alpha: false });
-    if (!context) throw new Error('Browser tidak dapat membuka kanvas foto.');
-    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    let targetDimension = Math.min(maxDimension, Math.max(bitmap.width, bitmap.height));
+    for (let resizePass = 0; resizePass < 12; resizePass += 1) {
+      const scale = Math.min(1, targetDimension / Math.max(bitmap.width, bitmap.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      const context = canvas.getContext('2d', { alpha: false });
+      if (!context) throw new Error('Browser tidak dapat membuka kanvas foto.');
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
 
-    for (const quality of qualitySteps) {
-      const compressed = await canvasToJpeg(canvas, quality);
-      if (compressed.size > 0 && compressed.size <= maxBytes) return compressed;
+      for (const quality of qualitySteps) {
+        const compressed = await canvasToJpeg(canvas, quality);
+        if (compressed.size > 0 && compressed.size <= maxBytes) return compressed;
+      }
+      if (targetDimension <= 1) break;
+      targetDimension = Math.max(1, Math.floor(targetDimension * 0.75));
     }
     throw new Error('Foto masih terlalu besar setelah diperkecil. Pilih foto yang lebih kecil.');
   } finally {

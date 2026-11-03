@@ -6,6 +6,7 @@ import type { MeetingSummary } from '../meetingSummary.ts';
 import type { ActivityGpsLocation, ActivitySummarySource, Lead } from '../types/crm.ts';
 import { useModalAccessibility } from '../utils/useModalAccessibility.ts';
 import { compressActivityPhoto, MAX_ACTIVITY_PHOTO_BYTES } from '../utils/activityPhotos.ts';
+import { canSubmitActivity } from '../utils/activitySubmission.ts';
 
 interface ActivityLoggerModalProps {
   isOpen: boolean;
@@ -216,7 +217,7 @@ export const ActivityLoggerModal: React.FC<ActivityLoggerModalProps> = ({
       const compressed = await compressActivityPhoto(file);
       if (requestId !== photoRequestId.current) return;
       setPhoto(compressed);
-      setPhotoMessage(`Foto diperkecil menjadi ${Math.max(1, Math.round(compressed.size / 1024))} KB dan hanya disimpan di browser ini.`);
+      setPhotoMessage(`Foto dikompres menjadi ${Math.max(1, Math.round(compressed.size / 1000))} KB; akan disimpan lokal saat Activity diterima, tanpa upload cloud.`);
     } catch (error) {
       if (requestId === photoRequestId.current) setPhotoMessage(error instanceof Error ? error.message : 'Foto tidak dapat diproses.');
     } finally {
@@ -224,9 +225,17 @@ export const ActivityLoggerModal: React.FC<ActivityLoggerModalProps> = ({
     }
   };
 
+  const canSaveActivity = canSubmitActivity({
+    selectedLeadId,
+    notes,
+    isSubmitting,
+    isSummarizing,
+    isCompressingPhoto,
+  });
+
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!selectedLeadId || !notes.trim() || isSubmitting || isSummarizing) return;
+    if (!canSaveActivity) return;
     setIsSubmitting(true);
     try {
       await onSaveActivity({
@@ -296,7 +305,7 @@ export const ActivityLoggerModal: React.FC<ActivityLoggerModalProps> = ({
 
           <section className="rounded-[12px] border border-[#1f1f1f]/35 bg-[#f8f5ee] p-3 space-y-2.5">
             <div className="flex items-center gap-2 font-bold text-[#1f1f1f]"><Camera className="w-3.5 h-3.5 text-[#ff4800]" />Foto site visit (opsional)</div>
-            <p className="text-[10px] text-[#6b665c]">Kamera dibuka hanya setelah tombol ditekan. Foto dikompres, maksimal {Math.round(MAX_ACTIVITY_PHOTO_BYTES / 1024)} KB, dan disimpan lokal di browser ini—tidak diunggah ke Firebase.</p>
+            <p className="text-[10px] text-[#6b665c]">Kamera dibuka hanya setelah tombol ditekan. Foto dikompres di browser menjadi JPEG maksimal {MAX_ACTIVITY_PHOTO_BYTES.toLocaleString('id-ID')} byte (500 KB), lalu disimpan lokal di IndexedDB—tidak diunggah atau disinkronkan ke Firebase. Foto tanpa Activity di Firestore maupun antrean tertunda dibersihkan setelah 30 hari.</p>
             <input id="activity-camera-file" type="file" accept="image/*" capture="environment" disabled={isCompressingPhoto || isSubmitting} onChange={(event) => { void handlePhotoSelection(event.target.files?.[0]); event.currentTarget.value = ''; }} className="sr-only" />
             <div className="flex flex-wrap items-center gap-2">
               <label htmlFor="activity-camera-file" className={`inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-[8px] border border-[#1f1f1f] bg-[#fcfcfa] px-3 py-2 font-semibold text-[#1f1f1f] ${isCompressingPhoto || isSubmitting ? 'pointer-events-none opacity-50' : ''}`}><Camera className="h-4 w-4" />{isCompressingPhoto ? 'Memproses foto…' : photo ? 'Ambil foto lain' : 'Buka kamera / pilih foto'}</label>
@@ -329,7 +338,7 @@ export const ActivityLoggerModal: React.FC<ActivityLoggerModalProps> = ({
 
           <div className="flex items-center justify-end gap-2 pt-3 border-t border-[#1f1f1f]/10">
             <button type="button" onClick={close} disabled={isSubmitting} className="px-4 py-2 rounded-[8px] text-[#6b665c] hover:text-[#1f1f1f] font-semibold transition-colors">Cancel</button>
-            <button type="submit" disabled={isSubmitting || isSummarizing || !selectedLeadId || !notes.trim()} className="bg-[#ff4800] hover:bg-[#e03f00] text-white font-bold px-5 py-2.5 rounded-[8px] border border-[#1f1f1f] flex items-center gap-1.5 transition-all disabled:opacity-50"><Check className="w-4 h-4 stroke-[2.5]" /><span>{isSubmitting ? 'Saving…' : 'Save Activity'}</span></button>
+            <button type="submit" disabled={!canSaveActivity} className="bg-[#ff4800] hover:bg-[#e03f00] text-white font-bold px-5 py-2.5 rounded-[8px] border border-[#1f1f1f] flex items-center gap-1.5 transition-all disabled:opacity-50"><Check className="w-4 h-4 stroke-[2.5]" /><span>{isCompressingPhoto ? 'Memproses foto…' : isSubmitting ? 'Saving…' : 'Save Activity'}</span></button>
           </div>
         </form>
       </div>

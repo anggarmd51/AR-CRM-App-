@@ -20,7 +20,7 @@ import { createActivity, createLead, deleteLead, subscribeToActivities, subscrib
 import { OptimisticLeadStageOverlay, type LeadSnapshotState } from './utils/optimisticLeadStages.ts';
 import { firestoreWriteQueue, type SyncQueueSnapshot } from './utils/offlineWriteQueue.ts';
 import { reconcileDocumentSyncStatuses } from './utils/syncStatus.ts';
-import { storeActivityPhoto } from './utils/activityPhotos.ts';
+import { pruneOrphanedActivityPhotos, storeActivityPhoto } from './utils/activityPhotos.ts';
 import { canonicalizeModalHistoryState, createAppHistoryState, getModalLeadId, readAppHistoryState, type AppHistoryState, type AppModalName } from './utils/appHistory.ts';
 const DashboardView = lazy(() => import('./components/DashboardView.tsx').then(({ DashboardView }) => ({ default: DashboardView })));
 const PipelineKanbanView = lazy(() => import('./components/PipelineKanbanView.tsx').then(({ PipelineKanbanView }) => ({ default: PipelineKanbanView })));
@@ -98,6 +98,7 @@ export default function App() {
   const stageOverlayRef = useRef(new OptimisticLeadStageOverlay());
   const latestFirestoreLeadsRef = useRef<Lead[]>([]);
   const latestFirestoreSnapshotStateRef = useRef<LeadSnapshotState>({ fromCache: true, pendingWriteIds: new Set() });
+  const photoCleanupInFlightRef = useRef(false);
 
   const renderedLeadsRef = useRef(leads);
   renderedLeadsRef.current = leads;
@@ -282,6 +283,35 @@ export default function App() {
       window.removeEventListener('offline', handleOffline);
     };
   }, []);
+
+  useEffect(() => {
+    if (!isOnline || !snapshotReadiness.activities || snapshotCacheState.activities
+      || syncQueueSnapshot.isRestoring || photoCleanupInFlightRef.current) return;
+    const retainedActivityIds = new Set(activities.map((activity) => activity.id));
+    const activityOperationPrefix = 'activity-create:';
+    for (const operation of syncQueueSnapshot.operations) {
+      if (operation.id.startsWith(activityOperationPrefix)) {
+        retainedActivityIds.add(operation.id.slice(activityOperationPrefix.length));
+      }
+    }
+    photoCleanupInFlightRef.current = true;
+    void pruneOrphanedActivityPhotos(retainedActivityIds)
+      .then((deletedCount) => {
+        if (deletedCount > 0) {
+          showToast(`${formatNumber(deletedCount)} foto lokal tanpa Activity yang tercatat lebih dari 30 hari dibersihkan.`);
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => { photoCleanupInFlightRef.current = false; });
+  }, [
+    activities,
+    isOnline,
+    showToast,
+    snapshotCacheState.activities,
+    snapshotReadiness.activities,
+    syncQueueSnapshot.isRestoring,
+    syncQueueSnapshot.operations,
+  ]);
 
   useEffect(() => {
     setSelectedLead((current) => {
