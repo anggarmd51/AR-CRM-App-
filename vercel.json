@@ -1,0 +1,15 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    {
+      "source": "/__/auth/:path*",
+      "destination": "https://ar-crm-73222.firebaseapp.com/__/auth/:path*",
+      "has": [
+        {
+          "type": "host",
+          "value": { "eq": "arcrmapp.vercel.app" }
+        }
+      ]
+    }
+  ]
+}

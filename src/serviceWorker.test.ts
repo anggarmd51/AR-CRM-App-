@@ -42,10 +42,13 @@ function createServiceWorkerHarness() {
   return { cacheWrites, fetchListener, response };
 }
 
-test('service worker does not intercept API, dynamic, or cross-origin GET requests', () => {
+test('service worker does not intercept API, Firebase Auth helpers, dynamic, or cross-origin GET requests', () => {
   const { fetchListener } = createServiceWorkerHarness();
   const urls = [
     'https://crm.example/api/private/export',
+    'https://crm.example/__/auth/handler',
+    'https://crm.example/__/auth/iframe',
+    'https://crm.example/__/auth/handler.js',
     'https://crm.example/reports/private-export.csv',
     'https://crm.example/private/app.js',
     'https://cdn.example/assets/app.js',
