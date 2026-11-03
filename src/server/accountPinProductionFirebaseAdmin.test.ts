@@ -190,6 +190,7 @@ test('Production WIF preserves the default Vercel OIDC audience and the exact ST
   assert.equal(token.expires_in, 3_600);
 
   const expectedAudience = ACCOUNT_PIN_PRODUCTION_WIF_AUDIENCE;
+  assert.equal(expectedAudience, '//iam.googleapis.com/projects/577829773376/locations/global/workloadIdentityPools/vercel-prod/providers/vercel-prod');
   assert.deepEqual(oidcTokenArguments, [[]], 'custom OIDC audience would be rejected by the configured Allowed audiences provider');
   assert.equal(capturedExternalOptions?.audience, expectedAudience);
   assert.equal('credential_source' in (capturedExternalOptions ?? {}), false);
