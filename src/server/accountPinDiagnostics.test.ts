@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   logAccountPinDiagnostic,
   logAccountPinRequestDiagnostic,
+  logAccountPinWifTokenExchangeDiagnostic,
   type AccountPinRequestDiagnosticTag,
 } from './accountPinDiagnostics.ts';
 
@@ -24,6 +25,18 @@ function captureRequestDiagnostic(tag: AccountPinRequestDiagnosticTag, error?: u
   console.error = (...values: unknown[]) => { logged.push(values.map(String).join(' ')); };
   try {
     logAccountPinRequestDiagnostic(tag, error);
+  } finally {
+    console.error = originalConsoleError;
+  }
+  return JSON.parse(logged[0]?.replace(/^account_pin_diagnostic /, '') ?? '{}') as Record<string, unknown>;
+}
+
+function captureWifDiagnostic(error: unknown): Record<string, unknown> {
+  const logged: string[] = [];
+  const originalConsoleError = console.error;
+  console.error = (...values: unknown[]) => { logged.push(values.map(String).join(' ')); };
+  try {
+    logAccountPinWifTokenExchangeDiagnostic(error);
   } finally {
     console.error = originalConsoleError;
   }
@@ -228,4 +241,70 @@ test('token claim and auth_time request diagnostics emit only fixed safe tags', 
   assert.deepEqual(captureRequestDiagnostic('auth_token_auth_time_invalid', new Error('private auth_time detail')), {
     tag: 'auth_token_auth_time_invalid',
   });
+});
+
+test('WIF STS diagnostics map audience, provider condition, and expired subject token evidence', () => {
+  const cases = [
+    ['STS rejected audience https://private.invalid; token=SECRET', 'audience_mismatch', 'audience'],
+    ['The attribute condition was rejected for private-subject; bearer=SECRET', 'provider_subject_condition_rejected', 'attribute-condition'],
+    ['subject token has expired; raw-token=SECRET', 'subject_token_expired', 'expired-subject-token'],
+  ] as const;
+  for (const [message, reason, signal] of cases) {
+    const diagnostic = captureWifDiagnostic(Object.assign(new Error(message), {
+      response: { data: { error: message }, config: { url: 'https://sts.googleapis.com/v1/token?secret=URL_SECRET' } },
+    }));
+    assert.equal(diagnostic.stage, 'wif_token_exchange');
+    assert.equal(diagnostic.endpoint, 'sts');
+    assert.equal(diagnostic.reason, reason);
+    assert.ok((diagnostic.signals as string[]).includes(signal));
+    assert.doesNotMatch(JSON.stringify(diagnostic), /private\.invalid|private-subject|SECRET|URL_SECRET/);
+  }
+});
+
+test('WIF IAM 403 diagnostics use fixed impersonation permission category', () => {
+  const diagnostic = captureWifDiagnostic({
+    code: 'PERMISSION_DENIED',
+    response: {
+      status: 403,
+      data: { error: { status: 'PERMISSION_DENIED', message: 'private service account and UID SECRET' } },
+      config: { url: 'https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/private@example.invalid:generateAccessToken' },
+    },
+  });
+  assert.deepEqual(diagnostic, {
+    stage: 'wif_token_exchange',
+    endpoint: 'iam_credentials',
+    code: 'permission-denied',
+    name: 'Error',
+    reason: 'impersonation_permission_denied',
+    signals: ['iam-access-token-permission'],
+  });
+  assert.doesNotMatch(JSON.stringify(diagnostic), /private@example|SECRET|UID/);
+});
+
+test('WIF Vercel OIDC missing-token diagnostics stay static', () => {
+  const diagnostic = captureWifDiagnostic(Object.assign(new Error("The 'x-vercel-oidc-token' header is missing from the request; secret=SECRET"), {
+    code: 'invalid_credential',
+  }));
+  assert.equal(diagnostic.endpoint, 'vercel_oidc');
+  assert.equal(diagnostic.code, 'invalid_credential');
+  assert.equal(diagnostic.reason, 'oidc_token_unavailable');
+  assert.ok((diagnostic.signals as string[]).includes('oidc'));
+  assert.doesNotMatch(JSON.stringify(diagnostic), /x-vercel-oidc-token|header is missing|SECRET/);
+});
+
+test('WIF diagnostics tolerate hostile getters and never serialize provider secrets', () => {
+  const hostile = Object.create(null) as Record<string, unknown>;
+  Object.defineProperty(hostile, 'code', { get() { throw new Error('secret-code'); } });
+  Object.defineProperty(hostile, 'message', { get() { throw new Error('secret-message'); } });
+  Object.defineProperty(hostile, 'response', { get() { throw new Error('response bearer SECRET'); } });
+  const diagnostic = captureWifDiagnostic(hostile);
+  assert.deepEqual(diagnostic, {
+    stage: 'wif_token_exchange',
+    endpoint: 'unknown',
+    code: 'unknown_error',
+    name: 'Error',
+    reason: 'unknown_error',
+    signals: [],
+  });
+  assert.doesNotMatch(JSON.stringify(diagnostic), /secret|SECRET/);
 });

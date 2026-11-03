@@ -10,6 +10,7 @@ import { reserveAiUsage } from './leadFinderQuota.ts';
 import {
   logAccountPinDiagnostic,
   logAccountPinRequestDiagnostic,
+  logAccountPinWifTokenExchangeDiagnostic,
   markAccountPinDiagnostic,
   type AccountPinDiagnosticStage,
 } from './accountPinDiagnostics.ts';
@@ -220,6 +221,11 @@ export function createProductionAccountPinCredential(
         };
       } catch (error) {
         markAccountPinDiagnostic(error, 'wif_token_exchange');
+        try {
+          logAccountPinWifTokenExchangeDiagnostic(error);
+        } catch {
+          // Diagnostic failures must never replace the original credential error.
+        }
         throw error;
       }
     },

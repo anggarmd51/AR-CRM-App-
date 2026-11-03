@@ -165,11 +165,14 @@ test('FirebaseAppInternals credential failures retain allowlisted class/code/rea
     );
 
     logAccountPinRequestDiagnostic('auth_token_verify_failed', wrappedError);
-    const diagnostic = JSON.parse(logged[0]?.replace(/^account_pin_diagnostic /, '') ?? '{}') as Record<string, unknown>;
+    const diagnostics = logged.map(line => JSON.parse(line.replace(/^account_pin_diagnostic /, '')) as Record<string, unknown>);
+    assert.ok(diagnostics.some(entry => entry.stage === 'wif_token_exchange'));
+    const diagnostic = diagnostics.find(entry => entry.tag === 'auth_token_verify_failed');
+    assert.ok(diagnostic);
     assert.equal(diagnostic.code, 'app/invalid-credential');
     assert.equal(diagnostic.name, 'Error');
     assert.equal(diagnostic.reason, 'credentials_error');
-    assert.doesNotMatch(logged[0] ?? '', /synthetic provider failure/);
+    assert.doesNotMatch(JSON.stringify(diagnostics), /synthetic provider failure/);
   } finally {
     console.error = originalConsoleError;
     await deleteApp(app);

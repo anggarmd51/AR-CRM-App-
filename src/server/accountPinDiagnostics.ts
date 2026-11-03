@@ -243,6 +243,122 @@ function safeErrorCode(error: unknown): string {
   return 'unknown_error';
 }
 
+type WifDiagnosticEndpoint = 'sts' | 'iam_credentials' | 'vercel_oidc' | 'unknown';
+type WifDiagnosticReason = 'audience_mismatch' | 'provider_subject_condition_rejected' | 'subject_token_expired'
+  | 'impersonation_permission_denied' | 'oidc_token_unavailable' | 'provider_configuration_error'
+  | 'network_error' | 'credentials_error' | 'unknown_error';
+
+function safeProperty(value: unknown, key: string): unknown {
+  try {
+    return errorRecord(value)?.[key];
+  } catch {
+    return undefined;
+  }
+}
+
+function safeString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
+}
+
+function safeWifEndpoint(error: unknown): WifDiagnosticEndpoint {
+  try {
+    const record = errorRecord(error);
+    const message = safeString(safeProperty(record, 'message'));
+    if (message && /x-vercel-oidc-token|VERCEL_OIDC_TOKEN/.test(message)) return 'vercel_oidc';
+    const response = safeProperty(record, 'response');
+    const responseConfig = safeProperty(response, 'config');
+    const configUrl = safeString(safeProperty(record, 'config'))
+      ?? safeString(safeProperty(responseConfig, 'url'))
+      ?? safeString(safeProperty(safeProperty(record, 'config'), 'url'))
+      ?? safeString(safeProperty(response, 'url'));
+    if (!configUrl) return 'unknown';
+    if (/sts\.googleapis\.com|securitytoken\.googleapis\.com/i.test(configUrl)) return 'sts';
+    if (/iamcredentials\.googleapis\.com|iamcredentials/i.test(configUrl)) return 'iam_credentials';
+    if (/vercel\.com.*oidc|oidc\.vercel\.com|oidc/i.test(configUrl)) return 'vercel_oidc';
+  } catch {
+    // Hostile getters and malformed provider errors are treated as unknown.
+  }
+  return 'unknown';
+}
+
+function safeWifProviderTexts(error: unknown): string[] {
+  const texts: string[] = [];
+  const add = (value: unknown) => { if (typeof value === 'string') texts.push(value); };
+  try {
+    const record = errorRecord(error);
+    add(safeProperty(record, 'code'));
+    add(safeProperty(record, 'message'));
+    const response = safeProperty(record, 'response');
+    add(safeProperty(response, 'statusText'));
+    const data = safeProperty(response, 'data');
+    const providerError = safeProperty(data, 'error');
+    add(providerError);
+    add(safeProperty(providerError, 'status'));
+    add(safeProperty(providerError, 'message'));
+    add(safeProperty(data, 'error_description'));
+  } catch {
+    // Do not let provider objects interfere with request handling or logging.
+  }
+  return texts;
+}
+
+function safeWifCode(error: unknown, texts: string[]): string {
+  const direct = safeErrorCode(error);
+  if (direct !== 'unknown_error') return direct;
+  const normalized = texts.map((text) => text.toLowerCase());
+  for (const candidate of ['invalid_grant', 'invalid_request', 'invalid_client', 'unauthorized_client'] as const) {
+    if (normalized.some((text) => text.includes(candidate))) return candidate;
+  }
+  const status = safeProperty(safeProperty(errorRecord(error), 'response'), 'status');
+  if (typeof status === 'number' && [400, 401, 403, 404, 408, 409, 429, 500, 502, 503, 504].includes(status)) return `http_${status}`;
+  return 'unknown_error';
+}
+
+function safeWifReason(endpoint: WifDiagnosticEndpoint, code: string, texts: string[]): WifDiagnosticReason {
+  const text = texts.join(' ').toLowerCase();
+  if (endpoint === 'sts' && /audience|invalid_target/.test(text)) return 'audience_mismatch';
+  if (endpoint === 'sts' && /attribute.condition|attribute condition|subject condition|principal.*condition|condition.*principal/.test(text)) {
+    return 'provider_subject_condition_rejected';
+  }
+  if (endpoint === 'sts' && /expired|expiration|subject.token.*expir|token.*expired/.test(text)) return 'subject_token_expired';
+  if (endpoint === 'iam_credentials' && (code === 'http_403' || /permission[-_ ]denied|forbidden/.test(text))) {
+    return 'impersonation_permission_denied';
+  }
+  if (endpoint === 'vercel_oidc' && /missing|unavailable|not found|no token|token.*undefined|null/.test(text)) return 'oidc_token_unavailable';
+  if (/network|eai_again|enotfound|econnreset|etimedout|timeout|fetcherror|err_network/.test(text)) return 'network_error';
+  if (/invalid[_-]?credential|credentials?/.test(text) || ['invalid_client', 'unauthorized_client'].includes(code)) return 'credentials_error';
+  if (endpoint !== 'unknown' && ['http_400', 'http_401', 'invalid_request'].includes(code)) return 'provider_configuration_error';
+  return 'unknown_error';
+}
+
+function safeWifSignals(endpoint: WifDiagnosticEndpoint, reason: WifDiagnosticReason, texts: string[]): string[] {
+  const text = texts.join(' ').toLowerCase();
+  const signals: string[] = [];
+  if (endpoint === 'sts') signals.push('sts-token-exchange');
+  if (endpoint === 'iam_credentials') signals.push('iam-access-token-permission');
+  if (endpoint === 'vercel_oidc') signals.push('oidc');
+  if (reason === 'audience_mismatch' || /audience/.test(text)) signals.push('audience');
+  if (reason === 'provider_subject_condition_rejected' || /attribute.condition|attribute condition|subject condition/.test(text)) signals.push('attribute-condition');
+  if (reason === 'subject_token_expired') signals.push('expired-subject-token');
+  return [...new Set(signals)];
+}
+
+/** Logs only fixed WIF exchange categories; provider text is used for mapping and never emitted. */
+export function logAccountPinWifTokenExchangeDiagnostic(error: unknown): void {
+  const endpoint = safeWifEndpoint(error);
+  const texts = safeWifProviderTexts(error);
+  const code = safeWifCode(error, texts);
+  const reason = safeWifReason(endpoint, code, texts);
+  console.error('account_pin_diagnostic', JSON.stringify({
+    stage: 'wif_token_exchange',
+    endpoint,
+    code,
+    name: safeErrorName(error),
+    reason,
+    signals: safeWifSignals(endpoint, reason, texts),
+  }));
+}
+
 function safeErrorName(error: unknown): string {
   try {
     const name = errorRecord(error)?.name;
