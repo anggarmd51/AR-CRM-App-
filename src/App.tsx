@@ -74,6 +74,7 @@ export default function App() {
   const [deletingLeadId, setDeletingLeadId] = useState<string | null>(null);
   const [whatsAppLead, setWhatsAppLead] = useState<Lead | null>(null);
   const [hasOpenedQuickLead, setHasOpenedQuickLead] = useState(false);
+  const [prospectCompanyDraft, setProspectCompanyDraft] = useState('');
   const [hasOpenedActivityLogger, setHasOpenedActivityLogger] = useState(false);
   const [hasOpenedLeadDetail, setHasOpenedLeadDetail] = useState(false);
   const [hasOpenedWhatsApp, setHasOpenedWhatsApp] = useState(false);
@@ -579,7 +580,7 @@ export default function App() {
       case 'pipeline':
         return 'Sales Pipeline';
       case 'leads_finder':
-        return 'Direktori Prospek Lokal';
+        return 'Direktori Prospek';
       case 'activities':
         return 'Field Activities';
       case 'analytics':
@@ -592,6 +593,13 @@ export default function App() {
   };
 
   const openQuickLead = () => {
+    setProspectCompanyDraft('');
+    setHasOpenedQuickLead(true);
+    openModalWithHistory(() => setIsQuickLeadOpen(true), 'quickLead');
+  };
+
+  const openQuickLeadFromProspect = (companyNameDraft: string) => {
+    setProspectCompanyDraft(companyNameDraft.trim());
     setHasOpenedQuickLead(true);
     openModalWithHistory(() => setIsQuickLeadOpen(true), 'quickLead');
   };
@@ -680,7 +688,7 @@ export default function App() {
 
           {currentTab === 'leads_finder' && (
             <Suspense fallback={<AppChunkFallback />}>
-              <GlobalLeadsView />
+              <GlobalLeadsView onSaveToPipeline={openQuickLeadFromProspect} />
             </Suspense>
           )}
 
@@ -732,7 +740,11 @@ export default function App() {
           <Suspense fallback={<ModalChunkFallback />}>
             <QuickLeadModal
               isOpen={isQuickLeadOpen}
-              onClose={() => closeModalWithHistory('quickLead', () => setIsQuickLeadOpen(false))}
+              onClose={() => closeModalWithHistory('quickLead', () => {
+                setIsQuickLeadOpen(false);
+                setProspectCompanyDraft('');
+              })}
+              initialCompanyName={prospectCompanyDraft}
               onAddLead={handleAddLead}
             />
           </Suspense>

@@ -5,25 +5,36 @@ import test from 'node:test';
 const componentSource = readFileSync(new URL('../components/GlobalLeadsView.tsx', import.meta.url), 'utf8');
 const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
 const researchSource = readFileSync(new URL('../utils/prospectResearch.ts', import.meta.url), 'utf8');
-const localDirectorySource = readFileSync(new URL('../utils/localProspectDirectory.ts', import.meta.url), 'utf8');
+const legacyDirectorySource = readFileSync(new URL('../utils/localProspectDirectory.ts', import.meta.url), 'utf8');
+const engineSource = readFileSync(new URL('./prospecting.ts', import.meta.url), 'utf8');
+const routeSource = readFileSync(new URL('../../api/ai/prospecting.ts', import.meta.url), 'utf8');
 const retiredRouteUrl = new URL('../../api/ai/lead-finder.ts', import.meta.url);
 
-test('prospect research is client-side, requires explicit consent, and has no operational CRM bridge', () => {
-  assert.doesNotMatch(componentSource, /\bfetch\s*\(|\/api\/|getFirebaseAuth|firebaseRepository|createLead\s*\(|onImportGlobalLead/i);
-  assert.match(componentSource, /researchProspectWithGemini/);
-  assert.match(componentSource, /geminiConsent/);
-  assert.match(componentSource, /Riset di LinkedIn/);
-  assert.match(componentSource, /noopener noreferrer/);
-  assert.match(appSource, /<GlobalLeadsView\s*\/>/);
-  assert.match(componentSource, /Sampel fiktif/);
-  assert.match(componentSource, /Perlu Verifikasi Manual/);
-  assert.match(componentSource, /tidak disinkronkan ke Firebase atau CRM/);
-  assert.match(researchSource, /new GoogleGenAI\(\{ apiKey \}\)/);
-  assert.match(researchSource, /gemini-2\.5-flash/);
-  assert.match(researchSource, /Jangan mengarang nama orang, alamat email nyata/);
-  assert.doesNotMatch(localDirectorySource, /\bfetch\s*\(|\/api\/|GoogleGenAI|getFirebaseAuth|firebaseRepository|createLead\s*\(/i);
+test('prospecting UI uses backend AI without browser API keys and keeps LinkedIn client-side', () => {
+  assert.match(componentSource, /fetch\('\/api\/ai\/prospecting'/);
+  assert.doesNotMatch(componentSource, /geminiApiKey|prospect-gemini-api-key|Tempel kunci/i);
+  assert.doesNotMatch(componentSource, /Sampel fiktif|Data demo|storageWarning/i);
+  assert.match(componentSource, /Riset Profil via AI/);
+  assert.match(componentSource, /Cari di LinkedIn/);
+  assert.match(componentSource, /target="_blank"/);
+  assert.match(componentSource, /rel="noopener noreferrer"/);
+  assert.match(componentSource, /Simpan ke Pipeline/);
+  assert.match(componentSource, /onSaveToPipeline/);
+  assert.match(componentSource, /Unduh salinan lokal lama/);
+  assert.match(researchSource, /encodeURIComponent\(query\)/);
+  assert.doesNotMatch(researchSource, /GoogleGenAI|apiKey|GEMINI_API_KEY/i);
+  assert.match(legacyDirectorySource, /readExistingLocalProspectBackup/);
+  assert.doesNotMatch(legacyDirectorySource, /SAMPLE_PROSPECTS|setItem\(|removeItem\(/);
+  assert.match(appSource, /onSaveToPipeline=\{openQuickLeadFromProspect\}/);
 });
 
-test('the retired Vercel prospect AI route is absent', () => {
+test('server-side waterfall uses required order and strict output schema behind fail-closed gates', () => {
+  assert.match(engineSource, /\['groq', 'deepseek', 'gemini', 'openrouter', 'cohere'\]/);
+  assert.match(engineSource, /PROSPECTING_PROVIDER_TIMEOUT_MS = 2_500/);
+  assert.match(engineSource, /PROSPECTING_TOTAL_DEADLINE_MS = 7_500/);
+  assert.match(engineSource, /AbortController/);
+  assert.match(routeSource, /PROSPECTING_AI_ENABLED/);
+  assert.match(routeSource, /PROSPECTING_AI_COST_AND_DATA_REVIEWED/);
+  assert.match(routeSource, /PROSPECTING_AI_ENABLED === 'true'/);
   assert.equal(existsSync(retiredRouteUrl), false);
 });

@@ -6,12 +6,14 @@ import { useModalAccessibility } from '../utils/useModalAccessibility.ts';
 interface QuickLeadModalProps {
   isOpen: boolean;
   onClose: () => void;
+  initialCompanyName?: string;
   onAddLead: (leadData: Omit<Lead, 'id' | '_syncStatus' | 'created_at' | 'updated_at'>) => Promise<void>;
 }
 
 export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
   isOpen,
   onClose,
+  initialCompanyName = '',
   onAddLead,
 }) => {
   const [companyName, setCompanyName] = useState('');
@@ -31,7 +33,10 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
   const { dialogRef } = useModalAccessibility({ isOpen, onClose: close, titleId: 'quick-lead-modal-title' });
 
   useEffect(() => {
-    if (isOpen) return;
+    if (isOpen) {
+      setCompanyName(initialCompanyName);
+      return;
+    }
     setCompanyName('');
     setContactPerson('');
     setEmail('');
@@ -44,7 +49,7 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
     setNextFollowupDate('');
     setLeadScore('Unrated');
     setSubmitError(null);
-  }, [isOpen]);
+  }, [initialCompanyName, isOpen]);
 
   if (!isOpen) return null;
 
@@ -127,6 +132,7 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
                 onChange={(e) => setCompanyName(e.target.value)}
                 className="w-full bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] px-3 py-2 text-[#1f1f1f] placeholder-[#6b665c] focus:outline-none focus:bg-[#fcfcfa]"
               />
+              {initialCompanyName && <p className="text-[10px] leading-4 text-[#6b665c]">Terisi dari kata pencarian; periksa dan ubah jika bukan nama perusahaan.</p>}
             </div>
 
             <div className="space-y-1">

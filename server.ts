@@ -7,6 +7,7 @@ import makeLeadWebhookHandler from './api/webhooks/make/leads.ts';
 import accountPinStatusHandler from './api/account-pin/status.ts';
 import accountPinEnrollHandler from './api/account-pin/enroll.ts';
 import accountPinVerifyHandler from './api/account-pin/verify.ts';
+import prospectingHandler from './api/ai/prospecting.ts';
 
 dotenv.config();
 
@@ -26,6 +27,9 @@ app.all('/api/account-pin/enroll', express.json({ limit: '2kb' }), (req, res) =>
 });
 app.all('/api/account-pin/verify', express.json({ limit: '2kb' }), (req, res) => {
   void accountPinVerifyHandler(req, res);
+});
+app.all('/api/ai/prospecting', express.json({ limit: '2kb' }), (req, res) => {
+  void prospectingHandler(req, res);
 });
 
 // The webhook has its own small parser cap; keep existing body limits elsewhere.
