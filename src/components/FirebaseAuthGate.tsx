@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
+  GoogleAuthProvider,
   onIdTokenChanged,
   reauthenticateWithPopup,
   signInWithCustomToken,
-  signInWithPopup,
+  signInWithCredential,
   signOut,
   type User,
 } from 'firebase/auth';
@@ -34,6 +35,68 @@ const accountPinClient = createAccountPinClient({
   signInWithCustomToken,
 });
 
+interface GoogleIdentityCredentialResponse {
+  credential?: string;
+}
+
+interface GoogleIdentityApi {
+  initialize(configuration: {
+    client_id: string;
+    callback: (response: GoogleIdentityCredentialResponse) => void;
+    auto_select: boolean;
+    use_fedcm_for_button: boolean;
+  }): void;
+  renderButton(parent: HTMLElement, options: {
+    type: 'standard';
+    theme: 'outline';
+    size: 'large';
+    text: 'signin_with';
+    shape: 'rectangular';
+    width: number;
+  }): void;
+}
+
+declare global {
+  interface Window {
+    google?: { accounts?: { id?: GoogleIdentityApi } };
+  }
+}
+
+let googleIdentityServicesPromise: Promise<GoogleIdentityApi> | undefined;
+let initializedGoogleIdentityClientId: string | undefined;
+let activeGoogleIdentityResponseHandler: ((response: GoogleIdentityCredentialResponse) => void) | undefined;
+
+function dispatchGoogleIdentityResponse(response: GoogleIdentityCredentialResponse): void {
+  activeGoogleIdentityResponseHandler?.(response);
+}
+
+function loadGoogleIdentityServices(): Promise<GoogleIdentityApi> {
+  const existingApi = window.google?.accounts?.id;
+  if (existingApi) return Promise.resolve(existingApi);
+  if (googleIdentityServicesPromise) return googleIdentityServicesPromise;
+
+  googleIdentityServicesPromise = new Promise<GoogleIdentityApi>((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.onload = () => {
+      const api = window.google?.accounts?.id;
+      if (api) resolve(api);
+      else reject(new Error('Google Identity Services did not initialize.'));
+    };
+    script.onerror = () => {
+      script.remove();
+      reject(new Error('Google Identity Services could not be loaded.'));
+    };
+    document.head.append(script);
+  }).catch((cause: unknown) => {
+    googleIdentityServicesPromise = undefined;
+    throw cause;
+  });
+
+  return googleIdentityServicesPromise;
+}
+
 interface FirebaseAuthGateProps {
   children: ReactNode;
 }
@@ -50,6 +113,8 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
   const [user, setUser] = useState<User | null>(null);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [signInBusy, setSignInBusy] = useState(false);
+  const signInAttemptRef = useRef(false);
   const [startupError, setStartupError] = useState<string | null>(null);
   const [accountPinGateState, setAccountPinGateState] = useState<AccountPinGateState>('checking');
   const [accountPinStatus, setAccountPinStatus] = useState<AccountPinClientStatus | undefined>();
@@ -223,19 +288,26 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
     };
   }, [user, accountPinGateState, sessionExpiresAt, sessionCheckTrigger]);
 
-  const handleSignIn = async () => {
+  const handleGoogleCredential = useCallback(async (googleIdToken: string) => {
+    if (signInAttemptRef.current) return;
+    signInAttemptRef.current = true;
+    setSignInBusy(true);
     setError(null);
     try {
-      await signInWithPopup(getFirebaseAuth(), getGoogleProvider());
+      const firebaseCredential = GoogleAuthProvider.credential(googleIdToken);
+      await signInWithCredential(getFirebaseAuth(), firebaseCredential);
     } catch (cause) {
       const code = (cause as { code?: string })?.code;
       if (code === 'auth/unauthorized-domain') {
         setError('Origin aplikasi belum diizinkan oleh Firebase (auth/unauthorized-domain). Hentikan uji ini; penambahan authorized domain memerlukan persetujuan owner terlebih dahulu.');
-      } else if (code !== 'auth/popup-closed-by-user') {
+      } else {
         setError('Google Sign-In gagal atau dibatalkan. Tidak ada data lokal yang dibuka.');
       }
+    } finally {
+      signInAttemptRef.current = false;
+      setSignInBusy(false);
     }
-  };
+  }, []);
 
   const handleSignOut = useCallback(async () => {
     const snapshot = firestoreWriteQueue.getSnapshot();
@@ -260,9 +332,20 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
   }
   if (!ready) return <AuthMessage title="Memverifikasi sesi" detail="Menunggu Firebase Authentication dan, untuk hosted, sesi PIN server…" />;
   if (!user) {
+    const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID.trim();
     return (
       <AuthMessage title="Masuk ke AR CRM" detail="Gunakan Google Sign-In. Sampai UID owner dan workspace dikonfigurasi, layar ini tidak membuka data CRM.">
-        <button onClick={handleSignIn} className="rounded-[8px] bg-[#ff4800] px-4 py-2.5 text-sm font-bold text-white hover:bg-[#d93d00]">Masuk dengan Google</button>
+        {googleClientId ? (
+          <GoogleIdentitySignInButton
+            clientId={googleClientId}
+            onCredential={handleGoogleCredential}
+            onError={setError}
+            busy={signInBusy}
+          />
+        ) : (
+          <p role="alert" className="text-xs text-[#9b2c2c]">Google Sign-In belum dikonfigurasi untuk origin ini.</p>
+        )}
+        {signInBusy && <p role="status" className="text-center text-xs text-[#6b665c]">Memverifikasi sesi Google dengan Firebase…</p>}
         {error && <p role="alert" className="text-xs text-[#9b2c2c]">{error}</p>}
       </AuthMessage>
     );
@@ -295,6 +378,76 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
       </div>
       {children}
     </>
+  );
+}
+
+function GoogleIdentitySignInButton({
+  clientId,
+  onCredential,
+  onError,
+  busy,
+}: {
+  clientId: string;
+  onCredential: (googleIdToken: string) => Promise<void>;
+  onError: (message: string) => void;
+  busy: boolean;
+}) {
+  const buttonRootRef = useRef<HTMLDivElement>(null);
+  const onCredentialRef = useRef(onCredential);
+  const onErrorRef = useRef(onError);
+  const [buttonReady, setButtonReady] = useState(false);
+  onCredentialRef.current = onCredential;
+  onErrorRef.current = onError;
+
+  useEffect(() => {
+    let active = true;
+    const responseHandler = (response: GoogleIdentityCredentialResponse) => {
+      if (typeof response.credential !== 'string' || response.credential.length === 0) {
+        onErrorRef.current('Google Sign-In tidak mengembalikan kredensial yang valid.');
+        return;
+      }
+      void onCredentialRef.current(response.credential);
+    };
+    activeGoogleIdentityResponseHandler = responseHandler;
+
+    void loadGoogleIdentityServices().then((googleIdentity) => {
+      const buttonRoot = buttonRootRef.current;
+      if (!active || !buttonRoot) return;
+      if (initializedGoogleIdentityClientId !== clientId) {
+        googleIdentity.initialize({
+          client_id: clientId,
+          callback: dispatchGoogleIdentityResponse,
+          auto_select: false,
+          use_fedcm_for_button: true,
+        });
+        initializedGoogleIdentityClientId = clientId;
+      }
+      googleIdentity.renderButton(buttonRoot, {
+        type: 'standard',
+        theme: 'outline',
+        size: 'large',
+        text: 'signin_with',
+        shape: 'rectangular',
+        width: Math.min(400, Math.max(120, Math.floor(buttonRoot.getBoundingClientRect().width))),
+      });
+      setButtonReady(true);
+    }).catch(() => {
+      if (!active) return;
+      onErrorRef.current('Google Sign-In tidak dapat dimuat. Periksa koneksi, lalu muat ulang halaman.');
+    });
+
+    return () => {
+      active = false;
+      if (activeGoogleIdentityResponseHandler === responseHandler) activeGoogleIdentityResponseHandler = undefined;
+      buttonRootRef.current?.replaceChildren();
+    };
+  }, [clientId]);
+
+  return (
+    <div aria-busy={busy || !buttonReady} className={busy ? 'pointer-events-none opacity-60' : ''}>
+      {!buttonReady && <p role="status" className="mb-2 text-center text-sm text-[#6b665c]">Menyiapkan Google Sign-In…</p>}
+      <div ref={buttonRootRef} className="w-full" />
+    </div>
   );
 }
 
