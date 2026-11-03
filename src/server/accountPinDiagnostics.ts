@@ -169,6 +169,51 @@ function safeFirebaseAuthErrorCode(error: unknown): string {
   }
 }
 
+function safeFirebaseAuthErrorReason(error: unknown): string {
+  try {
+    const message = errorRecord(error)?.message;
+    if (typeof message === 'string') {
+      if (/Firebase ID token has incorrect ["']?aud["']? \(audience\) claim/i.test(message)) return 'audience_mismatch';
+      if (/Firebase ID token has incorrect ["']?iss["']? \(issuer\) claim/i.test(message)) return 'issuer_mismatch';
+      if (/Firebase ID token has incorrect ["']?sub["']? \(subject\) claim/i.test(message)) return 'subject_mismatch';
+      if (/Firebase ID token has no matching ["']?kid["']? claim/i.test(message)) return 'signing_key_not_found';
+      if (/Firebase ID token has no ["']?kid["']? claim/i.test(message)) return 'signing_key_id_missing';
+      if (/Firebase ID token has expired/i.test(message)) return 'token_expired';
+      if (/Firebase ID token has been revoked/i.test(message)) return 'token_revoked';
+      if (/Decoding Firebase ID token failed/i.test(message)) return 'token_decode_failed';
+      if (/Failed to verify the signature of the Firebase ID token/i.test(message)) return 'signature_invalid';
+    }
+
+    switch (safeFirebaseAuthErrorCode(error)) {
+      case 'auth/argument-error':
+      case 'auth/invalid-id-token':
+        return 'invalid_id_token';
+      case 'auth/id-token-expired':
+        return 'token_expired';
+      case 'auth/id-token-revoked':
+        return 'token_revoked';
+      case 'auth/invalid-credential':
+        return 'invalid_credential';
+      case 'auth/invalid-tenant-id':
+      case 'auth/tenant-id-mismatch':
+        return 'tenant_mismatch';
+      case 'auth/insufficient-permission':
+        return 'insufficient_permission';
+      case 'auth/internal-error':
+        return 'firebase_auth_internal_error';
+      case 'auth/user-disabled':
+        return 'user_disabled';
+      case 'auth/user-not-found':
+        return 'user_not_found';
+      default:
+        return 'unrecognized_firebase_auth_error';
+    }
+  } catch {
+    // SDK error messages are untrusted input and are never copied to logs.
+    return 'unrecognized_firebase_auth_error';
+  }
+}
+
 function safeErrorCode(error: unknown): string {
   try {
     const record = errorRecord(error);
@@ -294,7 +339,10 @@ export function logAccountPinRequestDiagnostic(
 ): void {
   const fields = {
     tag,
-    ...(tag === 'auth_token_verify_failed' ? { code: safeFirebaseAuthErrorCode(error) } : {}),
+    ...(tag === 'auth_token_verify_failed' ? {
+      code: safeFirebaseAuthErrorCode(error),
+      reason: safeFirebaseAuthErrorReason(error),
+    } : {}),
   };
   console.error('account_pin_diagnostic', JSON.stringify(fields));
 }

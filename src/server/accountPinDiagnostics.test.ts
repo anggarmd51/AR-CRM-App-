@@ -109,16 +109,61 @@ test('unrecognized provider text and details remain redacted even when the code 
   })), {
     tag: 'auth_token_verify_failed',
     code: 'auth/id-token-expired',
+    reason: 'token_expired',
   });
   assert.deepEqual(captureRequestDiagnostic('auth_token_verify_failed', Object.assign(new Error('private token'), {
     code: 'auth/id-token-expired;token=secret',
   })), {
     tag: 'auth_token_verify_failed',
     code: 'unknown_error',
+    reason: 'unrecognized_firebase_auth_error',
   });
   assert.deepEqual(captureRequestDiagnostic('forbidden_origin_mismatch'), {
     tag: 'forbidden_origin_mismatch',
   });
+});
+
+test('Firebase Admin verification logs only allowlisted codes and generic reason categories', () => {
+  const cases = [
+    {
+      code: 'auth/argument-error',
+      message: 'Firebase ID token has incorrect "aud" (audience) claim. Expected ar-crm-73222 but got private-project; Bearer eyJhbGciOiJIUzI1NiJ9.JWT_SECRET',
+      reason: 'audience_mismatch',
+    },
+    {
+      code: 'auth/argument-error',
+      message: 'Firebase ID token has incorrect "iss" (issuer) claim. Expected private-project; token=JWT_SECRET',
+      reason: 'issuer_mismatch',
+    },
+    {
+      code: 'auth/argument-error',
+      message: 'Firebase ID token has no matching "kid" claim; private-key=SECRET',
+      reason: 'signing_key_not_found',
+    },
+    {
+      code: 'auth/invalid-id-token',
+      message: 'Decoding Firebase ID token failed. Raw token: eyJhbGciOiJIUzI1NiJ9.JWT_SECRET',
+      reason: 'token_decode_failed',
+    },
+    {
+      code: 'provider-private-error',
+      message: 'private provider response with bearer JWT_SECRET and uid private-uid',
+      reason: 'unrecognized_firebase_auth_error',
+    },
+  ];
+
+  for (const entry of cases) {
+    const diagnostic = captureRequestDiagnostic('auth_token_verify_failed', Object.assign(new Error(entry.message), {
+      code: entry.code,
+      uid: 'private-uid',
+    }));
+    assert.deepEqual(diagnostic, {
+      tag: 'auth_token_verify_failed',
+      code: entry.code === 'provider-private-error' ? 'unknown_error' : entry.code,
+      reason: entry.reason,
+    });
+    assert.doesNotMatch(JSON.stringify(diagnostic), /ar-crm-73222|private-project|JWT_SECRET|eyJhbGci|Bearer|private-key|private provider|private-uid/);
+  }
 });
 
 test('arbitrary non-authentication error messages remain redacted', () => {
