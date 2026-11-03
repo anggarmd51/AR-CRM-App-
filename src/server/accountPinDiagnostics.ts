@@ -7,6 +7,7 @@ export const ACCOUNT_PIN_DIAGNOSTIC_STAGES = [
   'admin_app_initialize',
   'firebase_admin_app',
   'auth_client_get',
+  'auth_token_verify',
   'firestore_client_get',
   'firestore_status_verification',
 ] as const;
@@ -27,9 +28,11 @@ export type AccountPinRequestDiagnosticTag = typeof ACCOUNT_PIN_REQUEST_DIAGNOST
 interface DiagnosticContext {
   stage: AccountPinDiagnosticStage;
   code?: string;
+  reason?: 'project_mismatch' | 'audience_mismatch' | 'issuer_mismatch';
 }
 
 const diagnosticContexts = new WeakMap<object, DiagnosticContext>();
+const ALLOWED_TOKEN_BINDING_REASONS = new Set(['project_mismatch', 'audience_mismatch', 'issuer_mismatch']);
 
 const ALLOWED_ERROR_CODES = new Set([
   'app/invalid-credential',
@@ -171,46 +174,39 @@ function safeFirebaseAuthErrorCode(error: unknown): string {
 
 function safeFirebaseAuthErrorReason(error: unknown): string {
   try {
+    // Provider error codes are authoritative for these two states; hostile
+    // message text must not override an SDK expiration/revocation result.
+    switch (safeFirebaseAuthErrorCode(error)) {
+      case 'auth/id-token-expired':
+        return 'token_expired';
+      case 'auth/id-token-revoked':
+        return 'revoked';
+      default:
+        break;
+    }
     const message = errorRecord(error)?.message;
     if (typeof message === 'string') {
+      // Only classify project mismatch for explicit identity-difference
+      // wording, never for a generic "expected project" mention.
+      if (/(?:project(?:\s+id)?|configured project)\s+(?:mismatch(?:es)?|does not match|is different from)\s+(?:the\s+)?(?:configured\s+)?project/i.test(message)
+        || /(?:mismatch(?:es)?|does not match|is different from)\s+(?:the\s+)?(?:configured\s+)?project(?:\s+id)?/i.test(message)) return 'project_mismatch';
       if (/Firebase ID token has incorrect ["']?aud["']? \(audience\) claim/i.test(message)) return 'audience_mismatch';
       if (/Firebase ID token has incorrect ["']?iss["']? \(issuer\) claim/i.test(message)) return 'issuer_mismatch';
-      if (/Firebase ID token has incorrect ["']?sub["']? \(subject\) claim/i.test(message)) return 'subject_mismatch';
-      if (/Firebase ID token has no matching ["']?kid["']? claim/i.test(message)) return 'signing_key_not_found';
-      if (/Firebase ID token has no ["']?kid["']? claim/i.test(message)) return 'signing_key_id_missing';
       if (/Firebase ID token has expired/i.test(message)) return 'token_expired';
-      if (/Firebase ID token has been revoked/i.test(message)) return 'token_revoked';
-      if (/Decoding Firebase ID token failed/i.test(message)) return 'token_decode_failed';
-      if (/Failed to verify the signature of the Firebase ID token/i.test(message)) return 'signature_invalid';
+      if (/Firebase ID token has been revoked/i.test(message)) return 'revoked';
+      if (/Firebase ID token has invalid signature|Failed to verify the signature of the Firebase ID token|signature(?:\s+is)? invalid|(?:no matching|no) ["']?kid["']? claim|kid["']? claim which does not correspond to a known public key|Error fetching public keys for Google certs/i.test(message)) return 'signature_error';
     }
 
     switch (safeFirebaseAuthErrorCode(error)) {
       case 'auth/argument-error':
       case 'auth/invalid-id-token':
-        return 'invalid_id_token';
-      case 'auth/id-token-expired':
-        return 'token_expired';
-      case 'auth/id-token-revoked':
-        return 'token_revoked';
-      case 'auth/invalid-credential':
-        return 'invalid_credential';
-      case 'auth/invalid-tenant-id':
-      case 'auth/tenant-id-mismatch':
-        return 'tenant_mismatch';
-      case 'auth/insufficient-permission':
-        return 'insufficient_permission';
-      case 'auth/internal-error':
-        return 'firebase_auth_internal_error';
-      case 'auth/user-disabled':
-        return 'user_disabled';
-      case 'auth/user-not-found':
-        return 'user_not_found';
+        return 'unknown_error';
       default:
-        return 'unrecognized_firebase_auth_error';
+        return 'unknown_error';
     }
   } catch {
     // SDK error messages are untrusted input and are never copied to logs.
-    return 'unrecognized_firebase_auth_error';
+    return 'unknown_error';
   }
 }
 
@@ -304,6 +300,7 @@ export function markAccountPinDiagnostic(
   error: unknown,
   stage: AccountPinDiagnosticStage,
   code?: string,
+  reason?: DiagnosticContext['reason'],
 ): void {
   const record = errorRecord(error);
   if (!record) return;
@@ -311,6 +308,7 @@ export function markAccountPinDiagnostic(
   diagnosticContexts.set(record, {
     stage,
     ...(code && ALLOWED_ERROR_CODES.has(code) ? { code } : {}),
+    ...(reason && ALLOWED_TOKEN_BINDING_REASONS.has(reason) ? { reason } : {}),
   });
 }
 
@@ -328,6 +326,7 @@ export function logAccountPinDiagnostic(
     name: safeErrorName(error),
     message: safeErrorMessage(error),
     signals: safeErrorSignals(error),
+    ...(context?.reason ? { reason: context.reason } : {}),
   };
   console.error('account_pin_diagnostic', JSON.stringify(fields));
 }
@@ -339,10 +338,17 @@ export function logAccountPinRequestDiagnostic(
 ): void {
   const fields = {
     tag,
+    ...(tag === 'auth_token_verify_failed' ? { stage: 'auth_token_verify' as const } : {}),
     ...(tag === 'auth_token_verify_failed' ? {
       code: safeFirebaseAuthErrorCode(error),
       reason: safeFirebaseAuthErrorReason(error),
     } : {}),
+    ...(tag === 'auth_token_claims_invalid' && errorRecord(error)
+      ? (() => {
+        const reason = diagnosticContexts.get(errorRecord(error) as object)?.reason;
+        return reason ? { reason } : {};
+      })()
+      : {}),
   };
   console.error('account_pin_diagnostic', JSON.stringify(fields));
 }

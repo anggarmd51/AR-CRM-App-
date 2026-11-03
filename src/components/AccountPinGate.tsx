@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useState, type FormEvent, type ReactNode } from 'react';
 import type { User } from 'firebase/auth';
 import {
   AccountPinClientError,
@@ -15,6 +15,9 @@ interface AccountPinGateProps {
   status?: AccountPinClientStatus;
   onRetry: () => void;
   onSignOut: () => void;
+  googleReauthControl?: ReactNode;
+  googleReauthPending: boolean;
+  onCancelGoogleReauth: () => void;
 }
 
 function localizedError(error: unknown, operation: 'verify' | 'enroll'): string {
@@ -50,7 +53,7 @@ function localizedError(error: unknown, operation: 'verify' | 'enroll'): string 
   }
 }
 
-export function AccountPinGate({ user, client, state, status, onRetry, onSignOut }: AccountPinGateProps) {
+export function AccountPinGate({ user, client, state, status, onRetry, onSignOut, googleReauthControl, googleReauthPending, onCancelGoogleReauth }: AccountPinGateProps) {
   const [pin, setPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
   const [busy, setBusy] = useState(false);
@@ -90,7 +93,7 @@ export function AccountPinGate({ user, client, state, status, onRetry, onSignOut
     detail = 'Masukkan PIN akun 6–12 angka untuk membuka sesi cloud. PIN hanya dikirim ke server melalui HTTPS dan tidak disimpan aplikasi di browser.';
   } else if (state === 'enrollment-available') {
     title = 'Daftarkan PIN akun pertama';
-    detail = 'Pendaftaran hanya tersedia jika server mengonfirmasi belum ada credential. Google akan diminta re-authentication baru melalui popup; server membuat verifier scrypt dan menyimpannya pada dokumen Firestore server-only.';
+    detail = 'Pendaftaran hanya tersedia jika server mengonfirmasi belum ada credential. Isi PIN dan tekan tombol pendaftaran, lalu selesaikan verifikasi Google pada tombol yang muncul. PIN baru dikirim ke server setelah verifikasi Google berhasil; tidak ada popup Firebase atau fallback lokal.';
   } else if (state === 'enrollment-blocked') {
     title = 'PIN akun belum terdaftar';
     detail = 'Pendaftaran aman belum diaktifkan di lingkungan ini. CRM, Firestore, dan antrean tetap ditahan. Jangan masukkan PIN lokal sebagai pengganti.';
@@ -105,6 +108,14 @@ export function AccountPinGate({ user, client, state, status, onRetry, onSignOut
         <h1 className="text-xl font-bold text-[#1f1f1f]">{title}</h1>
         <p className="text-sm leading-6 text-[#6b665c]">{detail}</p>
         {state === 'checking' && <p role="status" className="text-xs text-[#6b665c]">Sesi antrean dan data CRM belum diaktifkan.</p>}
+
+        {isEnrollment && (
+          <div className="space-y-2 rounded-[8px] border border-[#eae4d5] bg-[#fcfcfa] p-3">
+            <p className="text-xs leading-5 text-[#6b665c]">Tekan tombol pendaftaran untuk memulai verifikasi Google. Saat tombol Google muncul, pastikan akun yang tampil adalah akun owner.</p>
+            {googleReauthControl}
+            {googleReauthPending && <button type="button" onClick={onCancelGoogleReauth} className="text-xs font-semibold text-[#6b665c] underline">Batalkan verifikasi Google</button>}
+          </div>
+        )}
 
         {(state === 'pin-required' || isEnrollment) && (
           <form onSubmit={handleSubmit} autoComplete="off" className="space-y-3">

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { Auth, GoogleAuthProvider, User } from 'firebase/auth';
+import type { Auth, User } from 'firebase/auth';
 import { createAccountPinClient } from './accountPinClient.ts';
 
 const SESSION_ID = 'S'.repeat(43);
@@ -8,7 +8,9 @@ const SESSION_ID = 'S'.repeat(43);
 function createHarness(options: {
   claim?: unknown;
   responses?: Array<{ status: number; body: Record<string, unknown> }>;
+  googleCredentialError?: Error;
   reauthenticationError?: Error;
+  googleIdToken?: string;
 } = {}) {
   const calls: {
     requests: Array<{ path: string; init: RequestInit }>;
@@ -32,9 +34,13 @@ function createHarness(options: {
       } as Response;
     },
     getAuth: () => ({ currentUser: null } as Auth),
-    getGoogleProvider: () => ({} as GoogleAuthProvider),
-    async reauthenticate() {
-      calls.authSteps.push('reauth-popup');
+    async getGoogleIdToken() {
+      calls.authSteps.push('gis-credential');
+      if (options.googleCredentialError) throw options.googleCredentialError;
+      return options.googleIdToken ?? 'google.id.token';
+    },
+    async reauthenticate(_user, _googleIdToken) {
+      calls.authSteps.push('reauth-credential');
       if (options.reauthenticationError) throw options.reauthenticationError;
     },
     async signInWithCustomToken(_auth, token) { calls.exchangedTokens.push(token); calls.authSteps.push('custom-token'); },
@@ -78,21 +84,29 @@ test('PIN verification sends a transient request and exchanges only the server c
   assert.equal(testHarness.calls.requests.some(({ init }) => JSON.stringify(init).includes('localStorage')), false);
 });
 
-test('enrollment completes fresh popup re-auth before sending PIN and forces a fresh ID token', async () => {
+test('enrollment completes GIS credential re-auth before sending PIN and forces a fresh ID token', async () => {
   const testHarness = createHarness({ responses: [{ status: 200, body: { customToken: 'enrollment.custom.token' } }] });
   await testHarness.client.enrollAndExchange(testHarness.user, '654321', '654321');
-  assert.deepEqual(testHarness.calls.authSteps, ['reauth-popup', 'id-token-force-refresh', 'custom-token']);
+  assert.deepEqual(testHarness.calls.authSteps, ['gis-credential', 'reauth-credential', 'id-token-force-refresh', 'custom-token']);
   assert.equal(testHarness.calls.requests[0].path, '/api/account-pin/enroll');
   assert.deepEqual(JSON.parse(String(testHarness.calls.requests[0].init.body)), { pin: '654321', confirmPin: '654321' });
   assert.deepEqual(testHarness.calls.exchangedTokens, ['enrollment.custom.token']);
 });
 
-test('failed popup re-auth blocks enrollment request and does not exchange a token', async () => {
-  const testHarness = createHarness({ reauthenticationError: Object.assign(new Error('private provider detail'), { code: 'auth/popup-blocked' }) });
+test('failed GIS credential acquisition blocks enrollment before Firebase re-auth', async () => {
+  const testHarness = createHarness({ googleCredentialError: Object.assign(new Error('private provider detail'), { code: 'auth/credential-failed' }) });
   await assert.rejects(() => testHarness.client.enrollAndExchange(testHarness.user, '654321', '654321'));
   assert.deepEqual(testHarness.calls.requests, []);
   assert.deepEqual(testHarness.calls.exchangedTokens, []);
-  assert.deepEqual(testHarness.calls.authSteps, ['reauth-popup']);
+  assert.deepEqual(testHarness.calls.authSteps, ['gis-credential']);
+});
+
+test('Firebase credential re-auth rejection blocks enrollment request and token exchange', async () => {
+  const testHarness = createHarness({ reauthenticationError: Object.assign(new Error('private provider detail'), { code: 'auth/invalid-credential' }) });
+  await assert.rejects(() => testHarness.client.enrollAndExchange(testHarness.user, '654321', '654321'));
+  assert.deepEqual(testHarness.calls.requests, []);
+  assert.deepEqual(testHarness.calls.exchangedTokens, []);
+  assert.deepEqual(testHarness.calls.authSteps, ['gis-credential', 'reauth-credential']);
 });
 
 test('API errors remain fail-closed and never exchange a token', async () => {
@@ -102,4 +116,12 @@ test('API errors remain fail-closed and never exchange a token', async () => {
     (error: unknown) => error instanceof Error && 'code' in error && error.code === 'not_found',
   );
   assert.deepEqual(testHarness.calls.exchangedTokens, []);
+});
+
+test('cancelled GIS credential blocks enrollment before re-auth or API request', async () => {
+  const testHarness = createHarness({ googleIdToken: '' });
+  await assert.rejects(() => testHarness.client.enrollAndExchange(testHarness.user, '654321', '654321'));
+  assert.deepEqual(testHarness.calls.requests, []);
+  assert.deepEqual(testHarness.calls.exchangedTokens, []);
+  assert.deepEqual(testHarness.calls.authSteps, ['gis-credential']);
 });

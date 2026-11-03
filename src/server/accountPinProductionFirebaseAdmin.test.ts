@@ -20,7 +20,7 @@ import {
   validateFirebaseIdTokenClaims,
 } from './accountPinFirebaseAdmin.ts';
 import { FirebaseIdTokenValidationError } from './accountPinVerification.ts';
-import { logAccountPinDiagnostic, markAccountPinDiagnostic } from './accountPinDiagnostics.ts';
+import { logAccountPinDiagnostic, logAccountPinRequestDiagnostic, markAccountPinDiagnostic } from './accountPinDiagnostics.ts';
 import { FIREBASE_RULES_OWNER_UID, FIREBASE_RULES_WORKSPACE_ID } from '../firebaseRulesBinding.ts';
 
 const productionEnvironment = {
@@ -521,4 +521,72 @@ test('Firebase ID token claims and auth_time failures receive distinct safe vali
     (error: unknown) => error instanceof FirebaseIdTokenValidationError
       && error.diagnosticTag === 'auth_token_auth_time_invalid',
   );
+
+  const logged: string[] = [];
+  const originalConsoleError = console.error;
+  console.error = (...values: unknown[]) => { logged.push(values.map(String).join(' ')); };
+  try {
+    for (const claims of [
+      { ...validClaims, aud: 'other-project' },
+      { ...validClaims, iss: 'https://securetoken.google.com/other-project' },
+    ]) {
+      try {
+        validateFirebaseIdTokenClaims(claims, projectId);
+      } catch (error) {
+        logAccountPinRequestDiagnostic('auth_token_claims_invalid', error);
+      }
+    }
+  } finally {
+    console.error = originalConsoleError;
+  }
+  assert.match(logged[0] ?? '', /"reason":"audience_mismatch"/);
+  assert.match(logged[1] ?? '', /"reason":"issuer_mismatch"/);
+});
+
+test('Production runtime injection keeps revocation checking enabled and rejects verifier failures fail-closed', async () => {
+  let verifyArguments: unknown[] = [];
+  const verifierError = new TypeError('malicious provider text token=PRIVATE uid=PRIVATE');
+  const validCredential = createProductionAccountPinCredential(productionEnvironment, {
+    createExternalAccountClient: () => ({ credentials: {}, async getAccessToken() { return { token: 'mock-token' }; } }),
+  });
+  const runtime = createProductionAccountPinRuntime({
+    ...productionEnvironment,
+    ACCOUNT_PIN_PEPPER: 'p'.repeat(32),
+  }, {
+    getApps: () => [],
+    createCredential: () => validCredential,
+    initializeApp: (options, name) => ({ name: name ?? '[DEFAULT]', options }) as App,
+    getAuth: () => ({
+      async verifyIdToken(...args: unknown[]) {
+        verifyArguments = args;
+        throw verifierError;
+      },
+    } as never),
+    getFirestore: () => ({ settings() {} } as never),
+  });
+
+  const response = await runtime.verify({
+    method: 'POST',
+    authorization: 'Bearer synthetic-id-token',
+    origin: 'https://arcrmapp.vercel.app',
+    host: 'arcrmapp.vercel.app',
+    forwardedProto: 'https',
+    body: { pin: '123456' },
+  });
+  assert.equal(response.statusCode, 401);
+  assert.deepEqual(verifyArguments, ['synthetic-id-token', true]);
+
+  const logged: string[] = [];
+  const originalConsoleError = console.error;
+  console.error = (...values: unknown[]) => { logged.push(values.map(String).join(' ')); };
+  try {
+    logAccountPinRequestDiagnostic('auth_token_verify_failed', verifierError);
+    logAccountPinRequestDiagnostic('auth_token_verify_failed', Object.assign(new Error('Firebase ID token has invalid signature.'), { code: 'auth/argument-error' }));
+  } finally {
+    console.error = originalConsoleError;
+  }
+  assert.equal(logged.length, 2);
+  assert.match(logged[0] ?? '', /"reason":"unknown_error"/);
+  assert.doesNotMatch(logged[0] ?? '', /malicious|PRIVATE|token=|uid=/);
+  assert.match(logged[1] ?? '', /"reason":"signature_error"/);
 });

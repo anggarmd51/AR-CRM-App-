@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import {
   GoogleAuthProvider,
   onIdTokenChanged,
-  reauthenticateWithPopup,
+  reauthenticateWithCredential,
   signInWithCustomToken,
   signInWithCredential,
   signOut,
@@ -13,7 +13,6 @@ import {
   firebaseTarget,
   getFirebaseAuth,
   getFirebaseStartupErrorMessage,
-  getGoogleProvider,
   hasWorkspaceConfiguration,
   isDesignatedOwner,
   verifyFirebaseStartup,
@@ -24,20 +23,17 @@ import { isOwnerBootstrapEnabled } from '../utils/ownerBootstrap.ts';
 import { requiresServerIssuedPinSession } from '../accountPinPolicy.ts';
 import { createAccountPinClient, type AccountPinClientStatus } from '../accountPinClient.ts';
 import { AccountPinGate } from './AccountPinGate.tsx';
+import { googleIdentityReauthBroker, type GoogleIdentityCredentialResponse } from '../googleIdentityReauthBroker.ts';
 
 const accountPinClient = createAccountPinClient({
   fetch: (...args) => fetch(...args),
   getAuth: getFirebaseAuth,
-  getGoogleProvider,
-  reauthenticate: async (user, provider) => {
-    await reauthenticateWithPopup(user, provider);
+  getGoogleIdToken: () => googleIdentityReauthBroker.begin().promise,
+  reauthenticate: async (user, googleIdToken) => {
+    await reauthenticateWithCredential(user, GoogleAuthProvider.credential(googleIdToken));
   },
   signInWithCustomToken,
 });
-
-interface GoogleIdentityCredentialResponse {
-  credential?: string;
-}
 
 interface GoogleIdentityApi {
   initialize(configuration: {
@@ -45,6 +41,7 @@ interface GoogleIdentityApi {
     callback: (response: GoogleIdentityCredentialResponse) => void;
     auto_select: boolean;
     use_fedcm_for_button: boolean;
+    nonce?: string;
   }): void;
   renderButton(parent: HTMLElement, options: {
     type: 'standard';
@@ -63,7 +60,6 @@ declare global {
 }
 
 let googleIdentityServicesPromise: Promise<GoogleIdentityApi> | undefined;
-let initializedGoogleIdentityClientId: string | undefined;
 let activeGoogleIdentityResponseHandler: ((response: GoogleIdentityCredentialResponse) => void) | undefined;
 
 function dispatchGoogleIdentityResponse(response: GoogleIdentityCredentialResponse): void {
@@ -122,6 +118,8 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
   const [sessionRevalidating, setSessionRevalidating] = useState(false);
   const [sessionCheckTrigger, setSessionCheckTrigger] = useState(0);
   const [pinRefreshTrigger, setPinRefreshTrigger] = useState(0);
+  const googleReauthNonce = useSyncExternalStore(googleIdentityReauthBroker.subscribe, googleIdentityReauthBroker.getActiveNonce, () => undefined);
+  const googleReauthPending = Boolean(googleReauthNonce);
 
   useEffect(() => {
     if (!firebaseIsConfigured) {
@@ -366,6 +364,11 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
         status={accountPinStatus}
         onRetry={() => setPinRefreshTrigger((value) => value + 1)}
         onSignOut={handleSignOut}
+        googleReauthControl={accountPinGateState === 'enrollment-available' && googleReauthNonce ? (
+          <GoogleIdentityReauthButton key={googleReauthNonce} nonce={googleReauthNonce} clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID.trim()} />
+        ) : undefined}
+        googleReauthPending={googleReauthPending}
+        onCancelGoogleReauth={() => googleIdentityReauthBroker.cancel()}
       />
     );
   }
@@ -413,15 +416,7 @@ function GoogleIdentitySignInButton({
     void loadGoogleIdentityServices().then((googleIdentity) => {
       const buttonRoot = buttonRootRef.current;
       if (!active || !buttonRoot) return;
-      if (initializedGoogleIdentityClientId !== clientId) {
-        googleIdentity.initialize({
-          client_id: clientId,
-          callback: dispatchGoogleIdentityResponse,
-          auto_select: false,
-          use_fedcm_for_button: true,
-        });
-        initializedGoogleIdentityClientId = clientId;
-      }
+      googleIdentity.initialize({ client_id: clientId, callback: dispatchGoogleIdentityResponse, auto_select: false, use_fedcm_for_button: true });
       googleIdentity.renderButton(buttonRoot, {
         type: 'standard',
         theme: 'outline',
@@ -446,6 +441,52 @@ function GoogleIdentitySignInButton({
   return (
     <div aria-busy={busy || !buttonReady} className={busy ? 'pointer-events-none opacity-60' : ''}>
       {!buttonReady && <p role="status" className="mb-2 text-center text-sm text-[#6b665c]">Menyiapkan Google Sign-In…</p>}
+      <div ref={buttonRootRef} className="w-full" />
+    </div>
+  );
+}
+
+function GoogleIdentityReauthButton({ clientId, nonce }: { clientId: string; nonce: string }) {
+  const buttonRootRef = useRef<HTMLDivElement>(null);
+  const [buttonReady, setButtonReady] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    const responseHandler = (response: GoogleIdentityCredentialResponse) => {
+      if (!active) return;
+      googleIdentityReauthBroker.handleResponse(response);
+    };
+    activeGoogleIdentityResponseHandler = responseHandler;
+
+    void loadGoogleIdentityServices().then((googleIdentity) => {
+      const buttonRoot = buttonRootRef.current;
+      if (!active || !buttonRoot || !clientId) return;
+      if (googleIdentityReauthBroker.getActiveNonce() !== nonce) return;
+      googleIdentity.initialize({ client_id: clientId, callback: dispatchGoogleIdentityResponse, auto_select: false, use_fedcm_for_button: true, nonce });
+      googleIdentity.renderButton(buttonRoot, {
+        type: 'standard',
+        theme: 'outline',
+        size: 'large',
+        text: 'signin_with',
+        shape: 'rectangular',
+        width: Math.min(400, Math.max(120, Math.floor(buttonRoot.getBoundingClientRect().width))),
+      });
+      setButtonReady(true);
+    }).catch(() => {
+      if (active) googleIdentityReauthBroker.cancel();
+    });
+
+    return () => {
+      active = false;
+      if (activeGoogleIdentityResponseHandler === responseHandler) activeGoogleIdentityResponseHandler = undefined;
+      buttonRootRef.current?.replaceChildren();
+      if (googleIdentityReauthBroker.getActiveNonce() === nonce) googleIdentityReauthBroker.cancel();
+    };
+  }, [clientId, nonce]);
+
+  return (
+    <div aria-busy={!buttonReady}>
+      {!buttonReady && <p role="status" className="text-xs text-[#6b665c]">Menyiapkan verifikasi Google…</p>}
       <div ref={buttonRootRef} className="w-full" />
     </div>
   );

@@ -108,6 +108,7 @@ test('unrecognized provider text and details remain redacted even when the code 
     uid: 'owner-private-uid',
   })), {
     tag: 'auth_token_verify_failed',
+    stage: 'auth_token_verify',
     code: 'auth/id-token-expired',
     reason: 'token_expired',
   });
@@ -115,8 +116,9 @@ test('unrecognized provider text and details remain redacted even when the code 
     code: 'auth/id-token-expired;token=secret',
   })), {
     tag: 'auth_token_verify_failed',
+    stage: 'auth_token_verify',
     code: 'unknown_error',
-    reason: 'unrecognized_firebase_auth_error',
+    reason: 'unknown_error',
   });
   assert.deepEqual(captureRequestDiagnostic('forbidden_origin_mismatch'), {
     tag: 'forbidden_origin_mismatch',
@@ -159,8 +161,11 @@ test('Firebase Admin verification logs only allowlisted codes and generic reason
     }));
     assert.deepEqual(diagnostic, {
       tag: 'auth_token_verify_failed',
+      stage: 'auth_token_verify',
       code: entry.code === 'provider-private-error' ? 'unknown_error' : entry.code,
-      reason: entry.reason,
+      reason: entry.reason === 'signing_key_not_found' ? 'signature_error'
+        : entry.reason === 'token_decode_failed' || entry.reason === 'unrecognized_firebase_auth_error'
+          ? 'unknown_error' : entry.reason,
     });
     assert.doesNotMatch(JSON.stringify(diagnostic), /ar-crm-73222|private-project|JWT_SECRET|eyJhbGci|Bearer|private-key|private provider|private-uid/);
   }
@@ -170,6 +175,41 @@ test('arbitrary non-authentication error messages remain redacted', () => {
   const diagnostic = captureDiagnostic(new Error('Unexpected private response with phone-5550100 and raw-key-ABC'));
   assert.equal(diagnostic.message, '[redacted:unrecognized_error_message]');
   assert.doesNotMatch(JSON.stringify(diagnostic), /Unexpected private response|phone-5550100|raw-key-ABC/);
+});
+
+test('token verification reasons are static, evidence-based, and redact hostile provider errors', () => {
+  const cases = [
+    ['auth/id-token-expired', 'provider text', 'token_expired'],
+    ['auth/id-token-revoked', 'provider text', 'revoked'],
+    ['auth/argument-error', 'Firebase ID token project ID does not match the configured project; secret=PRIVATE', 'project_mismatch'],
+    ['auth/argument-error', 'Firebase ID token has incorrect "aud" (audience) claim; token=PRIVATE', 'audience_mismatch'],
+    ['auth/argument-error', 'Firebase ID token has incorrect "iss" (issuer) claim; token=PRIVATE', 'issuer_mismatch'],
+    ['auth/argument-error', 'Failed to verify the signature of the Firebase ID token; key=PRIVATE', 'signature_error'],
+    ['auth/argument-error', 'Firebase ID token has incorrect "aud" (audience) claim. Make sure the ID token comes from the same Firebase project as the service account used to authenticate this SDK.', 'audience_mismatch'],
+    ['auth/argument-error', 'Firebase ID token has incorrect "iss" (issuer) claim. Make sure the ID token comes from the same Firebase project as the service account used to authenticate this SDK.', 'issuer_mismatch'],
+    ['auth/argument-error', 'Firebase ID token has invalid signature. Make sure the ID token comes from the same Firebase project as the service account used to authenticate this SDK.', 'signature_error'],
+    ['auth/internal-error', 'Make sure the ID token comes from the same Firebase project as the service account used to authenticate this SDK.', 'unknown_error'],
+    ['auth/id-token-expired', 'Firebase ID token has incorrect "aud" (audience) claim.', 'token_expired'],
+    ['auth/id-token-revoked', 'Firebase ID token has invalid signature.', 'revoked'],
+  ] as const;
+  for (const [code, message, reason] of cases) {
+    const diagnostic = captureRequestDiagnostic('auth_token_verify_failed', Object.assign(new Error(message), { code }));
+    assert.equal(diagnostic.reason, reason);
+    assert.equal(diagnostic.stage, 'auth_token_verify');
+    assert.doesNotMatch(JSON.stringify(diagnostic), /PRIVATE|configured project/);
+  }
+
+  const hostile = Object.create(null) as Record<string, unknown>;
+  Object.defineProperty(hostile, 'code', { get() { throw new Error('secret-code'); } });
+  Object.defineProperty(hostile, 'message', { get() { throw new Error('secret-message'); } });
+  const unknown = captureRequestDiagnostic('auth_token_verify_failed', hostile);
+  assert.deepEqual(unknown, {
+    tag: 'auth_token_verify_failed',
+    stage: 'auth_token_verify',
+    code: 'unknown_error',
+    reason: 'unknown_error',
+  });
+  assert.doesNotMatch(JSON.stringify(unknown), /secret/);
 });
 
 test('token claim and auth_time request diagnostics emit only fixed safe tags', () => {

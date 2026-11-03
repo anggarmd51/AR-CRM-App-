@@ -58,13 +58,14 @@ test('owner bootstrap exposes UID/email only and keeps unconfigured CRM children
   assert.doesNotMatch(authGate, /getIdToken|accessToken|refreshToken|credentialFromResult|localStorage|setDoc|addDoc|onSnapshot/);
 });
 
-test('Google web sign-in exchanges GIS credentials directly with Firebase while PIN re-auth stays popup-only', () => {
+test('Google web sign-in and PIN enrollment use GIS credentials without Firebase popup helpers', () => {
   assert.match(authGate, /https:\/\/accounts\.google\.com\/gsi\/client/);
   assert.match(authGate, /import\.meta\.env\.VITE_GOOGLE_CLIENT_ID\.trim\(\)/);
   assert.match(authGate, /GoogleAuthProvider\.credential\(googleIdToken\)/);
   assert.match(authGate, /signInWithCredential\(getFirebaseAuth\(\), firebaseCredential\)/);
-  assert.match(authGate, /reauthenticateWithPopup/);
-  assert.doesNotMatch(authGate, /signInWithPopup|signInWithRedirect|reauthenticateWithRedirect|getRedirectResult|sessionStorage|completeRedirectReauthentication/);
+  assert.match(authGate, /reauthenticateWithCredential/);
+  assert.match(authGate, /reauthenticateWithCredential\(user, GoogleAuthProvider\.credential\(googleIdToken\)\)/);
+  assert.doesNotMatch(authGate, /signInWithPopup|signInWithRedirect|reauthenticateWithPopup|reauthenticateWithRedirect|getRedirectResult|sessionStorage|completeRedirectReauthentication/);
   assert.doesNotMatch(authGate, /console\.(?:log|debug|info|warn|error)\s*\([^)]*(?:credential|token)/i);
   assert.doesNotMatch(accountPinClient, /Redirect|redirect/);
 });

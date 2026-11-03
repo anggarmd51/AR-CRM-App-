@@ -240,7 +240,10 @@ export function createProductionFirebaseAdminApp(
       || existing.options.serviceAccountId !== config.serviceAccountId
       || !existing.options.credential
       || !keylessWifCredentials.has(existing.options.credential as object)) {
-      throw new Error('Account PIN Firebase Admin app is not bound to the approved keyless Production configuration.');
+      const error = new Error('Account PIN Firebase Admin app is not bound to the approved keyless Production configuration.');
+      markAccountPinDiagnostic(error, 'firebase_admin_app', undefined,
+        existing.options.projectId !== config.projectId ? 'project_mismatch' : undefined);
+      throw error;
     }
     return existing;
   }
@@ -313,8 +316,15 @@ export function validateFirebaseIdTokenClaims(
   decoded: { aud: unknown; iss: unknown; auth_time: unknown; uid: string; pinSessionId?: unknown },
   projectId: string,
 ): VerifiedFirebaseIdentity {
-  if (decoded.aud !== projectId || decoded.iss !== `https://securetoken.google.com/${projectId}`) {
-    throw new FirebaseIdTokenValidationError('auth_token_claims_invalid');
+  if (decoded.aud !== projectId) {
+    const error = new FirebaseIdTokenValidationError('auth_token_claims_invalid');
+    markAccountPinDiagnostic(error, 'auth_token_verify', undefined, 'audience_mismatch');
+    throw error;
+  }
+  if (decoded.iss !== `https://securetoken.google.com/${projectId}`) {
+    const error = new FirebaseIdTokenValidationError('auth_token_claims_invalid');
+    markAccountPinDiagnostic(error, 'auth_token_verify', undefined, 'issuer_mismatch');
+    throw error;
   }
   if (typeof decoded.auth_time !== 'number' || !Number.isInteger(decoded.auth_time)) {
     throw new FirebaseIdTokenValidationError('auth_token_auth_time_invalid');
@@ -336,6 +346,11 @@ function createAccountPinRuntime(
   onRequestDiagnostic?: PinVerificationDependencies['onRequestDiagnostic'],
   adminDependencies: ProductionAdminDependencies = {},
 ): AccountPinRuntime {
+  if (app.options.projectId !== projectId) {
+    const error = new Error('Account PIN Firebase Admin app is bound to the wrong project.');
+    markAccountPinDiagnostic(error, 'firebase_admin_app', undefined, 'project_mismatch');
+    throw error;
+  }
   let auth: ReturnType<typeof getAuth>;
   let firestore: ReturnType<typeof getFirestore>;
   try {
@@ -360,8 +375,15 @@ function createAccountPinRuntime(
   const dependencies: PinVerificationDependencies = {
     ownerUid,
     async verifyFirebaseIdToken(idToken) {
-      const decoded = await auth.verifyIdToken(idToken, true);
-      return validateFirebaseIdTokenClaims(decoded, projectId);
+      try {
+        // Keep revocation checking enabled; the catch only annotates the same
+        // error later emitted once by the existing request diagnostic hook.
+        const decoded = await auth.verifyIdToken(idToken, true);
+        return validateFirebaseIdTokenClaims(decoded, projectId);
+      } catch (error) {
+        markAccountPinDiagnostic(error, 'auth_token_verify');
+        throw error;
+      }
     },
     credentials: store,
     verifyAccountPin: (pin, verifier) => verifyAccountPinVerifier(pin, verifier, pepper),

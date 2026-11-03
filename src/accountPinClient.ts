@@ -1,4 +1,7 @@
-import type { Auth, GoogleAuthProvider, User } from 'firebase/auth';
+import {
+  type Auth,
+  type User,
+} from 'firebase/auth';
 
 export interface AccountPinClientStatus {
   credentialRegistered: boolean;
@@ -17,8 +20,8 @@ export class AccountPinClientError extends Error {
 export interface AccountPinClientDependencies {
   fetch: typeof fetch;
   getAuth(): Auth | Promise<Auth>;
-  getGoogleProvider(): GoogleAuthProvider | Promise<GoogleAuthProvider>;
-  reauthenticate(user: User, provider: GoogleAuthProvider): Promise<void>;
+  getGoogleIdToken(): Promise<string>;
+  reauthenticate(user: User, googleIdToken: string): Promise<void>;
   signInWithCustomToken(auth: Auth, token: string): Promise<unknown>;
 }
 
@@ -99,7 +102,9 @@ export function createAccountPinClient(dependencies: AccountPinClientDependencie
       await exchangeCustomToken(user, '/api/account-pin/verify', { pin });
     },
     async enrollAndExchange(user: User, pin: string, confirmPin: string): Promise<void> {
-      await dependencies.reauthenticate(user, await dependencies.getGoogleProvider());
+      const googleIdToken = await dependencies.getGoogleIdToken();
+      if (!googleIdToken) throw new AccountPinClientError('reauthentication_required', 'Google re-authentication was cancelled.');
+      await dependencies.reauthenticate(user, googleIdToken);
       await exchangeCustomToken(user, '/api/account-pin/enroll', { pin, confirmPin }, true);
     },
   };
