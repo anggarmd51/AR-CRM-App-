@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
-import { ExternalLink, HardDrive, Search, Sparkles, ArrowDownToLine } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { Check, Copy, Linkedin, Mail, Plus, Search, Sparkles, UsersRound } from 'lucide-react';
 import { getFirebaseAuth } from '../firebase.ts';
-import { readExistingLocalProspectBackup } from '../utils/localProspectDirectory.ts';
 import {
-  buildLinkedInPeopleSearchUrl,
+  MAX_PROSPECT_QUERY_LENGTH,
+  buildLinkedInPeopleSearchDeepLink,
   parseProspectResearchResponse,
   validateProspectQuery,
   type ProspectResearchResult,
@@ -13,21 +13,36 @@ interface GlobalLeadsViewProps {
   onSaveToPipeline: (companyNameDraft: string) => void;
 }
 
-const inputClassName = 'w-full rounded-[8px] border border-[#1f1f1f]/35 bg-white px-3 py-3 text-sm text-[#1f1f1f] placeholder:text-[#8b8579] focus:border-[#ff4800] focus:outline-none focus:ring-2 focus:ring-[#ff4800]/20';
+const QUICK_FILTERS = ['C-Level', 'IT', 'HR', 'Finance', 'Procurement'] as const;
 
 export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({ onSaveToPipeline }) => {
   const [query, setQuery] = useState('');
+  const [selectedFilters, setSelectedFilters] = useState<string[]>([]);
   const [result, setResult] = useState<ProspectResearchResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isResearching, setIsResearching] = useState(false);
-  const [hasLegacyBackup, setHasLegacyBackup] = useState(() => readExistingLocalProspectBackup() !== null);
-  const linkedInUrl = query.trim() ? buildLinkedInPeopleSearchUrl(query) : undefined;
+  const [copiedDorks, setCopiedDorks] = useState(false);
+  const searchQuery = useMemo(
+    () => [query.trim(), ...selectedFilters].filter(Boolean).join(' ').trim(),
+    [query, selectedFilters],
+  );
+  const linkedInDeepLink = searchQuery.length > 0 && searchQuery.length <= MAX_PROSPECT_QUERY_LENGTH
+    ? buildLinkedInPeopleSearchDeepLink(searchQuery)
+    : undefined;
+
+  const toggleFilter = (filter: string) => {
+    setSelectedFilters((current) => current.includes(filter)
+      ? current.filter((item) => item !== filter)
+      : [...current, filter]);
+    setError(null);
+    setResult(null);
+  };
 
   const handleResearch = async () => {
     if (isResearching) return;
-    let searchQuery: string;
+    let validatedQuery: string;
     try {
-      searchQuery = validateProspectQuery(query);
+      validatedQuery = validateProspectQuery(searchQuery);
     } catch (validationError) {
       setError(validationError instanceof Error ? validationError.message : 'Masukkan kata pencarian.');
       setResult(null);
@@ -59,7 +74,7 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({ onSaveToPipeli
           'content-type': 'application/json',
           authorization: `Bearer ${idToken}`,
         },
-        body: JSON.stringify({ query: searchQuery }),
+        body: JSON.stringify({ query: validatedQuery }),
       });
       if (!response.ok) {
         if (response.status === 503) throw new Error('Riset AI belum diaktifkan pada environment ini.');
@@ -76,116 +91,148 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({ onSaveToPipeli
     }
   };
 
-  const handleDownloadLegacyBackup = () => {
-    const raw = readExistingLocalProspectBackup();
-    if (raw === null) {
-      setHasLegacyBackup(false);
-      return;
+  const handleCopyDorks = async () => {
+    if (!result) return;
+    try {
+      await navigator.clipboard.writeText(result.google_dorks);
+      setCopiedDorks(true);
+      window.setTimeout(() => setCopiedDorks(false), 1800);
+    } catch {
+      setError('Clipboard tidak tersedia di browser ini. Pilih dan salin teks Google Dorks secara manual.');
     }
-    const blob = new Blob([raw], { type: 'application/json;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = 'ar-crm-catatan-prospek-lokal-backup.json';
-    anchor.click();
-    URL.revokeObjectURL(url);
   };
 
+  const targetRoles = result?.target_roles
+    .split(/\r?\n/)
+    .map((role) => role.replace(/^\s*[-•]\s*/, '').trim())
+    .filter(Boolean) ?? [];
+
   return (
-    <div className="space-y-5 pb-24">
-      <header className="border-b border-[#1f1f1f]/10 pb-4">
-        <div className="flex items-center gap-2">
-          <span className="rounded-[6px] bg-[#1f1f1f] p-1 text-white">
-            <Search className="h-4 w-4 text-[#ff4800]" />
-          </span>
-          <h2 className="text-xl font-bold tracking-tight text-[#1f1f1f] font-serif-heading">Direktori Prospek</h2>
+    <div className="mx-auto max-w-5xl space-y-5 pb-24 sm:space-y-7">
+      <header className="relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-950 via-slate-900 to-slate-800 px-5 py-6 text-white shadow-sm sm:px-8 sm:py-8">
+        <div aria-hidden="true" className="absolute -right-12 -top-16 h-52 w-52 rounded-full bg-orange-500/20 blur-3xl" />
+        <div className="relative">
+          <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-orange-200">
+            <Sparkles className="h-3.5 w-3.5" /> B2B Prospecting Workspace
+          </div>
+          <h2 className="text-2xl font-bold tracking-tight sm:text-3xl">Leads Finder</h2>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">Temukan pengambil keputusan, petakan profil perusahaan, lalu lanjutkan koneksi dari satu tempat.</p>
+          <div className="mt-5 flex flex-wrap gap-2 text-[11px] font-semibold text-slate-200">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5"><Sparkles className="h-3.5 w-3.5 text-orange-300" /> AI Database & Profiling</span>
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5"><Linkedin className="h-3.5 w-3.5 text-sky-300" /> LinkedIn Deep-Link</span>
+          </div>
         </div>
-        <p className="mt-1 text-xs text-[#6b665c]">Cari perusahaan, industri, atau jabatan dalam satu langkah.</p>
       </header>
 
-      <section aria-label="Pencarian prospek" className="space-y-3 rounded-[12px] border border-[#1f1f1f]/15 bg-[#f8f5ee] p-3.5 sm:p-4">
-        <label htmlFor="prospect-search" className="block text-xs font-bold text-[#1f1f1f]">Kata pencarian</label>
-        <input
-          id="prospect-search"
-          type="search"
-          maxLength={240}
-          value={query}
-          onChange={(event) => { setQuery(event.target.value); setError(null); setResult(null); }}
-          onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void handleResearch(); } }}
-          placeholder="Nama perusahaan, industri, atau jabatan — mis. PT Sukses Makmur, Manufaktur, IT Manager"
-          className={inputClassName}
-        />
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={() => void handleResearch()}
-            disabled={!query.trim() || isResearching}
-            className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-[8px] border border-[#1f1f1f] bg-[#1f1f1f] px-2.5 py-2 text-xs font-bold text-white hover:bg-[#393939] disabled:cursor-not-allowed disabled:opacity-45 sm:text-sm"
-          >
-            <Sparkles className="h-4 w-4 shrink-0 text-[#ff4800]" />
-            <span>{isResearching ? 'Meriset…' : 'Riset Profil via AI'}</span>
-          </button>
-          <a
-            href={linkedInUrl ?? '#'}
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-disabled={!linkedInUrl}
-            onClick={(event) => { if (!linkedInUrl) event.preventDefault(); }}
-            className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-[8px] border border-[#1f1f1f]/35 bg-white px-2.5 py-2 text-center text-xs font-bold text-[#1f1f1f] hover:border-[#ff4800] aria-disabled:cursor-not-allowed aria-disabled:opacity-45 sm:text-sm"
-          >
-            <ExternalLink className="h-4 w-4 shrink-0" />
-            <span>Cari di LinkedIn</span>
-          </a>
-        </div>
-        <p className="text-[10px] leading-4 text-[#6b665c]">Riset AI mengirim kata pencarian ke provider LLM eksternal. Jangan masukkan data pribadi atau rahasia.</p>
-      </section>
+      <section aria-label="Pencarian database dan profiling AI" className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+        <div className="mx-auto max-w-3xl">
+          <div className="mb-3 text-center">
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-orange-600">AI Prospect Search</p>
+            <h3 className="mt-1 text-lg font-bold text-slate-900 sm:text-xl">Siapa yang ingin Anda temukan?</h3>
+          </div>
+          <label htmlFor="prospect-search" className="sr-only">Cari perusahaan, industri, atau jabatan</label>
+          <div className="relative">
+            <Search aria-hidden="true" className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+            <input
+              id="prospect-search"
+              type="search"
+              maxLength={MAX_PROSPECT_QUERY_LENGTH}
+              value={query}
+              onChange={(event) => { setQuery(event.target.value); setError(null); setResult(null); }}
+              onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void handleResearch(); } }}
+              placeholder="Perusahaan, industri, atau jabatan…"
+              className="min-h-14 w-full rounded-xl border border-slate-300 bg-slate-50 py-3 pl-12 pr-4 text-base text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-orange-500 focus:bg-white focus:ring-4 focus:ring-orange-100"
+            />
+          </div>
 
-      {error && <p role="alert" className="rounded-[8px] border border-[#9b2c2c]/25 bg-[#fff5f0] px-3 py-2.5 text-xs font-semibold text-[#9b2c2c]">{error}</p>}
-      {isResearching && <p role="status" aria-live="polite" className="text-xs text-[#6b665c]">Menghubungi layanan riset yang tersedia…</p>}
-
-      {result && (
-        <article className="space-y-4 rounded-[12px] border border-[#1f1f1f]/20 bg-[#fcfcfa] p-4">
-          <header className="flex items-start gap-2.5">
-            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[8px] border border-[#1f1f1f]/20 bg-[#f8f5ee]">
-              <Sparkles className="h-4 w-4 text-[#ff4800]" />
-            </span>
-            <div>
-              <h3 className="text-sm font-bold text-[#1f1f1f]">Profil prospek: {query.trim()}</h3>
-              <p className="mt-1 text-[10px] text-[#9b2c2c]">Saran AI — belum diverifikasi; bukan fakta kontak.</p>
+          <div className="mt-4">
+            <p className="mb-2 text-center text-[11px] font-semibold text-slate-500">Quick filters <span className="font-normal">· pilih satu atau beberapa</span></p>
+            <div className="flex flex-wrap justify-center gap-2" aria-label="Filter jabatan cepat">
+              {QUICK_FILTERS.map((filter) => {
+                const isSelected = selectedFilters.includes(filter);
+                return (
+                  <button
+                    key={filter}
+                    type="button"
+                    aria-pressed={isSelected}
+                    onClick={() => toggleFilter(filter)}
+                    className={`min-h-10 rounded-full border px-4 py-2 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2 ${isSelected ? 'border-slate-900 bg-slate-900 text-white shadow-sm' : 'border-slate-200 bg-white text-slate-600 hover:border-orange-300 hover:bg-orange-50 hover:text-slate-900'}`}
+                  >
+                    {filter}
+                  </button>
+                );
+              })}
             </div>
-          </header>
-          <section className="space-y-1">
-            <h4 className="text-[11px] font-bold text-[#6b665c]">Rekomendasi peran PIC</h4>
-            <p className="break-words text-xs leading-5 text-[#1f1f1f]">{result.target_roles}</p>
-          </section>
-          <section className="space-y-1">
-            <h4 className="text-[11px] font-bold text-[#6b665c]">Pola email generik</h4>
-            <p className="break-words text-xs leading-5 text-[#1f1f1f]">{result.email_pattern}</p>
-          </section>
-          <section className="space-y-1">
-            <h4 className="text-[11px] font-bold text-[#6b665c]">Kueri Google Dorks</h4>
-            <p className="break-words rounded-[6px] bg-[#f8f5ee] p-2 font-mono text-[11px] leading-5 text-[#1f1f1f]">{result.google_dorks}</p>
-          </section>
-          <div className="space-y-2 border-t border-[#1f1f1f]/10 pt-3">
-            <p className="text-[10px] leading-4 text-[#6b665c]">Tombol simpan membuka formulir Lead untuk ditinjau. Saran AI tidak disalin ke CRM; Firestore saat ini hanya menerima field Lead yang sudah diizinkan.</p>
+          </div>
+
+          <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <button
               type="button"
-              onClick={() => onSaveToPipeline(query.trim())}
-              className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-[8px] border border-[#1f1f1f] bg-[#ff4800] px-4 py-2 text-sm font-bold text-white hover:bg-[#e03f00]"
+              onClick={() => void handleResearch()}
+              disabled={!searchQuery || isResearching}
+              className="group flex min-h-14 items-center justify-center gap-3 rounded-xl border border-orange-600 bg-orange-500 px-4 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-orange-600 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-orange-200 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <HardDrive className="h-4 w-4" /> Simpan ke Pipeline
+              <span className="grid h-9 w-9 place-items-center rounded-lg bg-white/15"><Sparkles className="h-5 w-5" /></span>
+              <span className="text-left">{isResearching ? 'Mencari kontak…' : 'Cari Kontak (AI & Dorks)'}<span className="mt-0.5 block text-[10px] font-medium text-orange-100">Profil, jabatan, dan pola email</span></span>
             </button>
+            <a
+              href={linkedInDeepLink ?? undefined}
+              aria-disabled={!linkedInDeepLink}
+              onClick={(event) => {
+                if (!linkedInDeepLink) event.preventDefault();
+                setError(null);
+              }}
+              className="flex min-h-14 items-center justify-center gap-3 rounded-xl border border-[#0a66c2] bg-[#0a66c2] px-4 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-[#004182] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-sky-200 aria-disabled:pointer-events-none aria-disabled:opacity-50"
+            >
+              <span className="grid h-9 w-9 place-items-center rounded-lg bg-white/15"><Linkedin className="h-5 w-5" /></span>
+              <span className="text-left">Buka Aplikasi LinkedIn<span className="mt-0.5 block text-[10px] font-medium text-sky-100">Coba cari dengan kata kunci di atas</span></span>
+            </a>
           </div>
-        </article>
-      )}
+          <p className="mt-3 text-center text-[10px] leading-4 text-slate-500">AI memberi saran awal; verifikasi profil dan kontak sebelum outreach. Deep-link LinkedIn bergantung pada dukungan aplikasi di perangkat.</p>
+        </div>
+      </section>
 
-      {hasLegacyBackup && (
-        <section className="flex flex-col gap-2 rounded-[10px] border border-[#1f1f1f]/10 bg-white px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-[10px] leading-4 text-[#6b665c]">Catatan lokal lama tetap berada di browser ini; tampilan baru tidak mengubah atau menghapusnya.</p>
-          <button type="button" onClick={handleDownloadLegacyBackup} className="inline-flex min-h-9 shrink-0 items-center justify-center gap-1.5 rounded-[7px] border border-[#1f1f1f]/25 px-3 py-1.5 text-[10px] font-semibold text-[#1f1f1f] hover:border-[#ff4800]">
-            <ArrowDownToLine className="h-3.5 w-3.5" /> Unduh salinan lokal lama
-          </button>
-        </section>
+      {error && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-800">{error}</p>}
+      {isResearching && <div role="status" aria-live="polite" className="flex items-center gap-3 rounded-xl border border-orange-100 bg-orange-50 px-4 py-3 text-sm font-medium text-orange-900"><span className="h-2.5 w-2.5 animate-pulse rounded-full bg-orange-500" />Sedang menyusun profil prospek…</div>}
+
+      {result && (
+        <article className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <header className="flex items-start gap-3 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white px-4 py-4 sm:px-6">
+            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-orange-100 text-orange-700"><Sparkles className="h-5 w-5" /></span>
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-orange-700">AI prospect profile</p>
+              <h3 className="mt-1 break-words text-base font-bold text-slate-900 sm:text-lg">{searchQuery}</h3>
+              <p className="mt-1 text-xs text-slate-500">Saran AI — verifikasi sebelum digunakan.</p>
+            </div>
+          </header>
+          <div className="grid gap-4 p-4 sm:grid-cols-2 sm:p-6">
+            <section className="rounded-xl border border-slate-200 p-4">
+              <div className="mb-3 flex items-center gap-2 text-slate-700"><UsersRound className="h-4 w-4 text-orange-600" /><h4 className="text-xs font-bold uppercase tracking-wide">Key Decision Makers</h4></div>
+              <ul className="space-y-2">
+                {targetRoles.map((role, index) => <li key={`${role}-${index}`} className="flex items-start gap-2 text-sm leading-5 text-slate-700"><span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-orange-500" />{role}</li>)}
+              </ul>
+            </section>
+            <section className="rounded-xl border border-slate-200 p-4">
+              <div className="mb-3 flex items-center gap-2 text-slate-700"><Mail className="h-4 w-4 text-orange-600" /><h4 className="text-xs font-bold uppercase tracking-wide">Estimasi Pola Email</h4></div>
+              <p className="break-words rounded-lg bg-slate-50 px-3 py-2.5 text-sm leading-5 text-slate-700">{result.email_pattern}</p>
+            </section>
+            <section className="rounded-xl border border-slate-200 bg-slate-950 p-4 text-white sm:col-span-2">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2"><Search className="h-4 w-4 text-orange-300" /><h4 className="text-xs font-bold uppercase tracking-wide">Google Dorks</h4></div>
+                <button type="button" onClick={() => void handleCopyDorks()} className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-white/20 bg-white/10 px-3 text-xs font-bold text-white transition hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300">
+                  {copiedDorks ? <Check className="h-4 w-4 text-emerald-300" /> : <Copy className="h-4 w-4" />}{copiedDorks ? 'Tersalin' : '1-Click Copy'}
+                </button>
+              </div>
+              <code className="block break-words rounded-lg bg-black/30 p-3 font-mono text-xs leading-5 text-slate-200">{result.google_dorks}</code>
+            </section>
+          </div>
+          <footer className="border-t border-slate-100 bg-slate-50 px-4 py-4 sm:px-6">
+            <button type="button" onClick={() => onSaveToPipeline(query.trim())} className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-bold text-white transition hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-slate-300">
+              <Plus className="h-4 w-4" />Tambah ke Pipeline Lead
+            </button>
+            <p className="mt-2 text-center text-[10px] text-slate-500">Membuka form untuk melengkapi detail Lead sebelum disimpan.</p>
+          </footer>
+        </article>
       )}
     </div>
   );

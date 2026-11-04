@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  buildLinkedInPeopleSearchDeepLink,
   buildLinkedInPeopleSearchUrl,
   MAX_PROSPECT_QUERY_LENGTH,
   parseProspectResearchResponse,
@@ -13,6 +14,14 @@ test('LinkedIn people search URL safely encodes a flexible query', () => {
     'https://www.linkedin.com/search/results/people/?keywords=PT%20Sukses%20%26%20Makmur%20%2F%20IT%20Manager',
   );
   assert.throws(() => buildLinkedInPeopleSearchUrl('  '), /kata pencarian/i);
+});
+
+test('LinkedIn native deep link uses the linkedin scheme and safely encodes keywords', () => {
+  assert.equal(
+    buildLinkedInPeopleSearchDeepLink('PT Sukses & Makmur IT'),
+    'linkedin://search/results/people/?keywords=PT%20Sukses%20%26%20Makmur%20IT',
+  );
+  assert.throws(() => buildLinkedInPeopleSearchDeepLink('  '), /kata pencarian/i);
 });
 
 test('flexible prospect query is trimmed and length-limited', () => {

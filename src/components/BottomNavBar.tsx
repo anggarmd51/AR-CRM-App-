@@ -31,7 +31,7 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = ({
     },
     {
       id: 'leads_finder' as NavTab,
-      label: 'Prospek Lokal',
+      label: 'Leads Finder',
       icon: Compass,
       badge: null,
     },

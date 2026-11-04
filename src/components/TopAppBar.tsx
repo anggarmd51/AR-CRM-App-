@@ -24,6 +24,8 @@ interface TopAppBarProps {
   onExportCsv?: () => void;
   onExportExcel?: () => void;
   onExportSnapshot?: () => void;
+  hasLegacyProspectBackup?: boolean;
+  onDownloadLegacyBackup?: () => void;
 }
 
 export const TopAppBar: React.FC<TopAppBarProps> = ({
@@ -46,6 +48,8 @@ export const TopAppBar: React.FC<TopAppBarProps> = ({
   onExportCsv,
   onExportExcel,
   onExportSnapshot,
+  hasLegacyProspectBackup = false,
+  onDownloadLegacyBackup,
 }) => {
   const [isSyncQueueOpen, setIsSyncQueueOpen] = useState(false);
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
@@ -266,7 +270,7 @@ export const TopAppBar: React.FC<TopAppBarProps> = ({
             </button>
           )}
 
-          {(onExportCsv || onExportExcel || onExportSnapshot) && (
+          {(onExportCsv || onExportExcel || onExportSnapshot || (hasLegacyProspectBackup && onDownloadLegacyBackup)) && (
             <div className="relative">
               <button
                 ref={exportButtonRef}
@@ -290,6 +294,11 @@ export const TopAppBar: React.FC<TopAppBarProps> = ({
                   {onExportSnapshot && <>
                     <div className="my-1 border-t border-[#1f1f1f]/10" />
                     <button type="button" role="menuitem" onClick={() => { setIsExportMenuOpen(false); onExportSnapshot(); }} className="flex min-h-11 w-full items-center gap-2 rounded-[8px] px-2 text-left text-xs font-semibold hover:bg-[#fff8f3]"><Download className="h-4 w-4 text-[#ff4800]" />Snapshot lokal (.json)</button>
+                  </>}
+                  {hasLegacyProspectBackup && onDownloadLegacyBackup && <>
+                    <div className="my-1 border-t border-[#1f1f1f]/10" />
+                    <p className="px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-[#6b665c]">Data lokal lama</p>
+                    <button type="button" role="menuitem" onClick={() => { setIsExportMenuOpen(false); onDownloadLegacyBackup(); }} className="flex min-h-11 w-full items-center gap-2 rounded-[8px] px-2 text-left text-xs font-semibold hover:bg-[#fff8f3]"><Download className="h-4 w-4 text-[#ff4800]" />Unduh catatan prospek lama (.json)</button>
                   </>}
                   <p className="px-2 pb-1 text-[10px] leading-4 text-[#6b665c]">CSV dan Excel berisi Lead. Snapshot JSON lokal mencakup aktivitas/GPS dan memerlukan konfirmasi.</p>
                 </div>

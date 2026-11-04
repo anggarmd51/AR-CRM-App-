@@ -15,6 +15,7 @@ import { downloadLocalCrmExport } from './utils/exportJson.ts';
 import { SecurityVault } from './utils/securityLock.ts';
 import { CheckCircle2 } from 'lucide-react';
 import { firebaseTarget, getFirebaseAuth, workspaceId } from './firebase.ts';
+import { readExistingLocalProspectBackup } from './utils/localProspectDirectory.ts';
 import { shouldUseLocalSecurityVault } from './localSecurityPolicy.ts';
 import { createActivity, createLead, deleteLead, subscribeToActivities, subscribeToLeads, subscribeToWonDealArchives, updateLeadDetails, updateLeadStage } from './firebaseRepository.ts';
 import { OptimisticLeadStageOverlay, type LeadSnapshotState } from './utils/optimisticLeadStages.ts';
@@ -79,6 +80,7 @@ export default function App() {
   const [hasOpenedLeadDetail, setHasOpenedLeadDetail] = useState(false);
   const [hasOpenedWhatsApp, setHasOpenedWhatsApp] = useState(false);
   const [hasOpenedSecuritySettings, setHasOpenedSecuritySettings] = useState(false);
+  const [hasLegacyProspectBackup, setHasLegacyProspectBackup] = useState(() => readExistingLocalProspectBackup() !== null);
 
   // Snackbar Toast
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -566,6 +568,23 @@ export default function App() {
     }
   }, [activities, leads, snapshotCacheState, snapshotReadiness, syncQueueSnapshot.failedCount, syncQueueSnapshot.pendingCount, syncQueueSnapshot.syncingCount, showToast, wonDealArchives]);
 
+  const handleDownloadLegacyProspectBackup = useCallback(() => {
+    const raw = readExistingLocalProspectBackup();
+    if (raw === null) {
+      setHasLegacyProspectBackup(false);
+      showToast('Tidak ada catatan prospek lokal lama di browser ini.');
+      return;
+    }
+    const blob = new Blob([raw], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = 'ar-crm-catatan-prospek-lokal-backup.json';
+    anchor.click();
+    URL.revokeObjectURL(url);
+    showToast('Salinan catatan prospek lokal lama diunduh ke perangkat ini.');
+  }, [showToast]);
+
   const followUpMetrics = filterFollowUps(leads);
   const dueCount = followUpMetrics.dueToday.length + followUpMetrics.overdue.length;
   const pendingCount = syncQueueSnapshot.pendingCount + syncQueueSnapshot.syncingCount;
@@ -578,7 +597,7 @@ export default function App() {
       case 'pipeline':
         return 'Sales Pipeline';
       case 'leads_finder':
-        return 'Direktori Prospek';
+        return 'Leads Finder';
       case 'activities':
         return 'Field Activities';
       case 'analytics':
@@ -651,6 +670,8 @@ export default function App() {
           onExportCsv={handleExportCsv}
           onExportExcel={handleExportExcel}
           onExportSnapshot={handleExportSnapshot}
+          hasLegacyProspectBackup={hasLegacyProspectBackup}
+          onDownloadLegacyBackup={handleDownloadLegacyProspectBackup}
         />
 
         {/* Main Content Area */}

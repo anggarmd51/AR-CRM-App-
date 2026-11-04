@@ -317,7 +317,7 @@ export const ActivityLoggerModal: React.FC<ActivityLoggerModalProps> = ({
 
           <section className="rounded-[12px] border border-[#1f1f1f]/35 bg-[#f8f5ee] p-3 space-y-2.5">
             <div className="flex items-center gap-2 font-bold text-[#1f1f1f]"><Sparkles className="w-3.5 h-3.5 text-[#ff4800]" />Ringkasan rapat</div>
-            <p className="text-[10px] text-[#6b665c]">Fallback lokal mengekstrak maksimal tiga kalimat tanpa mengirim data atau memakai kuota. Ringkasan Gemini dibatasi lima permintaan harian per akun; Direktori Prospek Lokal tidak memakai kuota AI.</p>
+            <p className="text-[10px] text-[#6b665c]">Fallback lokal mengekstrak maksimal tiga kalimat tanpa mengirim data atau memakai kuota. Ringkasan Gemini dibatasi lima permintaan harian per akun; riset AI Leads Finder mengikuti batas penggunaan yang berlaku.</p>
             <div className="flex flex-wrap gap-2">
               <button type="button" onClick={handleLocalSummary} disabled={!notes.trim() || isSummarizing} className="rounded-[8px] border border-[#1f1f1f] bg-[#fcfcfa] px-3 py-2 font-semibold text-[#1f1f1f] disabled:opacity-50">Ringkas lokal</button>
               {aiSummarizerEnabled && <button type="button" onClick={() => void handleAiSummary()} disabled={!notes.trim() || !aiConsent || isSummarizing} className="rounded-[8px] border border-[#1f1f1f] bg-[#1f1f1f] px-3 py-2 font-semibold text-white disabled:opacity-50">{isSummarizing ? 'Memproses…' : 'Kirim ke Gemini'}</button>}

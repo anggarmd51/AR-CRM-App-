@@ -22,6 +22,12 @@ export function buildLinkedInPeopleSearchUrl(rawQuery: string): string {
   return `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(query)}`;
 }
 
+/** Best-effort native app URI; LinkedIn does not publicly guarantee this search route. */
+export function buildLinkedInPeopleSearchDeepLink(rawQuery: string): string {
+  const query = validateProspectQuery(rawQuery);
+  return `linkedin://search/results/people/?keywords=${encodeURIComponent(query)}`;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
