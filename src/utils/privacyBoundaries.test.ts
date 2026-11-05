@@ -10,6 +10,8 @@ const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
 const topAppBar = readFileSync(new URL('../components/TopAppBar.tsx', import.meta.url), 'utf8');
 const accountPinGate = readFileSync(new URL('../components/AccountPinGate.tsx', import.meta.url), 'utf8');
 const accountPinClient = readFileSync(new URL('../accountPinClient.ts', import.meta.url), 'utf8');
+const accountPinSessionUi = readFileSync(new URL('../accountPinSessionUi.ts', import.meta.url), 'utf8');
+const startupShell = readFileSync(new URL('../components/SessionStartupShell.tsx', import.meta.url), 'utf8');
 const localSecurityPolicy = readFileSync(new URL('../localSecurityPolicy.ts', import.meta.url), 'utf8');
 const firestoreRules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
 
@@ -72,10 +74,17 @@ test('Google web sign-in and PIN enrollment use GIS credentials without Firebase
 
 test('hosted CRM opens only after the signed claim and server session document are verified', () => {
   assert.match(authGate, /onIdTokenChanged/);
-  assert.match(authGate, /const status = await accountPinClient\.fetchStatus\(nextUser\)/);
-  assert.match(authGate, /if \(status\.sessionActive\) \{[\s\S]{0,250}await activateFirestoreWriteQueue\(nextUser\.uid\)/);
+  assert.match(authGate, /validatePinSessionInBackground\(/);
+  assert.match(authGate, /queueLifecycle\.activate/);
+  assert.match(authGate, /resolvePinSessionStartupView/);
+  assert.match(authGate, /if \(!ready\) return <SessionStartupShell mode="auth" \/>/);
+  assert.match(startupShell, /Data CRM dan operasi cloud tetap terkunci sampai Firebase dan server mengonfirmasi sesi/);
+  assert.doesNotMatch(startupShell, /onSnapshot|subscribeToLeads|subscribeToActivities|fetch\(/);
   assert.match(authGate, /accountPinGateState !== 'verified' \|\| sessionRevalidating/);
   assert.ok(authGate.indexOf('accountPinGateState !== \'verified\'') < authGate.indexOf('{children}'));
+  assert.match(accountPinSessionUi, /await input\.fetchStatus\(input\.user\)/);
+  assert.match(accountPinSessionUi, /if \(!input\.isCurrent\(\)\) return \{ outcome: 'stale' \}/);
+  assert.match(accountPinSessionUi, /if \(!status\.sessionActive\)/);
   assert.match(accountPinClient, /signInWithCustomToken/);
   assert.match(accountPinClient, /const sessionActive = response\.sessionActive && hasWellFormedSessionClaim/);
   assert.match(accountPinClient, /cache: 'no-store'/);

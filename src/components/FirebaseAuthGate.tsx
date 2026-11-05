@@ -22,7 +22,16 @@ import { firestoreWriteQueue } from '../utils/offlineWriteQueue.ts';
 import { isOwnerBootstrapEnabled } from '../utils/ownerBootstrap.ts';
 import { requiresServerIssuedPinSession } from '../accountPinPolicy.ts';
 import { createAccountPinClient, type AccountPinClientStatus } from '../accountPinClient.ts';
+import {
+  clearPinSessionHint,
+  createSerializedQueueLifecycle,
+  hasFreshPinSessionHint,
+  resolvePinSessionStartupView,
+  savePinSessionHint,
+  validatePinSessionInBackground,
+} from '../accountPinSessionUi.ts';
 import { AccountPinGate } from './AccountPinGate.tsx';
+import { SessionStartupShell } from './SessionStartupShell.tsx';
 import { googleIdentityReauthBroker, type GoogleIdentityCredentialResponse } from '../googleIdentityReauthBroker.ts';
 
 const accountPinClient = createAccountPinClient({
@@ -99,12 +108,6 @@ interface FirebaseAuthGateProps {
 
 type AccountPinGateState = 'checking' | 'verified' | 'pin-required' | 'enrollment-available' | 'enrollment-blocked' | 'unavailable';
 
-function nextGateState(status: AccountPinClientStatus): AccountPinGateState {
-  if (status.sessionActive) return 'verified';
-  if (status.credentialRegistered) return 'pin-required';
-  return status.enrollmentEnabled ? 'enrollment-available' : 'enrollment-blocked';
-}
-
 export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
   const [user, setUser] = useState<User | null>(null);
   const [ready, setReady] = useState(false);
@@ -116,8 +119,18 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
   const [accountPinStatus, setAccountPinStatus] = useState<AccountPinClientStatus | undefined>();
   const [sessionExpiresAt, setSessionExpiresAt] = useState<string | undefined>();
   const [sessionRevalidating, setSessionRevalidating] = useState(false);
+  const [hasFreshPinHint, setHasFreshPinHint] = useState(false);
   const [sessionCheckTrigger, setSessionCheckTrigger] = useState(0);
   const [pinRefreshTrigger, setPinRefreshTrigger] = useState(0);
+  const lastAuthUidRef = useRef<string | undefined>(undefined);
+  const queueLifecycleRef = useRef<ReturnType<typeof createSerializedQueueLifecycle> | null>(null);
+  if (!queueLifecycleRef.current) {
+    queueLifecycleRef.current = createSerializedQueueLifecycle({
+      activate: activateFirestoreWriteQueue,
+      deactivate: deactivateFirestoreWriteQueue,
+    });
+  }
+  const queueLifecycle = queueLifecycleRef.current;
   const googleReauthNonce = useSyncExternalStore(googleIdentityReauthBroker.subscribe, googleIdentityReauthBroker.getActiveNonce, () => undefined);
   const googleReauthPending = Boolean(googleReauthNonce);
 
@@ -137,6 +150,10 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
         if (!active) return;
         unsubscribe = onIdTokenChanged(getFirebaseAuth(), (nextUser) => {
           const eventGeneration = ++generation;
+          const isCurrent = () => active && eventGeneration === generation;
+          const previousUid = lastAuthUidRef.current;
+          if (previousUid && previousUid !== nextUser?.uid) clearPinSessionHint(previousUid);
+          lastAuthUidRef.current = nextUser?.uid;
           setReady(false);
           setStartupError(null);
           setAccountPinStatus(undefined);
@@ -144,44 +161,58 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
           setSessionRevalidating(false);
           if (serverPinRequired) {
             setAccountPinGateState('checking');
+            setHasFreshPinHint(nextUser && isDesignatedOwner(nextUser.uid) && hasWorkspaceConfiguration()
+              ? hasFreshPinSessionHint(nextUser.uid)
+              : false);
             deactivateFirestoreWriteQueue();
           }
-
           void (async () => {
             if (nextUser && isDesignatedOwner(nextUser.uid) && hasWorkspaceConfiguration()) {
               if (serverPinRequired) {
-                try {
-                  const status = await accountPinClient.fetchStatus(nextUser);
-                  if (!active || eventGeneration !== generation) return;
-                  setAccountPinStatus(status);
-                  if (status.sessionActive) {
-                    try {
-                      await activateFirestoreWriteQueue(nextUser.uid);
-                    } catch {
-                      deactivateFirestoreWriteQueue();
-                      if (!active || eventGeneration !== generation) return;
-                      setUser(nextUser);
-                      setStartupError('Antrean lokal tertunda tidak dapat dipulihkan dengan aman. Operasi tidak dikirim dan akses CRM ditahan; jangan hapus data situs sebelum antrean diperiksa.');
-                      setReady(true);
-                      return;
-                    }
-                    setSessionExpiresAt(status.sessionExpiresAt);
-                    setAccountPinGateState('verified');
-                  } else {
-                    deactivateFirestoreWriteQueue();
-                    setAccountPinGateState(nextGateState(status));
-                  }
-                } catch {
-                  deactivateFirestoreWriteQueue();
-                  if (!active || eventGeneration !== generation) return;
+                setUser(nextUser);
+                setReady(true);
+                await queueLifecycle.deactivate();
+                if (!isCurrent()) return;
+                const result = await validatePinSessionInBackground({
+                  user: nextUser,
+                  fetchStatus: (owner) => accountPinClient.fetchStatus(owner),
+                  activateQueue: queueLifecycle.activate,
+                  deactivateQueue: queueLifecycle.deactivate,
+                  isCurrent,
+                });
+                if (!isCurrent() || result.outcome === 'stale') return;
+                if ('status' in result) setAccountPinStatus(result.status);
+                if (result.outcome === 'verified') {
+                  setSessionExpiresAt(result.status.sessionExpiresAt);
+                  setHasFreshPinHint(savePinSessionHint(nextUser.uid, result.status.sessionExpiresAt ?? ''));
+                  setAccountPinGateState('verified');
+                } else if (result.outcome === 'pin-required'
+                  || result.outcome === 'enrollment-available'
+                  || result.outcome === 'enrollment-blocked') {
+                  clearPinSessionHint(nextUser.uid);
+                  setHasFreshPinHint(false);
+                  setSessionExpiresAt(undefined);
+                  setAccountPinGateState(result.outcome);
+                } else if (result.outcome === 'queue-unavailable') {
+                  clearPinSessionHint(nextUser.uid);
+                  setHasFreshPinHint(false);
+                  setSessionExpiresAt(undefined);
+                  setAccountPinGateState('unavailable');
+                  setStartupError('Antrean lokal tertunda tidak dapat dipulihkan dengan aman. Operasi tidak dikirim dan akses CRM ditahan; jangan hapus data situs sebelum antrean diperiksa.');
+                  return;
+                } else {
+                  clearPinSessionHint(nextUser.uid);
+                  setHasFreshPinHint(false);
+                  setSessionExpiresAt(undefined);
                   setAccountPinGateState('unavailable');
                 }
               } else {
                 try {
-                  await activateFirestoreWriteQueue(nextUser.uid);
+                  const activated = await queueLifecycle.activate(nextUser.uid, isCurrent);
+                  if (!activated || !isCurrent()) return;
                 } catch {
-                  deactivateFirestoreWriteQueue();
-                  if (!active || eventGeneration !== generation) return;
+                  await queueLifecycle.deactivate();
+                  if (!isCurrent()) return;
                   setUser(nextUser);
                   setStartupError('Antrean lokal tertunda tidak dapat dipulihkan dengan aman. Operasi tidak dikirim dan akses CRM ditahan; jangan hapus data situs sebelum antrean diperiksa.');
                   setReady(true);
@@ -189,18 +220,28 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
                 }
               }
             } else {
-              deactivateFirestoreWriteQueue();
+              await queueLifecycle.deactivate();
+              if (!isCurrent()) return;
               if (serverPinRequired) setAccountPinGateState('checking');
             }
 
-            if (!active || eventGeneration !== generation) return;
+            if (!isCurrent()) return;
             setUser(nextUser);
             setError(null);
             setReady(true);
           })();
         }, () => {
           if (!active) return;
+          generation += 1;
           deactivateFirestoreWriteQueue();
+          void queueLifecycle.deactivate();
+          clearPinSessionHint(lastAuthUidRef.current ?? '');
+          lastAuthUidRef.current = undefined;
+          setUser(null);
+          setAccountPinStatus(undefined);
+          setSessionExpiresAt(undefined);
+          setHasFreshPinHint(false);
+          if (serverPinRequired) setAccountPinGateState('unavailable');
           setError('Sesi Firebase tidak dapat diverifikasi. Silakan coba lagi.');
           setReady(true);
         });
@@ -231,37 +272,52 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
       if (checking) return;
       checking = true;
       setSessionRevalidating(true);
+      setHasFreshPinHint(hasFreshPinSessionHint(user.uid));
       deactivateFirestoreWriteQueue();
       try {
-        const status = await accountPinClient.fetchStatus(user);
+        await queueLifecycle.deactivate();
         if (!active) return;
-        setAccountPinStatus(status);
-        if (!status.sessionActive) {
-          setAccountPinGateState(nextGateState(status));
+        const isCurrent = () => active;
+        const result = await validatePinSessionInBackground({
+          user,
+          fetchStatus: (owner) => accountPinClient.fetchStatus(owner),
+          activateQueue: queueLifecycle.activate,
+          deactivateQueue: queueLifecycle.deactivate,
+          isCurrent,
+        });
+        if (!active || result.outcome === 'stale') return;
+        if ('status' in result) setAccountPinStatus(result.status);
+        if (result.outcome === 'verified') {
+          setHasFreshPinHint(savePinSessionHint(user.uid, result.status.sessionExpiresAt ?? ''));
+          setSessionExpiresAt(result.status.sessionExpiresAt);
+          setSessionRevalidating(false);
+          setSessionCheckTrigger((value) => value + 1);
+        } else if (result.outcome === 'pin-required'
+          || result.outcome === 'enrollment-available'
+          || result.outcome === 'enrollment-blocked') {
+          clearPinSessionHint(user.uid);
+          setHasFreshPinHint(false);
+          setAccountPinGateState(result.outcome);
           setSessionExpiresAt(undefined);
           setSessionRevalidating(false);
-          return;
-        }
-        try {
-          await activateFirestoreWriteQueue(user.uid);
-        } catch {
-          if (!active) return;
-          deactivateFirestoreWriteQueue();
+        } else if (result.outcome === 'queue-unavailable') {
+          clearPinSessionHint(user.uid);
+          setHasFreshPinHint(false);
+          setAccountPinGateState('unavailable');
           setStartupError('Antrean lokal tertunda tidak dapat dipulihkan dengan aman. Operasi tidak dikirim dan akses CRM ditahan; jangan hapus data situs sebelum antrean diperiksa.');
           setSessionExpiresAt(undefined);
           setSessionRevalidating(false);
-          return;
+        } else {
+          clearPinSessionHint(user.uid);
+          setHasFreshPinHint(false);
+          setAccountPinGateState('unavailable');
+          setSessionExpiresAt(undefined);
+          setSessionRevalidating(false);
         }
-        if (!active) {
-          deactivateFirestoreWriteQueue();
-          return;
-        }
-        setSessionExpiresAt(status.sessionExpiresAt);
-        setSessionRevalidating(false);
-        setSessionCheckTrigger((value) => value + 1);
       } catch {
         if (!active) return;
-        deactivateFirestoreWriteQueue();
+        clearPinSessionHint(user.uid);
+        setHasFreshPinHint(false);
         setAccountPinGateState('unavailable');
         setSessionExpiresAt(undefined);
         setSessionRevalidating(false);
@@ -316,6 +372,8 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
       );
       if (!confirmed) return;
     }
+    clearPinSessionHint(lastAuthUidRef.current ?? user?.uid ?? '');
+    setHasFreshPinHint(false);
     await signOut(getFirebaseAuth());
   }, []);
 
@@ -328,7 +386,7 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
   if (!hasWorkspaceConfiguration() && !isOwnerBootstrapEnabled(import.meta.env.DEV, window.location.hostname, window.location.protocol, firebaseTarget)) {
     return <AuthMessage title="Bootstrap owner tidak tersedia di origin ini" detail="Bootstrap identitas hanya tersedia pada development loopback. Origin lain dan build production tidak menyediakan bootstrap owner. Tidak ada akses CRM atau registrasi workspace." />;
   }
-  if (!ready) return <AuthMessage title="Memverifikasi sesi" detail="Menunggu Firebase Authentication dan, untuk hosted, sesi PIN server…" />;
+  if (!ready) return <SessionStartupShell mode="auth" />;
   if (!user) {
     const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID.trim();
     return (
@@ -353,6 +411,15 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
   }
   if (!isDesignatedOwner(user.uid)) {
     return <AuthMessage title="Akses belum diizinkan" detail="Akun Google ini bukan designated owner AR CRM. Administrator harus mengonfigurasi owner UID secara eksplisit; tidak ada first-user-wins atau fallback lokal."><SignOutButton onSignOut={handleSignOut} /></AuthMessage>;
+  }
+  const pinStartupView = resolvePinSessionStartupView({
+    gateState: accountPinGateState,
+    sessionRevalidating,
+    hasFreshHint: hasFreshPinHint,
+  });
+  if (requiresServerIssuedPinSession(firebaseTarget)
+    && (pinStartupView === 'warm-shell' || pinStartupView === 'checking-shell')) {
+    return <SessionStartupShell mode="pin" hasFreshPinHint={pinStartupView === 'warm-shell'} />;
   }
   if (requiresServerIssuedPinSession(firebaseTarget)
     && (accountPinGateState !== 'verified' || sessionRevalidating)) {
