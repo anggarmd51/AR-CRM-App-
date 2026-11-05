@@ -345,24 +345,21 @@ test('activity parent lookup is workspace-scoped and requires a valid lead schem
   await assertFails(updateDoc(doc(db, 'workspaces', workspace, 'activities', 'existing-activity'), { notes: 'cannot edit activity' }));
 });
 
-test('staging denies lead deletion while baseline behavior and Won/archive/activity constraints remain protected', async () => {
+test('lead deletion follows the loaded rules while Won/archive/activity protections remain enforced', async () => {
   const db = ownerWithActivePinSession();
   const eligible = doc(db, 'workspaces', workspace, 'leads', 'eligible-for-delete');
   await assertSucceeds(setDoc(eligible, validLead()));
-  if (rulesTarget === 'staging') {
-    await assertFails(deleteDoc(eligible));
-    await assertSucceeds(getDoc(eligible));
+  await assertSucceeds(deleteDoc(eligible));
+  assert.equal((await assertSucceeds(getDoc(eligible))).exists(), false);
 
-    const leadWithActivity = doc(db, 'workspaces', workspace, 'leads', 'lead-with-activity-cannot-delete');
-    const linkedActivity = doc(db, 'workspaces', workspace, 'activities', 'activity-on-lead-cannot-delete');
-    await assertSucceeds(setDoc(leadWithActivity, validLead()));
-    await assertSucceeds(setDoc(linkedActivity, validActivity('lead-with-activity-cannot-delete')));
-    await assertFails(deleteDoc(leadWithActivity));
-    await assertSucceeds(getDoc(leadWithActivity));
-    await assertSucceeds(getDoc(linkedActivity));
-  } else {
-    await assertSucceeds(deleteDoc(eligible));
-  }
+  const leadWithActivity = doc(db, 'workspaces', workspace, 'leads', 'lead-with-activity-cannot-delete');
+  const linkedActivity = doc(db, 'workspaces', workspace, 'activities', 'activity-on-lead-cannot-delete');
+  await assertSucceeds(setDoc(leadWithActivity, validLead()));
+  await assertSucceeds(setDoc(linkedActivity, validActivity('lead-with-activity-cannot-delete')));
+  await assertSucceeds(deleteDoc(leadWithActivity));
+  assert.equal((await assertSucceeds(getDoc(leadWithActivity))).exists(), false);
+  await assertFails(deleteDoc(linkedActivity));
+  assert.equal((await assertSucceeds(getDoc(linkedActivity))).exists(), true);
   const wonLead = doc(db, 'workspaces', workspace, 'leads', 'won-cannot-delete');
   await env.withSecurityRulesDisabled(async (context) => {
     await setDoc(doc(context.firestore(), 'workspaces', workspace, 'leads', 'won-cannot-delete'), { ...validLead(), pipeline_stage: 'Closing Won' });
