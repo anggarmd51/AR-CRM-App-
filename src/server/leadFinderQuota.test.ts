@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Firestore } from 'firebase-admin/firestore';
-import { AI_DAILY_LIMIT, reserveAiUsage } from './leadFinderQuota.ts';
+import {
+  LEAD_FINDER_DAILY_LIMIT,
+  MEETING_SUMMARY_DAILY_LIMIT,
+  reserveAiUsage,
+  type AiUsageScope,
+} from './leadFinderQuota.ts';
 
 interface Snapshot {
   exists: boolean;
@@ -35,34 +40,45 @@ function makeFakeFirestore() {
   return { firestore: firestore as unknown as Firestore, records };
 }
 
-test('shared daily AI quota is transaction-safe and resets on the next UTC day', async () => {
+test('Lead Finder daily quota is transaction-safe, allows exactly 30, and resets on the next UTC day', async () => {
   const { firestore, records } = makeFakeFirestore();
   const ownerUid = 'synthetic-owner-not-persisted';
   const dayOne = new Date('2026-10-28T08:00:00.000Z');
-  const reservations = await Promise.all(Array.from({ length: 8 }, () =>
-    reserveAiUsage(firestore, ownerUid, AI_DAILY_LIMIT, dayOne)));
-  assert.equal(reservations.filter(Boolean).length, 5);
+  const reservations = await Promise.all(Array.from({ length: 35 }, () =>
+    reserveAiUsage(firestore, ownerUid, LEAD_FINDER_DAILY_LIMIT, dayOne, 'lead-finder')));
+  assert.equal(reservations.filter(Boolean).length, LEAD_FINDER_DAILY_LIMIT);
   const dayOneRecord = [...records.values()][0];
-  assert.equal(dayOneRecord?.count, 5);
+  assert.equal(dayOneRecord?.count, LEAD_FINDER_DAILY_LIMIT);
   assert.equal(dayOneRecord?.dayKey, '2026-10-28');
   assert.equal(JSON.stringify(dayOneRecord).includes(ownerUid), false);
 
-  assert.equal(await reserveAiUsage(firestore, ownerUid, AI_DAILY_LIMIT, new Date('2026-10-29T00:01:00.000Z')), true);
+  assert.equal(await reserveAiUsage(firestore, ownerUid, LEAD_FINDER_DAILY_LIMIT, new Date('2026-10-29T00:01:00.000Z'), 'lead-finder'), true);
   assert.equal(records.size, 2);
 });
 
-test('daily quota rejects invalid limits before any Firestore access', async () => {
+test('Lead Finder and Meeting Summarizer quotas are independent', async () => {
   const { firestore, records } = makeFakeFirestore();
-  await assert.rejects(reserveAiUsage(firestore, 'owner', 0), /limit configuration/);
-  assert.equal(records.size, 0);
+  const ownerUid = 'synthetic-owner-independent-quota';
+  const now = new Date('2026-10-28T12:00:00.000Z');
+
+  for (let index = 0; index < LEAD_FINDER_DAILY_LIMIT; index += 1) {
+    assert.equal(await reserveAiUsage(firestore, ownerUid, LEAD_FINDER_DAILY_LIMIT, now, 'lead-finder'), true);
+  }
+  assert.equal(await reserveAiUsage(firestore, ownerUid, LEAD_FINDER_DAILY_LIMIT, now, 'lead-finder'), false);
+
+  for (let index = 0; index < MEETING_SUMMARY_DAILY_LIMIT; index += 1) {
+    assert.equal(await reserveAiUsage(firestore, ownerUid, MEETING_SUMMARY_DAILY_LIMIT, now, 'meeting-summary'), true);
+  }
+  assert.equal(await reserveAiUsage(firestore, ownerUid, MEETING_SUMMARY_DAILY_LIMIT, now, 'meeting-summary'), false);
+  assert.equal(records.size, 2);
+  assert.deepEqual([...records.values()].map((record) => record.count).sort((a, b) => Number(a) - Number(b)), [5, 30]);
 });
 
-test('daily quota enforces the configured five-request budget', async () => {
-  const { firestore } = makeFakeFirestore();
-  const ownerUid = 'synthetic-owner-shared-ai-budget';
-  const now = new Date('2026-10-28T12:00:00.000Z');
-  const requests = ['request-1', 'request-2', 'request-3', 'request-4', 'request-5'];
-
-  for (const _feature of requests) assert.equal(await reserveAiUsage(firestore, ownerUid, AI_DAILY_LIMIT, now), true);
-  assert.equal(await reserveAiUsage(firestore, ownerUid, AI_DAILY_LIMIT, now), false);
+test('daily quota rejects invalid limits or scopes before any Firestore access', async () => {
+  const { firestore, records } = makeFakeFirestore();
+  await assert.rejects(reserveAiUsage(firestore, 'owner', 0), /limit configuration/);
+  await assert.rejects(reserveAiUsage(firestore, 'owner', LEAD_FINDER_DAILY_LIMIT + 1), /limit configuration/);
+  await assert.rejects(reserveAiUsage(firestore, 'owner', 5, new Date(), 'unknown' as AiUsageScope), /limit configuration/);
+  await assert.rejects(reserveAiUsage(firestore, '  ', 5), /limit configuration/);
+  assert.equal(records.size, 0);
 });

@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { PinVerificationRequest } from './accountPinVerification.ts';
 import type { AccountPinRuntime } from './accountPinFirebaseAdmin.ts';
-import { AI_DAILY_LIMIT } from './leadFinderQuota.ts';
+import { MEETING_SUMMARY_DAILY_LIMIT } from './leadFinderQuota.ts';
 import { validateMeetingSummaryInput, type MeetingSummaryResult } from './meetingSummarizer.ts';
 
 export interface MeetingSummaryHttpRequest extends IncomingMessage {
@@ -72,8 +72,8 @@ export function createMeetingSummarizerHttpHandler(dependencies: {
         return;
       }
 
-      // The active server-side AI request is capped at five per owner per UTC day.
-      const permitted = await runtime.reserveAiUsage(AI_DAILY_LIMIT);
+      // Meeting summaries keep their existing five-request budget, isolated from Lead Finder.
+      const permitted = await runtime.reserveAiUsage(MEETING_SUMMARY_DAILY_LIMIT, 'meeting-summary');
       if (!permitted) {
         sendJson(response, 429, { code: 'daily_limit_reached', error: 'Batas penggunaan AI harian sudah tercapai. Coba lagi besok.' }, { 'retry-after': '3600' });
         return;

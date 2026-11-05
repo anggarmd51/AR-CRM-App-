@@ -64,6 +64,10 @@ const ROLE_LABELS: Array<{ label: string; aliases: string[] }> = [
   { label: 'Head of Sales', aliases: ['head of sales', 'sales director', 'sales manager', 'direktur penjualan'] },
   { label: 'Head of Procurement', aliases: ['head of procurement', 'procurement manager', 'purchasing manager', 'pengadaan'] },
 ];
+const DEFAULT_GOOGLE_DORK_ROLE_TERMS = [
+  'Owner', 'Founder', 'CEO', 'Director', 'Head of Sales',
+  'Business Development Manager', 'Head of Procurement', 'IT Manager', 'Finance Manager',
+] as const;
 const GENERIC_EMAIL_PATTERN = 'Dugaan format umum: nama.depan@<domain-perusahaan> — belum diverifikasi, bukan alamat email aktual.';
 
 export class ProspectingFailure extends Error {
@@ -199,10 +203,17 @@ function makeSafeResult(query: string, suggestedRoles: string): ProspectResearch
     return new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}([^\\p{L}\\p{N}]|$)`, 'iu').test(normalized);
   })).map((role) => role.label);
   const safeQuery = query.normalize('NFKC').replace(/["'\r\n\t<>]/g, ' ').replace(/\s+/g, ' ').trim();
+  const queryIncludesRole = ROLE_LABELS.some((role) => role.aliases.some((alias) => {
+    const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}([^\\p{L}\\p{N}]|$)`, 'iu').test(query);
+  }));
+  const roleFilter = queryIncludesRole
+    ? ''
+    : ` (${DEFAULT_GOOGLE_DORK_ROLE_TERMS.map((role) => `"${role}"`).join(' OR ')})`;
   return {
     target_roles: roles.length ? roles.join(', ') : 'Belum ada rekomendasi peran yang cukup spesifik; verifikasi manual.',
     email_pattern: GENERIC_EMAIL_PATTERN,
-    google_dorks: `site:linkedin.com/in "${safeQuery}"`,
+    google_dorks: `site:linkedin.com/in "${safeQuery}"${roleFilter}`,
   };
 }
 

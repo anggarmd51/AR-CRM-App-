@@ -30,6 +30,7 @@ function responseRecorder() {
 }
 function setup(overrides: Partial<Parameters<typeof createProspectingHttpHandler>[0]> = {}) {
   const calls = { auth: 0, quota: 0, profile: 0 };
+  const quotaRequests: Array<{ limit: number | undefined; scope: string | undefined }> = [];
   const handler = createProspectingHttpHandler({
     enabled: () => true,
     getRuntime: () => ({
@@ -41,13 +42,17 @@ function setup(overrides: Partial<Parameters<typeof createProspectingHttpHandler
           body: { sessionActive: value.authorization === token },
         };
       },
-      async reserveAiUsage() { calls.quota += 1; return true; },
+      async reserveAiUsage(limit, scope) {
+        calls.quota += 1;
+        quotaRequests.push({ limit, scope });
+        return true;
+      },
     }),
     async profile(query) { calls.profile += 1; return { target_roles: `roles:${query}`, email_pattern: 'generic', google_dorks: 'dorks' }; },
     environment: { VERCEL: '1' },
     ...overrides,
   });
-  return { handler, calls };
+  return { handler, calls, quotaRequests };
 }
 
 test('disabled feature flag returns stable 503 and never authenticates or calls providers', async () => {
@@ -59,8 +64,8 @@ test('disabled feature flag returns stable 503 and never authenticates or calls 
   assert.match(response.body ?? '', /feature_disabled/);
 });
 
-test('valid owner request reserves quota and returns the exact JSON result schema', async () => {
-  const { handler, calls } = setup();
+test('valid owner request reserves 30-per-day Lead Finder quota and returns the exact JSON result schema', async () => {
+  const { handler, calls, quotaRequests } = setup();
   const response = responseRecorder();
   await handler(request({ query: 'PT Example' }), response as never);
   assert.equal(response.statusCode, 200);
@@ -68,6 +73,7 @@ test('valid owner request reserves quota and returns the exact JSON result schem
     target_roles: 'roles:PT Example', email_pattern: 'generic', google_dorks: 'dorks',
   });
   assert.deepEqual(calls, { auth: 1, quota: 1, profile: 1 });
+  assert.deepEqual(quotaRequests, [{ limit: 30, scope: 'lead-finder' }]);
   assert.equal(response.headers.get('cache-control'), 'no-store, max-age=0');
 });
 

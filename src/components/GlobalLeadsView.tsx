@@ -1,9 +1,10 @@
 import React, { useMemo, useState } from 'react';
-import { Check, Copy, Linkedin, Mail, Plus, Search, Sparkles, UsersRound } from 'lucide-react';
+import { Check, Copy, ExternalLink, Linkedin, Mail, Plus, Search, Sparkles, UsersRound } from 'lucide-react';
 import { getFirebaseAuth } from '../firebase.ts';
 import {
   MAX_PROSPECT_QUERY_LENGTH,
-  buildLinkedInPeopleSearchDeepLink,
+  buildGoogleSearchUrl,
+  buildLinkedInPeopleSearchUrl,
   parseProspectResearchResponse,
   validateProspectQuery,
   type ProspectResearchResult,
@@ -26,8 +27,8 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({ onSaveToPipeli
     () => [query.trim(), ...selectedFilters].filter(Boolean).join(' ').trim(),
     [query, selectedFilters],
   );
-  const linkedInDeepLink = searchQuery.length > 0 && searchQuery.length <= MAX_PROSPECT_QUERY_LENGTH
-    ? buildLinkedInPeopleSearchDeepLink(searchQuery)
+  const linkedInSearchUrl = searchQuery.length > 0 && searchQuery.length <= MAX_PROSPECT_QUERY_LENGTH
+    ? buildLinkedInPeopleSearchUrl(searchQuery)
     : undefined;
 
   const toggleFilter = (filter: string) => {
@@ -124,30 +125,21 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({ onSaveToPipeli
 
   return (
     <div className="mx-auto max-w-5xl space-y-5 pb-24 sm:space-y-7">
-      <header className="relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-950 via-slate-900 to-slate-800 px-5 py-6 text-white shadow-sm sm:px-8 sm:py-8">
-        <div aria-hidden="true" className="absolute -right-12 -top-16 h-52 w-52 rounded-full bg-orange-500/20 blur-3xl" />
-        <div className="relative">
-          <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-orange-200">
-            <Sparkles className="h-3.5 w-3.5" /> B2B Prospecting Workspace
-          </div>
-          <h2 className="text-2xl font-bold tracking-tight sm:text-3xl">Leads Finder</h2>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">Temukan pengambil keputusan, petakan profil perusahaan, lalu lanjutkan koneksi dari satu tempat.</p>
-          <div className="mt-5 flex flex-wrap gap-2 text-[11px] font-semibold text-slate-200">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5"><Sparkles className="h-3.5 w-3.5 text-orange-300" /> AI Database & Profiling</span>
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5"><Linkedin className="h-3.5 w-3.5 text-sky-300" /> LinkedIn Deep-Link</span>
-          </div>
-        </div>
+      <header className="border-b border-[#1f1f1f] pb-4">
+        <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#ff4800]">Riset prospek B2B</p>
+        <h2 className="mt-1 text-2xl font-bold tracking-tight text-[#1f1f1f] font-serif-heading sm:text-3xl">Leads Finder</h2>
+        <p className="mt-2 max-w-2xl text-sm leading-6 text-[#6b665c]">Temukan pengambil keputusan, petakan profil perusahaan, lalu lanjutkan koneksi dari satu tempat.</p>
       </header>
 
-      <section aria-label="Pencarian database dan profiling AI" className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+      <section aria-label="Pencarian database dan profiling AI" className="rounded-[16px] border border-[#1f1f1f] bg-[#fcfcfa] p-4 shadow-sm sm:p-6">
         <div className="mx-auto max-w-3xl">
           <div className="mb-3 text-center">
-            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-orange-600">AI Prospect Search</p>
-            <h3 className="mt-1 text-lg font-bold text-slate-900 sm:text-xl">Siapa yang ingin Anda temukan?</h3>
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#ff4800]">AI Prospect Search</p>
+            <h3 className="mt-1 text-lg font-bold text-[#1f1f1f] sm:text-xl">Siapa yang ingin Anda temukan?</h3>
           </div>
           <label htmlFor="prospect-search" className="sr-only">Cari perusahaan, industri, atau jabatan</label>
           <div className="relative">
-            <Search aria-hidden="true" className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+            <Search aria-hidden="true" className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#6b665c]" />
             <input
               id="prospect-search"
               type="search"
@@ -156,12 +148,12 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({ onSaveToPipeli
               onChange={(event) => { setQuery(event.target.value); setError(null); setResult(null); }}
               onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void handleResearch(); } }}
               placeholder="Perusahaan, industri, atau jabatan…"
-              className="min-h-14 w-full rounded-xl border border-slate-300 bg-slate-50 py-3 pl-12 pr-4 text-base text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-orange-500 focus:bg-white focus:ring-4 focus:ring-orange-100"
+              className="min-h-14 w-full rounded-[8px] border border-[#1f1f1f] bg-[#f8f5ee] py-3 pl-12 pr-4 text-base text-[#1f1f1f] outline-none transition placeholder:text-[#6b665c] focus:border-[#ff4800] focus:bg-[#fcfcfa] focus:ring-4 focus:ring-[#ff4800]/15"
             />
           </div>
 
           <div className="mt-4">
-            <p className="mb-2 text-center text-[11px] font-semibold text-slate-500">Quick filters <span className="font-normal">· pilih satu atau beberapa</span></p>
+            <p className="mb-2 text-center text-[11px] font-semibold text-[#6b665c]">Quick filters <span className="font-normal">· pilih satu atau beberapa</span></p>
             <div className="flex flex-wrap justify-center gap-2" aria-label="Filter jabatan cepat">
               {QUICK_FILTERS.map((filter) => {
                 const isSelected = selectedFilters.includes(filter);
@@ -171,7 +163,7 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({ onSaveToPipeli
                     type="button"
                     aria-pressed={isSelected}
                     onClick={() => toggleFilter(filter)}
-                    className={`min-h-10 rounded-full border px-4 py-2 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2 ${isSelected ? 'border-slate-900 bg-slate-900 text-white shadow-sm' : 'border-slate-200 bg-white text-slate-600 hover:border-orange-300 hover:bg-orange-50 hover:text-slate-900'}`}
+                    className={`min-h-10 rounded-[8px] border px-4 py-2 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ff4800] focus-visible:ring-offset-2 ${isSelected ? 'border-[#1f1f1f] bg-[#1f1f1f] text-[#fcfcfa] shadow-sm' : 'border-[#1f1f1f] bg-[#fcfcfa] text-[#6b665c] hover:bg-[#f2ede4] hover:text-[#1f1f1f]'}`}
                   >
                     {filter}
                   </button>
@@ -185,75 +177,83 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({ onSaveToPipeli
               type="button"
               onClick={() => void handleResearch()}
               disabled={!searchQuery || isResearching}
-              className="group flex min-h-14 items-center justify-center gap-3 rounded-xl border border-orange-600 bg-orange-500 px-4 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-orange-600 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-orange-200 disabled:cursor-not-allowed disabled:opacity-50"
+              className="group flex min-h-14 items-center justify-center gap-3 rounded-[8px] border border-[#1f1f1f] bg-[#ff4800] px-4 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-[#e03f00] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#ff4800]/30 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <span className="grid h-9 w-9 place-items-center rounded-lg bg-white/15"><Sparkles className="h-5 w-5" /></span>
-              <span className="text-left">{isResearching ? 'Mencari kontak…' : 'Cari Kontak (AI & Dorks)'}<span className="mt-0.5 block text-[10px] font-medium text-orange-100">Profil, jabatan, dan pola email</span></span>
+              <span className="text-left">{isResearching ? 'Mencari kontak…' : 'Cari Kontak (AI & Dorks)'}<span className="mt-0.5 block text-[10px] font-medium text-white/90">Profil, jabatan, dan pola email</span></span>
             </button>
             <a
-              href={linkedInDeepLink ?? undefined}
-              aria-disabled={!linkedInDeepLink}
+              href={linkedInSearchUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-disabled={!linkedInSearchUrl}
               onClick={(event) => {
-                if (!linkedInDeepLink) event.preventDefault();
+                if (!linkedInSearchUrl) event.preventDefault();
                 setError(null);
               }}
-              className="flex min-h-14 items-center justify-center gap-3 rounded-xl border border-[#0a66c2] bg-[#0a66c2] px-4 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-[#004182] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-sky-200 aria-disabled:pointer-events-none aria-disabled:opacity-50"
+              className="flex min-h-14 items-center justify-center gap-3 rounded-[8px] border border-[#1f1f1f] bg-[#f8f5ee] px-4 py-3 text-sm font-bold text-[#1f1f1f] transition hover:bg-[#f2ede4] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#ff4800]/20 aria-disabled:pointer-events-none aria-disabled:opacity-50"
             >
-              <span className="grid h-9 w-9 place-items-center rounded-lg bg-white/15"><Linkedin className="h-5 w-5" /></span>
-              <span className="text-left">Buka Aplikasi LinkedIn<span className="mt-0.5 block text-[10px] font-medium text-sky-100">Coba cari dengan kata kunci di atas</span></span>
+              <span className="grid h-9 w-9 place-items-center rounded-[8px] bg-[#eae4d5]"><Linkedin className="h-5 w-5 text-[#0F2C59]" /></span>
+              <span className="text-left">Cari Orang di LinkedIn<span className="mt-0.5 block text-[10px] font-medium text-[#6b665c]">Membuka tab pencarian People</span></span>
             </a>
           </div>
-          <p className="mt-3 text-center text-[10px] leading-4 text-slate-500">AI memberi saran awal; verifikasi profil dan kontak sebelum outreach. Deep-link LinkedIn bergantung pada dukungan aplikasi di perangkat.</p>
+          <p className="mt-3 text-center text-[10px] leading-4 text-[#6b665c]">AI memberi saran awal; verifikasi profil dan kontak sebelum outreach. App Links LinkedIn bergantung pada konfigurasi aplikasi dan perangkat Anda.</p>
         </div>
       </section>
 
       {error && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-800">{error}</p>}
-      {isResearching && <div role="status" aria-live="polite" className="flex items-center gap-3 rounded-xl border border-orange-100 bg-orange-50 px-4 py-3 text-sm font-medium text-orange-900"><span className="h-2.5 w-2.5 animate-pulse rounded-full bg-orange-500" />Sedang menyusun profil prospek…</div>}
+      {isResearching && <div role="status" aria-live="polite" className="flex items-center gap-3 rounded-[8px] border border-[#ff4800]/30 bg-[#fff5f0] px-4 py-3 text-sm font-medium text-[#9b2c00]"><span className="h-2.5 w-2.5 animate-pulse rounded-full bg-[#ff4800]" />Sedang menyusun profil prospek…</div>}
 
       {result && (
-        <article className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <header className="flex items-start gap-3 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white px-4 py-4 sm:px-6">
-            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-orange-100 text-orange-700"><Sparkles className="h-5 w-5" /></span>
+        <article className="overflow-hidden rounded-[16px] border border-[#1f1f1f] bg-[#fcfcfa] shadow-sm">
+          <header className="flex items-start gap-3 border-b border-[#1f1f1f] bg-[#f8f5ee] px-4 py-4 sm:px-6">
+            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-[8px] bg-[#fff5f0] text-[#ff4800]"><Sparkles className="h-5 w-5" /></span>
             <div className="min-w-0 flex-1">
-              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-orange-700">AI prospect profile</p>
-              <h3 className="mt-1 break-words text-base font-bold text-slate-900 sm:text-lg">{searchQuery}</h3>
-              <p className="mt-1 text-xs text-slate-500">Saran AI — verifikasi sebelum digunakan.</p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#ff4800]">AI prospect profile</p>
+              <h3 className="mt-1 break-words text-base font-bold text-[#1f1f1f] sm:text-lg font-serif-heading">{searchQuery}</h3>
+              <p className="mt-1 text-xs text-[#6b665c]">Saran AI — verifikasi sebelum digunakan.</p>
             </div>
           </header>
           <div className="grid gap-4 p-4 sm:grid-cols-2 sm:p-6">
-            <section className="rounded-xl border border-slate-200 p-4">
-              <div className="mb-3 flex flex-wrap items-center gap-2 text-slate-700">
-                <UsersRound className="h-4 w-4 text-orange-600" />
+            <section className="rounded-[8px] border border-[#1f1f1f] bg-[#f8f5ee] p-4">
+              <div className="mb-3 flex flex-wrap items-center gap-2 text-[#1f1f1f]">
+                <UsersRound className="h-4 w-4 text-[#ff4800]" />
                 <h4 className="text-xs font-bold uppercase tracking-wide">Jabatan Kunci / PIC</h4>
-                <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-1 text-[9px] font-extrabold tracking-wide text-amber-900">[PERLU DIVERIFIKASI]</span>
+                <span className="rounded-[4px] border border-[#ff4800]/40 bg-[#fff5f0] px-2 py-1 text-[9px] font-extrabold tracking-wide text-[#9b2c00]">[PERLU DIVERIFIKASI]</span>
               </div>
               <ul className="space-y-2">
-                {targetRoles.map((role, index) => <li key={`${role}-${index}`} className="flex items-start gap-2 text-sm leading-5 text-slate-700"><span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-orange-500" />{role}</li>)}
+                {targetRoles.map((role, index) => <li key={`${role}-${index}`} className="flex items-start gap-2 text-sm leading-5 text-[#1f1f1f]"><span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[#ff4800]" />{role}</li>)}
               </ul>
             </section>
-            <section className="rounded-xl border border-slate-200 p-4">
-              <div className="mb-3 flex flex-wrap items-center gap-2 text-slate-700">
-                <Mail className="h-4 w-4 text-orange-600" />
+            <section className="rounded-[8px] border border-[#1f1f1f] bg-[#f8f5ee] p-4">
+              <div className="mb-3 flex flex-wrap items-center gap-2 text-[#1f1f1f]">
+                <Mail className="h-4 w-4 text-[#ff4800]" />
                 <h4 className="text-xs font-bold uppercase tracking-wide">Estimasi Pola Email</h4>
-                <span className="rounded-full border border-orange-300 bg-orange-50 px-2 py-1 text-[9px] font-extrabold tracking-wide text-orange-900">[ESTIMASI AI]</span>
+                <span className="rounded-[4px] border border-[#ff4800]/40 bg-[#fff5f0] px-2 py-1 text-[9px] font-extrabold tracking-wide text-[#9b2c00]">[ESTIMASI AI]</span>
               </div>
-              <p className="break-words rounded-lg bg-slate-50 px-3 py-2.5 text-sm leading-5 text-slate-700">{result.email_pattern}</p>
+              <p className="break-words rounded-[8px] border border-[#1f1f1f]/20 bg-[#fcfcfa] px-3 py-2.5 text-sm leading-5 text-[#1f1f1f]">{result.email_pattern}</p>
             </section>
-            <section className="rounded-xl border border-slate-200 bg-slate-950 p-4 text-white sm:col-span-2">
+            <section className="rounded-[8px] border border-[#1f1f1f] bg-[#f8f5ee] p-4 text-[#1f1f1f] sm:col-span-2">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2"><Search className="h-4 w-4 text-orange-300" /><h4 className="text-xs font-bold uppercase tracking-wide">Google Dorks</h4></div>
-                <button type="button" onClick={() => void handleCopyDorks()} className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-white/20 bg-white/10 px-3 text-xs font-bold text-white transition hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300">
-                  {copiedDorks ? <Check className="h-4 w-4 text-emerald-300" /> : <Copy className="h-4 w-4" />}{copiedDorks ? 'Tersalin' : '1-Click Copy'}
-                </button>
+                <div className="flex items-center gap-2"><Search className="h-4 w-4 text-[#ff4800]" /><h4 className="text-xs font-bold uppercase tracking-wide">Google Dorks</h4></div>
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={() => void handleCopyDorks()} className="inline-flex min-h-10 items-center gap-2 rounded-[8px] border border-[#1f1f1f] bg-[#fcfcfa] px-3 text-xs font-bold text-[#1f1f1f] transition hover:bg-[#f2ede4] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ff4800]">
+                    {copiedDorks ? <Check className="h-4 w-4 text-[#155e3c]" /> : <Copy className="h-4 w-4" />}{copiedDorks ? 'Tersalin' : '1-Click Copy'}
+                  </button>
+                  <a href={buildGoogleSearchUrl(result.google_dorks)} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-10 items-center gap-2 rounded-[8px] border border-[#1f1f1f] bg-[#ff4800] px-3 text-xs font-bold text-white transition hover:bg-[#e03f00] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ff4800]">
+                    <ExternalLink className="h-4 w-4" />Buka Pencarian di Google
+                  </a>
+                </div>
               </div>
-              <code className="block break-words rounded-lg bg-black/30 p-3 font-mono text-xs leading-5 text-slate-200">{result.google_dorks}</code>
+              <p className="mb-2 text-[10px] leading-4 text-[#6b665c]">Template pencarian profil profesional publik; hasil tetap perlu diverifikasi.</p>
+              <code className="block break-words rounded-[8px] border border-[#1f1f1f]/20 bg-[#fcfcfa] p-3 font-mono text-xs leading-5 text-[#1f1f1f]">{result.google_dorks}</code>
             </section>
           </div>
-          <footer className="border-t border-slate-100 bg-slate-50 px-4 py-4 sm:px-6">
-            <button type="button" onClick={() => onSaveToPipeline(query.trim())} className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-bold text-white transition hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-slate-300">
+          <footer className="border-t border-[#1f1f1f] bg-[#f8f5ee] px-4 py-4 sm:px-6">
+            <button type="button" onClick={() => onSaveToPipeline(query.trim())} className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-[8px] border border-[#1f1f1f] bg-[#ff4800] px-4 py-3 text-sm font-bold text-white transition hover:bg-[#e03f00] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#ff4800]/30">
               <Plus className="h-4 w-4" />Tambah ke Pipeline Lead
             </button>
-            <p className="mt-2 text-center text-[10px] text-slate-500">Membuka form untuk melengkapi detail Lead sebelum disimpan.</p>
+            <p className="mt-2 text-center text-[10px] text-[#6b665c]">Membuka form untuk melengkapi detail Lead sebelum disimpan.</p>
           </footer>
         </article>
       )}

@@ -47,13 +47,28 @@ test('waterfall falls from Groq 429 to DeepSeek and immediately returns validate
   assert.deepEqual(response, {
     target_roles: 'Owner / Founder, CEO / Direktur Utama, Head of Procurement',
     email_pattern: 'Dugaan format umum: nama.depan@<domain-perusahaan> — belum diverifikasi, bukan alamat email aktual.',
-    google_dorks: 'site:linkedin.com/in "PT Sukses Makmur"',
+    google_dorks: 'site:linkedin.com/in "PT Sukses Makmur" ("Owner" OR "Founder" OR "CEO" OR "Director" OR "Head of Sales" OR "Business Development Manager" OR "Head of Procurement" OR "IT Manager" OR "Finance Manager")',
   });
   assert.deepEqual(events.map((event) => [event.provider, event.result, event.reason]), [
     ['groq', 'fallback', 'rate_limit'],
     ['deepseek', 'success', 'ok'],
   ]);
   assert.doesNotMatch(JSON.stringify(response), /example\.com|gmail\.com|unsafe query/);
+});
+
+test('Google Dorks stay deterministic, target public professional profiles, and avoid generic roles when a role is explicit', async () => {
+  const response = await profileProspectWithFallback('IT Manager', {
+    environment: { GROQ_API_KEY: 'test-groq' },
+    fetchImpl: async () => openAiResponse('IT Manager'),
+  });
+  assert.equal(response.google_dorks, 'site:linkedin.com/in "IT Manager"');
+
+  const sanitized = await profileProspectWithFallback('Acme" OR site:evil.test', {
+    environment: { GROQ_API_KEY: 'test-groq' },
+    fetchImpl: async () => openAiResponse(),
+  });
+  assert.match(sanitized.google_dorks, /^site:linkedin\.com\/in "Acme OR site:evil\.test" \(/);
+  assert.doesNotMatch(sanitized.google_dorks, /" OR site:evil\.test/);
 });
 
 test('server error and timeout advance in declared provider order without retrying a provider', async () => {

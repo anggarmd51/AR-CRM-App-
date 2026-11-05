@@ -6,7 +6,7 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { FirestoreAccountPinStore } from './accountPinFirestoreStore.ts';
 import { isAccountPinEnrollmentFlagEnabled } from './accountPinEnrollmentPolicy.ts';
 import { FIREBASE_RULES_WORKSPACE_ID, firebaseOwnerBindingMatchesRules } from '../firebaseRulesBinding.ts';
-import { reserveAiUsage } from './leadFinderQuota.ts';
+import { reserveAiUsage, type AiUsageScope } from './leadFinderQuota.ts';
 import {
   logAccountPinDiagnostic,
   logAccountPinRequestDiagnostic,
@@ -58,7 +58,7 @@ export interface AccountPinRuntime {
   verify(request: PinVerificationRequest): Promise<PinVerificationResponse>;
   enroll(request: PinVerificationRequest): Promise<PinVerificationResponse>;
   status(request: PinVerificationRequest): Promise<PinVerificationResponse>;
-  reserveAiUsage(limit?: number): Promise<boolean>;
+  reserveAiUsage(limit?: number, scope?: AiUsageScope): Promise<boolean>;
   enrollmentEnabled: boolean;
 }
 
@@ -408,7 +408,8 @@ function createAccountPinRuntime(
     verify: createAccountPinVerificationService(dependencies),
     enroll: createAccountPinEnrollmentService(dependencies),
     status: createAccountPinStatusService(dependencies, enrollmentEnabled),
-    reserveAiUsage: (limit = 5) => reserveAiUsage(firestore, ownerUid, limit),
+    reserveAiUsage: (limit = 5, scope: AiUsageScope = 'lead-finder') =>
+      reserveAiUsage(firestore, ownerUid, limit, new Date(), scope),
     enrollmentEnabled,
   };
 }

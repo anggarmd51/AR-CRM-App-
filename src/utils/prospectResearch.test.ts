@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  buildLinkedInPeopleSearchDeepLink,
+  buildGoogleSearchUrl,
   buildLinkedInPeopleSearchUrl,
   MAX_PROSPECT_QUERY_LENGTH,
   parseProspectResearchResponse,
   validateProspectQuery,
 } from './prospectResearch.ts';
 
-test('LinkedIn people search URL safely encodes a flexible query', () => {
+test('LinkedIn people search URL uses HTTPS and safely encodes a flexible query', () => {
   assert.equal(
     buildLinkedInPeopleSearchUrl(' PT Sukses & Makmur / IT Manager '),
     'https://www.linkedin.com/search/results/people/?keywords=PT%20Sukses%20%26%20Makmur%20%2F%20IT%20Manager',
@@ -16,12 +16,12 @@ test('LinkedIn people search URL safely encodes a flexible query', () => {
   assert.throws(() => buildLinkedInPeopleSearchUrl('  '), /kata pencarian/i);
 });
 
-test('LinkedIn native deep link uses the linkedin scheme and safely encodes keywords', () => {
+test('Google Search URL encodes the full dork query and rejects an empty query', () => {
   assert.equal(
-    buildLinkedInPeopleSearchDeepLink('PT Sukses & Makmur IT'),
-    'linkedin://search/results/people/?keywords=PT%20Sukses%20%26%20Makmur%20IT',
+    buildGoogleSearchUrl('site:linkedin.com/in "PT Sukses & Makmur" (CEO OR Founder)'),
+    'https://www.google.com/search?q=site%3Alinkedin.com%2Fin%20%22PT%20Sukses%20%26%20Makmur%22%20(CEO%20OR%20Founder)',
   );
-  assert.throws(() => buildLinkedInPeopleSearchDeepLink('  '), /kata pencarian/i);
+  assert.throws(() => buildGoogleSearchUrl('  '), /dorks/i);
 });
 
 test('flexible prospect query is trimmed and length-limited', () => {

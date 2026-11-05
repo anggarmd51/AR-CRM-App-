@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { validateProspectQuery } from '../utils/prospectResearch.ts';
 import type { PinVerificationRequest, PinVerificationResponse } from './accountPinVerification.ts';
+import { LEAD_FINDER_DAILY_LIMIT, type AiUsageScope } from './leadFinderQuota.ts';
 import {
   profileProspectWithFallback,
   ProspectingFailure,
@@ -15,7 +16,7 @@ export interface ProspectingHttpRequest extends IncomingMessage {
 
 export interface ProspectingOwnerRuntime {
   status(request: PinVerificationRequest): Promise<PinVerificationResponse>;
-  reserveAiUsage(limit?: number): Promise<boolean>;
+  reserveAiUsage(limit?: number, scope?: AiUsageScope): Promise<boolean>;
 }
 
 export interface ProspectingHttpDependencies {
@@ -136,7 +137,7 @@ export function createProspectingHttpHandler(dependencies: ProspectingHttpDepend
 
     let quotaReserved: boolean;
     try {
-      quotaReserved = await runtime.reserveAiUsage(5);
+      quotaReserved = await runtime.reserveAiUsage(LEAD_FINDER_DAILY_LIMIT, 'lead-finder');
     } catch {
       sendJson(response, 503, { code: 'quota_unavailable', error: 'Prospecting is temporarily unavailable.' });
       return;
