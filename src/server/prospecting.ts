@@ -4,7 +4,12 @@ import {
   type ProspectResearchResult,
 } from '../utils/prospectResearch.ts';
 
-export const PROSPECTING_PROVIDER_ORDER = ['groq', 'deepseek', 'gemini', 'openrouter', 'cohere'] as const;
+export const PROSPECTING_PROVIDER_ORDER = ['groq', 'gemini', 'openrouter'] as const;
+export const PROSPECTING_FREE_MODELS = Object.freeze({
+  groq: 'openai/gpt-oss-20b',
+  gemini: 'gemini-3.8-flash',
+  openrouter: 'openrouter/free',
+} as const);
 export const PROSPECTING_PROVIDER_TIMEOUT_MS = 2_500;
 export const PROSPECTING_TOTAL_DEADLINE_MS = 7_500;
 
@@ -20,36 +25,26 @@ interface ProviderConfig {
   id: ProspectingProviderId;
   keyEnv: string;
   modelEnv: string;
-  defaultModel: string;
-  protocol: 'openai' | 'gemini' | 'cohere';
+  model: string;
+  protocol: 'openai' | 'gemini';
   endpoint: string;
 }
 
 export const PROSPECTING_PROVIDERS: readonly ProviderConfig[] = [
   {
     id: 'groq', keyEnv: 'GROQ_API_KEY', modelEnv: 'GROQ_MODEL',
-    defaultModel: 'openai/gpt-oss-20b', protocol: 'openai',
+    model: PROSPECTING_FREE_MODELS.groq, protocol: 'openai',
     endpoint: 'https://api.groq.com/openai/v1/chat/completions',
   },
   {
-    id: 'deepseek', keyEnv: 'DEEPSEEK_API_KEY', modelEnv: 'DEEPSEEK_MODEL',
-    defaultModel: 'deepseek-flash', protocol: 'openai',
-    endpoint: 'https://api.deepseek.com/chat/completions',
-  },
-  {
     id: 'gemini', keyEnv: 'GEMINI_API_KEY', modelEnv: 'GEMINI_MODEL',
-    defaultModel: 'gemini-3.8-flash', protocol: 'gemini',
+    model: PROSPECTING_FREE_MODELS.gemini, protocol: 'gemini',
     endpoint: 'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent',
   },
   {
     id: 'openrouter', keyEnv: 'OPENROUTER_API_KEY', modelEnv: 'OPENROUTER_MODEL',
-    defaultModel: 'openrouter/free', protocol: 'openai',
+    model: PROSPECTING_FREE_MODELS.openrouter, protocol: 'openai',
     endpoint: 'https://openrouter.ai/api/v1/chat/completions',
-  },
-  {
-    id: 'cohere', keyEnv: 'COHERE_API_KEY', modelEnv: 'COHERE_MODEL',
-    defaultModel: 'command-a-plus-05-2026', protocol: 'cohere',
-    endpoint: 'https://api.cohere.ai/v2/chat',
   },
 ];
 
@@ -137,15 +132,6 @@ function extractText(provider: ProviderConfig, payload: unknown): string {
     if (chunks.length) return chunks.join('');
     throw new ProviderPayloadFailure();
   }
-  const message = body.message;
-  if (!message || typeof message !== 'object' || Array.isArray(message)) throw new ProviderPayloadFailure();
-  const content = (message as Record<string, unknown>).content;
-  if (!Array.isArray(content)) throw new ProviderPayloadFailure();
-  const chunks = content.flatMap((part) => part && typeof part === 'object' && !Array.isArray(part)
-    && typeof (part as Record<string, unknown>).text === 'string'
-    ? [(part as Record<string, string>).text]
-    : []);
-  if (chunks.length) return chunks.join('');
   throw new ProviderPayloadFailure();
 }
 
@@ -170,28 +156,15 @@ function buildProviderRequest(
     };
   } else {
     headers.authorization = `Bearer ${apiKey}`;
-    if (provider.protocol === 'openai') {
-      body = {
-        model,
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: userContent },
-        ],
-        temperature: 0.2,
-        max_tokens: 600,
-      };
-    } else {
-      body = {
-        model,
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: userContent },
-        ],
-        temperature: 0.2,
-        max_tokens: 600,
-        stream: false,
-      };
-    }
+    body = {
+      model,
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: userContent },
+      ],
+      temperature: 0.2,
+      max_tokens: 600,
+    };
   }
   return { url, init: { method: 'POST', headers, body: JSON.stringify(body), signal } };
 }
@@ -223,11 +196,21 @@ function isRetryableStatus(status: number): ProviderFallbackReason | undefined {
   return undefined;
 }
 
+function assertAllowedModelOverrides(environment: Record<string, string | undefined>): void {
+  for (const provider of PROSPECTING_PROVIDERS) {
+    const configuredModel = environment[provider.modelEnv]?.trim();
+    if (configuredModel && configuredModel !== provider.model) {
+      throw new ProspectingFailure('provider_rejected');
+    }
+  }
+}
+
 export async function profileProspectWithFallback(
   rawQuery: unknown,
   options: ProspectingEngineOptions,
 ): Promise<ProspectResearchResult> {
   const query = validateProspectQuery(rawQuery);
+  assertAllowedModelOverrides(options.environment);
   const fetchImpl = options.fetchImpl ?? fetch;
   const now = options.now ?? Date.now;
   const deadline = now() + (options.deadlineMs ?? PROSPECTING_TOTAL_DEADLINE_MS);
@@ -260,8 +243,7 @@ export async function profileProspectWithFallback(
     }, timeoutMs);
 
     try {
-      const model = options.environment[provider.modelEnv]?.trim() || provider.defaultModel;
-      const request = buildProviderRequest(provider, apiKey, model, query, controller.signal);
+      const request = buildProviderRequest(provider, apiKey, provider.model, query, controller.signal);
       const response = await fetchImpl(request.url, request.init);
       if (!response.ok) {
         const fallbackReason = isRetryableStatus(response.status);

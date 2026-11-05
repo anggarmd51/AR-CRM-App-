@@ -9,22 +9,25 @@ const readyButNotConfigured = {
   PROSPECTING_AI_ENABLED: 'true',
   PROSPECTING_AI_COST_AND_DATA_REVIEWED: 'true',
   GROQ_API_KEY: 'provider-key-not-real',
-  DEEPSEEK_API_KEY: 'provider-key-not-real',
   GEMINI_API_KEY: 'provider-key-not-real',
   OPENROUTER_API_KEY: 'provider-key-not-real',
-  COHERE_API_KEY: 'provider-key-not-real',
 };
 
 test('prospecting route is disabled by default', () => {
   assert.equal(isProspectingProductionEnabled({}), false);
 });
 
-test('only explicitly reviewed Production with all five provider keys passes the configuration gate', () => {
+test('only explicitly reviewed Production with all three allowed provider keys passes the configuration gate', () => {
   assert.equal(isProspectingProductionEnabled(readyButNotConfigured), true);
-  for (const name of ['GROQ_API_KEY', 'DEEPSEEK_API_KEY', 'GEMINI_API_KEY', 'OPENROUTER_API_KEY', 'COHERE_API_KEY']) {
+  for (const name of ['GROQ_API_KEY', 'GEMINI_API_KEY', 'OPENROUTER_API_KEY']) {
     const missing = { ...readyButNotConfigured, [name]: '' };
     assert.equal(isProspectingProductionEnabled(missing), false, `${name} must be present`);
   }
+  assert.equal(isProspectingProductionEnabled({
+    ...readyButNotConfigured,
+    DEEPSEEK_API_KEY: '',
+    COHERE_API_KEY: '',
+  }), true, 'legacy provider keys are not part of the gate');
   assert.equal(isProspectingProductionEnabled({ ...readyButNotConfigured, PROSPECTING_AI_ENABLED: 'false' }), false);
   assert.equal(isProspectingProductionEnabled({ ...readyButNotConfigured, PROSPECTING_AI_COST_AND_DATA_REVIEWED: undefined }), false);
   assert.equal(isProspectingProductionEnabled({ ...readyButNotConfigured, VERCEL_ENV: 'preview' }), false);

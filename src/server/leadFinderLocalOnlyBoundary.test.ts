@@ -14,6 +14,8 @@ test('prospecting UI uses backend AI without browser API keys and keeps external
   assert.match(componentSource, /fetch\('\/api\/ai\/prospecting'/);
   assert.doesNotMatch(componentSource, /geminiApiKey|prospect-gemini-api-key|Tempel kunci/i);
   assert.doesNotMatch(componentSource, /Sampel fiktif|Data demo|storageWarning/i);
+  assert.match(componentSource, /providers_temporarily_unavailable/);
+  assert.match(componentSource, /Semua server AI sedang sibuk\. Silakan coba beberapa saat lagi\./);
   assert.match(componentSource, /Leads Finder/);
   assert.match(componentSource, /sm:grid-cols-2/);
   assert.match(componentSource, /font-serif-heading/);
@@ -39,7 +41,8 @@ test('prospecting UI uses backend AI without browser API keys and keeps external
 });
 
 test('server-side waterfall uses required order and strict output schema behind fail-closed gates', () => {
-  assert.match(engineSource, /\['groq', 'deepseek', 'gemini', 'openrouter', 'cohere'\]/);
+  assert.match(engineSource, /\['groq', 'gemini', 'openrouter'\]/);
+  assert.doesNotMatch(engineSource, /DEEPSEEK_API_KEY|COHERE_API_KEY|api\.deepseek\.com|api\.cohere\.ai/);
   assert.match(engineSource, /PROSPECTING_PROVIDER_TIMEOUT_MS = 2_500/);
   assert.match(engineSource, /PROSPECTING_TOTAL_DEADLINE_MS = 7_500/);
   assert.match(engineSource, /AbortController/);
