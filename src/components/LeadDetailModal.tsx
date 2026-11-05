@@ -11,6 +11,7 @@ import {
   Clock,
   Sparkles,
   Mail,
+  BadgeCheck,
 } from 'lucide-react';
 import { Lead, Activity, LeadCorrection, LeadScore, PipelineStage, PIPELINE_STAGES, STAGE_CONFIG } from '../types/crm.ts';
 import { formatCurrency, formatDateDisplay, formatNumber } from '../utils/crmCalculations.ts';
@@ -55,6 +56,7 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
     deal_value: 0,
     next_followup_date: '',
     lead_score: 'Unrated' as LeadScore,
+    isVerified: false,
   });
 
   const close = () => { if (!isSaving) onClose(); };
@@ -74,6 +76,7 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
         deal_value: lead.deal_value,
         next_followup_date: lead.next_followup_date,
         lead_score: lead.lead_score,
+        isVerified: lead.isVerified === true,
       });
       setIsEditing(true);
     } else {
@@ -96,6 +99,7 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
       deal_value: lead.deal_value,
       next_followup_date: lead.next_followup_date,
       lead_score: lead.lead_score,
+      isVerified: lead.isVerified === true,
     });
     setEditError(null);
     setIsEditing(true);
@@ -118,6 +122,7 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
         deal_value: Number(editValues.deal_value),
         next_followup_date: editValues.next_followup_date,
         lead_score: editValues.lead_score,
+        isVerified: editValues.isVerified,
       });
       setIsEditing(false);
     } catch (error) {
@@ -205,10 +210,17 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
                 <p className="mt-0.5 text-[11px] leading-4 text-[#6b665c]">Perubahan disimpan ke Firestore; histori aktivitas tetap dipertahankan.</p>
               </div>
               {editError && <p role="alert" className="rounded-[8px] border border-[#9b2c2c]/30 bg-white p-2 text-[11px] text-[#9b2c2c]">{editError}</p>}
+              <div className="rounded-[8px] border border-[#1f1f1f]/20 bg-white px-3 py-2.5">
+                <label htmlFor="lead-detail-is-verified" className="flex min-h-11 cursor-pointer items-center gap-2 font-semibold text-[#1f1f1f]">
+                  <input id="lead-detail-is-verified" type="checkbox" checked={editValues.isVerified} disabled={isWonArchiveLocked} onChange={(event) => setEditValues((current) => ({ ...current, isVerified: event.target.checked }))} className="h-4 w-4 accent-[#155e3c]" />
+                  <span>Kontak Terverifikasi</span>
+                </label>
+                <p className="pl-6 text-[10px] leading-4 text-[#6b665c]">Jika data kontak diubah, status kembali belum terverifikasi.</p>
+              </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 <label className="space-y-1 font-semibold text-[#1f1f1f]">
                   <span>Nama perusahaan *</span>
-                  <input required maxLength={200} disabled={isWonArchiveLocked} value={editValues.company_name} onChange={(event) => setEditValues((current) => ({ ...current, company_name: event.target.value }))} className="w-full rounded-[8px] border border-[#1f1f1f] bg-white px-3 py-2 font-normal disabled:bg-[#eae4d5]" />
+                  <input required maxLength={200} disabled={isWonArchiveLocked} value={editValues.company_name} onChange={(event) => setEditValues((current) => ({ ...current, company_name: event.target.value, isVerified: false }))} className="w-full rounded-[8px] border border-[#1f1f1f] bg-white px-3 py-2 font-normal disabled:bg-[#eae4d5]" />
                 </label>
                 <label className="space-y-1 font-semibold text-[#1f1f1f]">
                   <span>PIC / Contact Person *</span>
@@ -217,13 +229,13 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
                     maxLength={200}
                     disabled={isWonArchiveLocked}
                     value={editValues.contact_person}
-                    onChange={(event) => setEditValues((current) => ({ ...current, contact_person: event.target.value }))}
+                    onChange={(event) => setEditValues((current) => ({ ...current, contact_person: event.target.value, isVerified: false }))}
                     className="w-full rounded-[8px] border border-[#1f1f1f] bg-white px-3 py-2 font-normal"
                   />
                 </label>
                 <label className="space-y-1 font-semibold text-[#1f1f1f]">
                   <span>Email</span>
-                  <input type="email" maxLength={320} value={editValues.email} onChange={(event) => setEditValues((current) => ({ ...current, email: event.target.value }))} className="w-full rounded-[8px] border border-[#1f1f1f] bg-white px-3 py-2 font-normal" />
+                  <input type="email" maxLength={320} value={editValues.email} onChange={(event) => setEditValues((current) => ({ ...current, email: event.target.value, isVerified: false }))} className="w-full rounded-[8px] border border-[#1f1f1f] bg-white px-3 py-2 font-normal" />
                 </label>
                 <label className="space-y-1 font-semibold text-[#1f1f1f]">
                   <span>Telepon / WhatsApp</span>
@@ -232,7 +244,7 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
                     maxLength={200}
                     disabled={isWonArchiveLocked}
                     value={editValues.phone}
-                    onChange={(event) => setEditValues((current) => ({ ...current, phone: event.target.value }))}
+                    onChange={(event) => setEditValues((current) => ({ ...current, phone: event.target.value, isVerified: false }))}
                     className="w-full rounded-[8px] border border-[#1f1f1f] bg-white px-3 py-2 font-mono font-normal"
                   />
                 </label>
@@ -385,6 +397,13 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
             <div className="flex items-center justify-between text-[#6b665c]">
               <span>Contact Person:</span>
               <span className="text-[#1f1f1f] font-semibold">{lead.contact_person}</span>
+            </div>
+            <div className="flex items-center justify-between text-[#6b665c]">
+              <span>Kontak:</span>
+              <span className={`flex items-center gap-1 font-semibold ${lead.isVerified === true ? 'text-[#155e3c]' : 'text-[#6b665c]'}`}>
+                {lead.isVerified === true && <BadgeCheck aria-hidden="true" className="h-4 w-4" />}
+                {lead.isVerified === true ? 'Terverifikasi' : 'Belum terverifikasi'}
+              </span>
             </div>
             <div className="flex items-center justify-between text-[#6b665c]">
               <span>Industry:</span>

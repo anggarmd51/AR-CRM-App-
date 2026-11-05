@@ -110,6 +110,44 @@ test('malformed JSON schema fails closed and is not forwarded or retried', async
   assert.equal(calls, 1);
 });
 
+test('five rate-limited free providers fail gracefully without a paid fallback', async () => {
+  const calls: string[] = [];
+  await assert.rejects(profileProspectWithFallback('Company', {
+    environment: allKeys,
+    fetchImpl: async (input) => {
+      calls.push(String(input));
+      return new Response('{}', { status: 429 });
+    },
+  }), (error: unknown) => error instanceof ProspectingFailure
+    && error.kind === 'unavailable'
+    && error.message === 'Prospecting providers are temporarily unavailable.');
+  assert.equal(calls.length, 5);
+  assert.equal(calls.at(-1), 'https://api.cohere.ai/v2/chat');
+});
+
+test('all configured free providers get a bounded timeout attempt before graceful failure', async () => {
+  const calls: string[] = [];
+  const events: Array<{ provider: string; result: string; reason: string }> = [];
+  await assert.rejects(profileProspectWithFallback('Company', {
+    environment: allKeys,
+    deadlineMs: 300,
+    perProviderTimeoutMs: 2_500,
+    fetchImpl: async (input, init) => {
+      calls.push(String(input));
+      return await new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+      });
+    },
+    log: (event) => events.push(event),
+  }), (error: unknown) => error instanceof ProspectingFailure && error.kind === 'unavailable');
+
+  assert.equal(calls.length, 5);
+  assert.deepEqual(calls.map((url) => new URL(url).hostname), [
+    'api.groq.com', 'api.deepseek.com', 'generativelanguage.googleapis.com', 'openrouter.ai', 'api.cohere.ai',
+  ]);
+  assert.deepEqual(events.map(({ result, reason }) => [result, reason]), Array.from({ length: 5 }, () => ['fallback', 'timeout']));
+});
+
 test('missing keys never trigger external fetch', async () => {
   let calls = 0;
   await assert.rejects(profileProspectWithFallback('Manufaktur', {

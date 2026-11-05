@@ -223,7 +223,8 @@ export async function profileProspectWithFallback(
   const perProviderTimeout = options.perProviderTimeoutMs ?? PROSPECTING_PROVIDER_TIMEOUT_MS;
   let attemptedProvider = false;
 
-  for (const providerId of PROSPECTING_PROVIDER_ORDER) {
+  for (let providerIndex = 0; providerIndex < PROSPECTING_PROVIDER_ORDER.length; providerIndex += 1) {
+    const providerId = PROSPECTING_PROVIDER_ORDER[providerIndex]!;
     const provider = PROSPECTING_PROVIDERS.find((candidate) => candidate.id === providerId)!;
     const apiKey = options.environment[provider.keyEnv]?.trim();
     if (!apiKey) continue;
@@ -233,7 +234,13 @@ export async function profileProspectWithFallback(
       throw new ProspectingFailure('deadline');
     }
     attemptedProvider = true;
-    const timeoutMs = Math.min(perProviderTimeout, remaining);
+    const providersRemaining = PROSPECTING_PROVIDER_ORDER.slice(providerIndex).filter((id) => {
+      const candidate = PROSPECTING_PROVIDERS.find((item) => item.id === id)!;
+      return Boolean(options.environment[candidate.keyEnv]?.trim());
+    }).length;
+    const safetyBufferMs = Math.min(150, Math.floor(remaining / 2));
+    const fairProviderBudgetMs = Math.max(1, Math.floor((remaining - safetyBufferMs) / Math.max(1, providersRemaining)));
+    const timeoutMs = Math.min(perProviderTimeout, remaining, fairProviderBudgetMs);
     const controller = new AbortController();
     let timeoutExpired = false;
     const timer = setTimeout(() => {

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createProspectingHttpHandler } from './prospectingHttp.ts';
+import { ProspectingFailure } from './prospecting.ts';
 import type { ProspectingHttpRequest } from './prospectingHttp.ts';
 
 const token = `Bearer ${'a'.repeat(80)}`;
@@ -68,6 +69,17 @@ test('valid owner request reserves quota and returns the exact JSON result schem
   });
   assert.deepEqual(calls, { auth: 1, quota: 1, profile: 1 });
   assert.equal(response.headers.get('cache-control'), 'no-store, max-age=0');
+});
+
+test('exhausted providers return a clean retryable 503 without exposing upstream details', async () => {
+  const { handler } = setup({ profile: async () => { throw new ProspectingFailure('unavailable'); } });
+  const response = responseRecorder();
+  await handler(request({ query: 'Company' }), response as never);
+  assert.equal(response.statusCode, 503);
+  assert.deepEqual(JSON.parse(response.body ?? ''), {
+    code: 'providers_temporarily_unavailable',
+    error: 'Prospecting is temporarily unavailable. Try again later.',
+  });
 });
 
 test('same-origin HTTPS requires an exact singleton Vercel x-forwarded-proto value', async () => {

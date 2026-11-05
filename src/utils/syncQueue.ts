@@ -212,6 +212,7 @@ export class CrmSyncEngine {
         deal_value: Number(leadData.deal_value) || 0,
         next_followup_date: leadData.next_followup_date || '',
         lead_score: leadData.lead_score,
+        isVerified: leadData.isVerified === true,
       },
       timestamp: Date.now(),
       retries: 0,
@@ -378,6 +379,7 @@ export class CrmSyncEngine {
       deal_value: Number(globalLead.estimated_value) > 0 ? Number(globalLead.estimated_value) : 0,
       next_followup_date: '',
       lead_score: 'Unrated',
+      isVerified: false,
       created_at: new Date().toISOString(),
       _syncStatus: 'pending_insert',
     };

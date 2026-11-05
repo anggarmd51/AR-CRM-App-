@@ -62,6 +62,7 @@ function mapLead(id: string, data: DocumentData): Lead {
     id,
     created_at: timestampToIso(data.created_at),
     updated_at: timestampToIso(data.updated_at),
+    isVerified: data.isVerified === true,
     _syncStatus: firestoreWriteQueue.getDocumentSyncStatus(id),
   } as Lead;
 }
@@ -373,6 +374,7 @@ export async function createLead(
       deal_value: Number(lead.deal_value) || 0,
       next_followup_date: lead.next_followup_date || '',
       lead_score: lead.lead_score,
+      isVerified: lead.isVerified === true,
       ...(lead.pipeline_stage === 'Closing Won' ? { won_date: todayInJakarta() } : {}),
     },
   };

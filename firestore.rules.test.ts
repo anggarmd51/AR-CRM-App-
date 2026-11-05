@@ -292,6 +292,23 @@ test('owner identity and role cannot be changed while editable company data can 
   await assertSucceeds(updateDoc(lead, { pipeline_stage: 'Meeting', updated_at: serverTimestamp() }));
 });
 
+test('Lead verification is optional, boolean-only, and writable only through the Lead allowlist', async () => {
+  const db = ownerWithActivePinSession();
+  const verifiedLead = doc(db, 'workspaces', workspace, 'leads', 'verified-lead');
+  await assertSucceeds(setDoc(verifiedLead, { ...validLead(), isVerified: true }));
+  await assertSucceeds(updateDoc(verifiedLead, { isVerified: false, updated_at: serverTimestamp() }));
+  await assertSucceeds(updateDoc(verifiedLead, { isVerified: true, updated_at: serverTimestamp() }));
+  await assertSucceeds(setDoc(doc(db, 'workspaces', workspace, 'leads', 'legacy-lead-without-verification'), validLead()));
+
+  for (const [index, invalidValue] of ['true', 1, null, { value: true }, ['true']].entries()) {
+    await assertFails(setDoc(doc(db, 'workspaces', workspace, 'leads', `invalid-verification-${index}`), {
+      ...validLead(), isVerified: invalidValue,
+    }));
+    await assertFails(updateDoc(verifiedLead, { isVerified: invalidValue, updated_at: serverTimestamp() }));
+  }
+  await assertFails(updateDoc(verifiedLead, { isVerified: false, unknown_field: 'blocked', updated_at: serverTimestamp() }));
+});
+
 test('owner can correct only allowlisted lead details with a server timestamp', async () => {
   const db = ownerWithActivePinSession();
   const lead = doc(db, 'workspaces', workspace, 'leads', 'detail-correction-lead');

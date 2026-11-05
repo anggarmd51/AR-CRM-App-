@@ -13,6 +13,7 @@ import {
   Mail,
   Pencil,
   Trash2,
+  BadgeCheck,
 } from 'lucide-react';
 import { Lead, PipelineStage, PIPELINE_STAGES, STAGE_CONFIG } from '../types/crm.ts';
 import { formatCurrency, formatDateDisplay, formatNumber } from '../utils/crmCalculations.ts';
@@ -214,6 +215,7 @@ export const PipelineKanbanView: React.FC<PipelineKanbanViewProps> = ({
                 </div>
                 <div className="text-xs text-[#6b665c] flex items-center gap-2 truncate">
                   <span className="font-medium text-[#1f1f1f]">{lead.contact_person}</span>
+                  {lead.isVerified === true && <BadgeCheck aria-label="Kontak terverifikasi" className="h-4 w-4 shrink-0 text-[#155e3c]" />}
                   <span>•</span>
                   <span>{lead.city}</span>
                   <span>•</span>
@@ -269,12 +271,15 @@ const LeadKanbanCard: React.FC<LeadKanbanCardProps> = ({
     <div className="bg-[#fcfcfa] hover:bg-white border border-[#1f1f1f] rounded-[12px] p-3 transition-all">
       {/* Top row: Company & Score */}
       <div className="flex items-start justify-between gap-1.5 mb-1.5">
-        <h4
-          onClick={onSelect}
-          className="font-bold text-[#1f1f1f] text-xs hover:text-[#ff4800] cursor-pointer transition-colors leading-snug truncate font-serif-heading"
-        >
-          {lead.company_name}
-        </h4>
+        <div className="flex min-w-0 items-center gap-1">
+          <h4
+            onClick={onSelect}
+            className="min-w-0 flex-1 font-bold text-[#1f1f1f] text-xs hover:text-[#ff4800] cursor-pointer transition-colors leading-snug truncate font-serif-heading"
+          >
+            {lead.company_name}
+          </h4>
+          {lead.isVerified === true && <BadgeCheck aria-label="Kontak terverifikasi" className="h-4 w-4 shrink-0 text-[#155e3c]" />}
+        </div>
 
         {lead.lead_score === 'Hot' && (
           <span className="flex items-center gap-0.5 text-[9px] font-bold text-[#ff4800] bg-[#fff5f0] border border-[#ff4800]/40 px-1 py-0.2 rounded-[4px] shrink-0">

@@ -77,7 +77,18 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({ onSaveToPipeli
         body: JSON.stringify({ query: validatedQuery }),
       });
       if (!response.ok) {
-        if (response.status === 503) throw new Error('Riset AI belum diaktifkan pada environment ini.');
+        const errorPayload: unknown = await response.json().catch(() => null);
+        const errorCode = errorPayload && typeof errorPayload === 'object' && !Array.isArray(errorPayload)
+          && typeof (errorPayload as Record<string, unknown>).code === 'string'
+          ? (errorPayload as Record<string, string>).code
+          : undefined;
+        if (response.status === 503 && errorCode === 'feature_disabled') {
+          throw new Error('Riset AI belum diaktifkan pada environment ini.');
+        }
+        if (response.status === 503 && errorCode === 'providers_temporarily_unavailable') {
+          throw new Error('Semua server AI sedang sibuk. Silakan coba beberapa saat lagi.');
+        }
+        if (response.status === 503) throw new Error('Layanan riset AI sementara tidak tersedia. Coba lagi nanti.');
         if (response.status === 429) throw new Error('Batas riset harian tercapai. Coba lagi besok.');
         if (response.status === 401 || response.status === 403) throw new Error('Sesi owner tidak dapat diverifikasi. Masuk kembali lalu coba lagi.');
         throw new Error('Riset gagal sementara. Coba lagi nanti.');
@@ -85,7 +96,11 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({ onSaveToPipeli
       const payload: unknown = await response.json();
       setResult(parseProspectResearchResponse(payload));
     } catch (researchError) {
-      setError(researchError instanceof Error ? researchError.message : 'Riset gagal sementara. Coba lagi nanti.');
+      setError(researchError instanceof TypeError
+        ? 'Koneksi ke layanan riset AI terputus. Periksa koneksi lalu coba lagi.'
+        : researchError instanceof Error
+          ? researchError.message
+          : 'Riset gagal sementara. Coba lagi nanti.');
     } finally {
       setIsResearching(false);
     }
@@ -207,13 +222,21 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({ onSaveToPipeli
           </header>
           <div className="grid gap-4 p-4 sm:grid-cols-2 sm:p-6">
             <section className="rounded-xl border border-slate-200 p-4">
-              <div className="mb-3 flex items-center gap-2 text-slate-700"><UsersRound className="h-4 w-4 text-orange-600" /><h4 className="text-xs font-bold uppercase tracking-wide">Key Decision Makers</h4></div>
+              <div className="mb-3 flex flex-wrap items-center gap-2 text-slate-700">
+                <UsersRound className="h-4 w-4 text-orange-600" />
+                <h4 className="text-xs font-bold uppercase tracking-wide">Jabatan Kunci / PIC</h4>
+                <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-1 text-[9px] font-extrabold tracking-wide text-amber-900">[PERLU DIVERIFIKASI]</span>
+              </div>
               <ul className="space-y-2">
                 {targetRoles.map((role, index) => <li key={`${role}-${index}`} className="flex items-start gap-2 text-sm leading-5 text-slate-700"><span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-orange-500" />{role}</li>)}
               </ul>
             </section>
             <section className="rounded-xl border border-slate-200 p-4">
-              <div className="mb-3 flex items-center gap-2 text-slate-700"><Mail className="h-4 w-4 text-orange-600" /><h4 className="text-xs font-bold uppercase tracking-wide">Estimasi Pola Email</h4></div>
+              <div className="mb-3 flex flex-wrap items-center gap-2 text-slate-700">
+                <Mail className="h-4 w-4 text-orange-600" />
+                <h4 className="text-xs font-bold uppercase tracking-wide">Estimasi Pola Email</h4>
+                <span className="rounded-full border border-orange-300 bg-orange-50 px-2 py-1 text-[9px] font-extrabold tracking-wide text-orange-900">[ESTIMASI AI]</span>
+              </div>
               <p className="break-words rounded-lg bg-slate-50 px-3 py-2.5 text-sm leading-5 text-slate-700">{result.email_pattern}</p>
             </section>
             <section className="rounded-xl border border-slate-200 bg-slate-950 p-4 text-white sm:col-span-2">

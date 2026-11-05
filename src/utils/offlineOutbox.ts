@@ -15,6 +15,7 @@ export type DurableMutation =
         deal_value: number;
         next_followup_date: string;
         lead_score: LeadScore;
+        isVerified?: boolean;
         won_date?: string;
     };
   }
@@ -40,6 +41,7 @@ export type DurableMutation =
         deal_value?: number;
         next_followup_date?: string;
         lead_score?: LeadScore;
+        isVerified?: boolean;
       };
     }
   | {
@@ -207,7 +209,8 @@ export function allowlistedMutation(mutation: DurableMutation): DurableMutation 
         || !ALLOWED_SCORES.has(payload.lead_score as LeadScore)
         || typeof payload.deal_value !== 'number'
         || !Number.isFinite(payload.deal_value)
-        || payload.deal_value < 0) {
+        || payload.deal_value < 0
+        || (payload.isVerified !== undefined && typeof payload.isVerified !== 'boolean')) {
         throw new Error('Offline operation data failed local validation.');
       }
       return {
@@ -224,6 +227,7 @@ export function allowlistedMutation(mutation: DurableMutation): DurableMutation 
           deal_value: payload.deal_value,
           next_followup_date: assertCalendarDate(payload.next_followup_date),
           lead_score: payload.lead_score as LeadScore,
+          ...(payload.isVerified === undefined ? {} : { isVerified: payload.isVerified }),
           ...(payload.won_date === undefined ? {} : {
             won_date: (() => {
               if (payload.pipeline_stage !== 'Closing Won') throw new Error('Offline operation data failed local validation.');
@@ -263,15 +267,17 @@ export function allowlistedMutation(mutation: DurableMutation): DurableMutation 
       const dealValue = payload.deal_value;
       const nextFollowupDate = payload.next_followup_date === undefined ? undefined : assertCalendarDate(payload.next_followup_date);
       const leadScore = payload.lead_score;
+      const isVerified = payload.isVerified;
       if (dealValue !== undefined && (typeof dealValue !== 'number' || !Number.isFinite(dealValue) || dealValue < 0)) {
         throw new Error('Offline operation data failed local validation.');
       }
-      if (leadScore !== undefined && !ALLOWED_SCORES.has(leadScore as LeadScore)) {
+      if ((leadScore !== undefined && !ALLOWED_SCORES.has(leadScore as LeadScore))
+        || (isVerified !== undefined && typeof isVerified !== 'boolean')) {
         throw new Error('Offline operation data failed local validation.');
       }
       if (companyName === undefined && contactPerson === undefined && email === undefined && phone === undefined
         && address === undefined && industry === undefined && city === undefined && dealValue === undefined
-        && nextFollowupDate === undefined && leadScore === undefined) {
+        && nextFollowupDate === undefined && leadScore === undefined && isVerified === undefined) {
         throw new Error('Offline operation data failed local validation.');
       }
       return {
@@ -288,6 +294,7 @@ export function allowlistedMutation(mutation: DurableMutation): DurableMutation 
           ...(dealValue !== undefined ? { deal_value: dealValue } : {}),
           ...(nextFollowupDate !== undefined ? { next_followup_date: nextFollowupDate } : {}),
           ...(leadScore !== undefined ? { lead_score: leadScore as LeadScore } : {}),
+          ...(isVerified !== undefined ? { isVerified } : {}),
         },
       };
     }

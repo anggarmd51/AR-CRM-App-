@@ -23,6 +23,7 @@ export interface Lead {
   deal_value: number;
   next_followup_date: string;
   lead_score: LeadScore;
+  isVerified?: boolean;
   created_at?: string;
   updated_at?: string;
   _syncStatus?: 'synced' | 'pending_insert' | 'pending_update' | 'error';
@@ -30,7 +31,7 @@ export interface Lead {
 
 export type LeadCorrection = Partial<Pick<Lead,
   'company_name' | 'contact_person' | 'email' | 'phone' | 'address' | 'industry' | 'city'
-  | 'deal_value' | 'next_followup_date' | 'lead_score'
+  | 'deal_value' | 'next_followup_date' | 'lead_score' | 'isVerified'
 >>;
 
 export interface Activity {

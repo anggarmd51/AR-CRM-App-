@@ -291,6 +291,18 @@ test('offline outbox accepts only real YYYY-MM-DD calendar dates', () => {
   }
 });
 
+test('offline Lead verification accepts only an optional boolean in create payloads', () => {
+  const record = leadRecord('verified-create');
+  const payload = { ...(record.payload as Record<string, unknown>), isVerified: true };
+  const sanitized = allowlistedMutation({ kind: 'create-lead', payload } as DurableMutation);
+  assert.equal(sanitized.kind, 'create-lead');
+  if (sanitized.kind !== 'create-lead') assert.fail('Expected a create-lead mutation.');
+  assert.equal(sanitized.payload.isVerified, true);
+  assert.throws(() => allowlistedMutation({
+    kind: 'create-lead', payload: { ...payload, isVerified: 'yes' },
+  } as any), /local validation/);
+});
+
 test('offline write is persisted locally, then acknowledged after reconnect', async () => {
   const connectivity = new FakeConnectivity(false);
   const queue = new OfflineWriteQueue(connectivity);
@@ -944,6 +956,7 @@ test('lead detail correction allowlist keeps only valid editable company/contact
       deal_value: 85000000,
       next_followup_date: '2026-10-31',
       lead_score: 'Hot',
+      isVerified: true,
       ownerId: 'must-not-persist',
     },
   } as any);
@@ -960,6 +973,7 @@ test('lead detail correction allowlist keeps only valid editable company/contact
       deal_value: 85000000,
       next_followup_date: '2026-10-31',
       lead_score: 'Hot',
+      isVerified: true,
     },
   });
 
@@ -974,6 +988,7 @@ test('lead detail correction allowlist keeps only valid editable company/contact
     { lead_id: 'lead-safe', deal_value: Number.NaN },
     { lead_id: 'lead-safe', next_followup_date: 'not-a-date' },
     { lead_id: 'lead-safe', lead_score: 'Invalid' },
+    { lead_id: 'lead-safe', isVerified: 'yes' },
     { lead_id: 'lead-safe' },
   ]) {
     assert.throws(() => allowlistedMutation({ kind: 'update-lead-details', payload } as any), /local validation/);

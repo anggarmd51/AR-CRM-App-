@@ -27,6 +27,7 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
   const [dealValue, setDealValue] = useState<number>(0);
   const [nextFollowupDate, setNextFollowupDate] = useState('');
   const [leadScore, setLeadScore] = useState<LeadScore>('Unrated');
+  const [isVerified, setIsVerified] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const close = () => { if (!isSubmitting) onClose(); };
@@ -35,6 +36,7 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       setCompanyName(initialCompanyName);
+      setIsVerified(false);
       return;
     }
     setCompanyName('');
@@ -48,6 +50,7 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
     setDealValue(0);
     setNextFollowupDate('');
     setLeadScore('Unrated');
+    setIsVerified(false);
     setSubmitError(null);
   }, [initialCompanyName, isOpen]);
 
@@ -72,6 +75,7 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
         deal_value: Number(dealValue) || 0,
         next_followup_date: nextFollowupDate,
         lead_score: leadScore,
+        isVerified,
       });
       onClose();
     } catch (error) {
@@ -181,6 +185,14 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
           <div className="space-y-1">
             <label htmlFor="quick-lead-address" className="text-[#1f1f1f] font-semibold">Alamat</label>
             <textarea id="quick-lead-address" maxLength={500} rows={2} placeholder="Alamat usaha atau kantor" value={address} onChange={(event) => setAddress(event.target.value)} className="w-full resize-y bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] px-3 py-2 text-[#1f1f1f] placeholder-[#6b665c] focus:outline-none focus:bg-[#fcfcfa]" />
+          </div>
+
+          <div className="rounded-[8px] border border-[#1f1f1f]/20 bg-white px-3 py-2.5">
+            <label htmlFor="quick-lead-is-verified" className="flex min-h-11 cursor-pointer items-center gap-2 font-semibold text-[#1f1f1f]">
+              <input id="quick-lead-is-verified" type="checkbox" checked={isVerified} onChange={(event) => setIsVerified(event.target.checked)} className="h-4 w-4 accent-[#155e3c]" />
+              <span>Kontak Terverifikasi</span>
+            </label>
+            <p className="pl-6 text-[10px] leading-4 text-[#6b665c]">Centang hanya setelah kontak dikonfirmasi secara manual.</p>
           </div>
 
           {/* Industry */}
