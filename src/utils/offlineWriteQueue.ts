@@ -18,6 +18,7 @@ export interface SyncQueueOperation {
   state: SyncOperationState;
   attempts: number;
   canRetry: boolean;
+  discarding?: boolean;
   permanentFailure?: boolean;
   failedAt?: number;
   dependencyBlocked: boolean;
@@ -73,6 +74,7 @@ interface QueuedOperation<T = unknown> {
   accepted: boolean;
   persisted: boolean;
   requiresManualReplay: boolean;
+  discarding?: boolean;
   errorMessage?: string;
   permanentFailure?: boolean;
   failedAt?: number;
@@ -211,8 +213,9 @@ export class OfflineWriteQueue {
         label: operation.label,
         state: operation.state,
         attempts: operation.attempts,
-        canRetry: !operation.inFlight && !this.isDependencyBlocked(operation)
+        canRetry: !operation.inFlight && !operation.discarding && !this.isDependencyBlocked(operation)
           && (operation.state === 'pending' || operation.state === 'failed'),
+        ...(operation.discarding ? { discarding: true } : {}),
         ...(operation.permanentFailure ? { permanentFailure: true } : {}),
         ...(typeof operation.failedAt === 'number' ? { failedAt: operation.failedAt } : {}),
         dependencyBlocked: this.isDependencyBlocked(operation),
@@ -346,6 +349,9 @@ export class OfflineWriteQueue {
       return { operationId: existing.id, accepted: existing.acceptedPromise, acknowledged: existing.acknowledgement.promise };
     }
     if (input.durable && !this.refreshConnectivity()) throw new OfflineWriteBlockedError();
+    if (input.durable?.dependsOn && this.operations.get(input.durable.dependsOn)?.discarding) {
+      throw new Error('Parent mutation is being discarded; dependent mutation was not queued.');
+    }
 
     const operation = this.createOperation({
       ...input,
@@ -390,7 +396,7 @@ export class OfflineWriteQueue {
 
   retry(id: string): Promise<void> {
     const operation = this.operations.get(id);
-    if (!operation || operation.state === 'acknowledged') return Promise.resolve();
+    if (!operation || operation.discarding || operation.state === 'acknowledged') return Promise.resolve();
     if (operation.requiresManualReplay) {
       if (!this.refreshConnectivity()) throw new OfflineWriteBlockedError();
       operation.requiresManualReplay = false;
@@ -400,12 +406,42 @@ export class OfflineWriteQueue {
     return this.retryOperation(operation);
   }
 
+  /** Removes one failed local mutation only when the scoped IndexedDB row is still failed. */
+  async discardFailed(id: string): Promise<boolean> {
+    const operation = this.operations.get(id);
+    const activeScope = this.scope;
+    if (!operation || operation.state !== 'failed' || operation.inFlight || operation.discarding
+      || !operation.persisted || !operation.durable || !activeScope
+      || !scopeMatches(operation.durable, activeScope)) return false;
+    if ([...this.operations.values()].some((candidate) =>
+      candidate.durable?.dependsOn === id && candidate.state !== 'acknowledged')) return false;
+
+    operation.discarding = true;
+    this.notify();
+    try {
+      const removed = await this.store.removeFailed(activeScope, id);
+      operation.discarding = undefined;
+      if (!removed) {
+        this.notify();
+        return false;
+      }
+      if (this.operations.get(id) === operation) this.operations.delete(id);
+      this.notify();
+      return true;
+    } catch (error) {
+      operation.discarding = undefined;
+      this.notify();
+      throw error;
+    }
+  }
+
   /** Explicitly releases restored operations for replay after an owner action. */
   startManualReplay(): number {
     if (!this.refreshConnectivity()) return 0;
     const awaitingOwner = [...this.operations.values()].filter((operation) =>
       operation.accepted
       && operation.requiresManualReplay
+      && !operation.discarding
       && !operation.inFlight
       && (operation.state === 'pending' || operation.state === 'failed'));
     for (const operation of awaitingOwner) {
@@ -429,7 +465,8 @@ export class OfflineWriteQueue {
   }
 
   retryFailed(): number {
-    const failed = [...this.operations.values()].filter((operation) => operation.accepted && operation.state === 'failed' && !operation.inFlight);
+    const failed = [...this.operations.values()].filter((operation) => operation.accepted
+      && operation.state === 'failed' && !operation.inFlight && !operation.discarding);
     for (const operation of failed) void this.retry(operation.id).catch(() => undefined);
     return failed.length;
   }
@@ -442,7 +479,7 @@ export class OfflineWriteQueue {
 
   async correctFailedOperation(id: string, mutation: DurableMutation): Promise<void> {
     const operation = this.operations.get(id);
-    if (!operation?.durable || operation.state !== 'failed') throw new Error('Only a failed durable operation can be corrected.');
+    if (!operation?.durable || operation.state !== 'failed' || operation.discarding) throw new Error('Only a failed durable operation can be corrected.');
     if (!this.refreshConnectivity()) throw new OfflineWriteBlockedError();
     const sanitized = allowlistedMutation(mutation);
     if (sanitized.kind !== operation.durable.kind) throw new Error('A correction cannot change the operation type.');
@@ -590,6 +627,7 @@ export class OfflineWriteQueue {
     if (!this.isOperationCurrent(operation)
       || !this.refreshConnectivity()
       || operation.inFlight
+      || operation.discarding
       || operation.state === 'acknowledged'
       || this.isDependencyBlocked(operation)) return Promise.resolve();
     if (operation.currentAttempt) return operation.currentAttempt;
@@ -605,6 +643,7 @@ export class OfflineWriteQueue {
     if (!this.isOperationCurrent(operation)
       || !this.refreshConnectivity()
       || operation.inFlight
+      || operation.discarding
       || operation.state === 'acknowledged'
       || this.isDependencyBlocked(operation)) return;
     operation.inFlight = true;
@@ -711,7 +750,7 @@ export class OfflineWriteQueue {
       while (!this.restoring) {
         const operation = [...this.operations.values()]
           .filter((candidate) => candidate.accepted && !candidate.requiresManualReplay
-            && candidate.state === 'pending' && !candidate.inFlight && !candidate.retryTimer
+            && candidate.state === 'pending' && !candidate.inFlight && !candidate.discarding && !candidate.retryTimer
             && this.online && !this.isDependencyBlocked(candidate))
           .sort(sortByCreation)[0];
         if (!operation) break;
@@ -720,7 +759,7 @@ export class OfflineWriteQueue {
     }).finally(() => {
       this.pumpPromise = undefined;
       const hasRunnable = [...this.operations.values()].some((operation) => operation.accepted && !operation.requiresManualReplay
-        && operation.state === 'pending' && !operation.inFlight && !operation.retryTimer
+        && operation.state === 'pending' && !operation.inFlight && !operation.discarding && !operation.retryTimer
         && this.online && !this.isDependencyBlocked(operation));
       if (hasRunnable) this.schedulePump();
     });

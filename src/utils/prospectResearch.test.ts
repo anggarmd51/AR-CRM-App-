@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   buildGoogleSearchUrl,
+  buildGoogleDorksFromEntities,
+  buildFallbackGoogleDorks,
   buildLinkedInPeopleSearchUrl,
   MAX_PROSPECT_QUERY_LENGTH,
   parseProspectResearchResponse,
@@ -22,6 +24,36 @@ test('Google Search URL encodes the full dork query and rejects an empty query',
     'https://www.google.com/search?q=site%3Alinkedin.com%2Fin%20%22PT%20Sukses%20%26%20Makmur%22%20(CEO%20OR%20Founder)',
   );
   assert.throws(() => buildGoogleSearchUrl('  '), /dorks/i);
+});
+
+test('structured entities become modular role, company/industry, and city clauses', () => {
+  assert.equal(buildGoogleDorksFromEntities({
+    target_role: 'Sales Manager',
+    alt_roles: ['Business Development Manager'],
+    company_or_industry: 'PT Sukses Makmur',
+    city: 'Jakarta',
+  }), 'site:linkedin.com/in ("Sales Manager" OR "Business Development Manager") ("PT Sukses Makmur") "Jakarta"');
+});
+
+test('structured Dorks omit missing fields and sanitize quotes and Google operators', () => {
+  assert.equal(buildGoogleDorksFromEntities({
+    target_role: '', alt_roles: [], company_or_industry: 'B2B SaaS', city: '',
+  }), 'site:linkedin.com/in ("B2B SaaS")');
+  assert.equal(buildGoogleDorksFromEntities({
+    target_role: 'CEO" OR site:evil.test',
+    alt_roles: ['Founder) OR inurl:evil.test'],
+    company_or_industry: 'Acme " OR site:evil.test',
+    city: 'Jakarta',
+  }), 'site:linkedin.com/in ("CEO" OR "Founder") ("Acme") "Jakarta"');
+  assert.equal(buildGoogleDorksFromEntities({}), 'site:linkedin.com/in');
+});
+
+test('instant no-AI fallback splits whitespace and commas into separate quoted terms', () => {
+  assert.equal(
+    buildFallbackGoogleDorks('Sales Manager, Jakarta, PT Sukses'),
+    'site:linkedin.com/in "Sales" "Manager" "Jakarta" "PT" "Sukses"',
+  );
+  assert.equal(buildFallbackGoogleDorks('CEO OR site:evil.test'), 'site:linkedin.com/in "CEO"');
 });
 
 test('flexible prospect query is trimmed and length-limited', () => {

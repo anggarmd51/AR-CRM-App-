@@ -15,6 +15,7 @@ interface TopAppBarProps {
   onSyncNow: () => void;
   syncOperations: SyncQueueOperation[];
   onRetrySyncOperation: (id: string) => void;
+  onDiscardFailedSyncOperation: (id: string) => void;
   isPhoneFrame: boolean;
   onTogglePhoneFrame: () => void;
   isAndroidCodeActive?: boolean;
@@ -39,6 +40,7 @@ export const TopAppBar: React.FC<TopAppBarProps> = ({
   onSyncNow,
   syncOperations,
   onRetrySyncOperation,
+  onDiscardFailedSyncOperation,
   isPhoneFrame,
   onTogglePhoneFrame,
   isAndroidCodeActive = false,
@@ -236,11 +238,18 @@ export const TopAppBar: React.FC<TopAppBarProps> = ({
                                       : 'Masuk antrean lokal — menunggu koneksi'}
                             </p>
                           </div>
-                          {operation.canRetry && (
-                            <button onClick={() => onRetrySyncOperation(operation.id)} disabled={!isOnline && operation.requiresManualReplay} aria-label={`Tindakan sinkronisasi untuk ${operation.label}`} className="min-h-11 shrink-0 rounded-[6px] bg-[#1f1f1f] px-2 py-1 text-[11px] font-semibold text-white disabled:opacity-50">
-                              {operation.requiresManualReplay ? 'Kirim sekarang' : 'Coba lagi'}
-                            </button>
-                          )}
+                          <div className="flex shrink-0 flex-col gap-1">
+                            {operation.canRetry && (
+                              <button onClick={() => onRetrySyncOperation(operation.id)} disabled={!isOnline && operation.requiresManualReplay} aria-label={`Tindakan sinkronisasi untuk ${operation.label}`} className="min-h-11 rounded-[6px] bg-[#1f1f1f] px-2 py-1 text-[11px] font-semibold text-white disabled:opacity-50">
+                                {operation.requiresManualReplay ? 'Kirim sekarang' : 'Coba lagi'}
+                              </button>
+                            )}
+                            {operation.state === 'failed' && (
+                              <button type="button" onClick={() => onDiscardFailedSyncOperation(operation.id)} disabled={Boolean(operation.discarding)} aria-label={`Buang / Hapus Item ${operation.label}`} className="min-h-11 rounded-[6px] border border-[#9b2c2c] bg-white px-2 py-1 text-[10px] font-semibold text-[#9b2c2c] disabled:opacity-50">
+                                {operation.discarding ? 'Membuang…' : 'Buang / Hapus Item'}
+                              </button>
+                            )}
+                          </div>
                         </div>
                         {operation.errorMessage && <p className="mt-1.5 text-[11px] leading-4 text-[#6b665c]">{operation.errorMessage}</p>}
                       </li>

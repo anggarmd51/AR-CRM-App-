@@ -240,6 +240,15 @@ class MemoryOutboxStore implements OfflineOutboxStore {
     if (record) this.records.set(key, { ...record, state: 'acknowledged', payload: undefined });
   }
   async remove(scope: QueueOwnerScope, id: string): Promise<void> { this.records.delete(this.key(scope, id)); }
+  async removeFailed(scope: QueueOwnerScope, id: string): Promise<boolean> {
+    const key = this.key(scope, id);
+    if (this.records.get(key)?.state !== 'failed') return false;
+    if ([...this.records.values()].some((record) => record.ownerId === scope.ownerId
+      && record.workspaceId === scope.workspaceId && record.dependsOn === id
+      && record.state !== 'acknowledged')) return false;
+    this.records.delete(key);
+    return true;
+  }
 }
 
 function leadRecord(id: string, overrides: Partial<DurableQueueInput> = {}): DurableQueueInput {
@@ -265,6 +274,117 @@ function leadRecord(id: string, overrides: Partial<DurableQueueInput> = {}): Dur
     ...overrides,
   } as DurableQueueInput;
 }
+
+test('discard removes only the selected failed record in the active owner/workspace and recalculates counts', async () => {
+  const store = new MemoryOutboxStore();
+  const queue = new OfflineWriteQueue(new FakeConnectivity(true), store);
+  const record = leadRecord('discard-scoped-failure');
+  const otherScope = { workspaceId: 'workspace-other', ownerId: 'owner-other' };
+  await store.insert({ ...record, attempts: 1, state: 'failed', permanentFailure: true } as DurableQueueRecord);
+  await store.insert({ ...record, ...otherScope, attempts: 1, state: 'failed' } as DurableQueueRecord);
+
+  try {
+    await queue.activateScope(ownerScope, async () => { assert.fail('failed operations must not replay during restore'); });
+    assert.equal(queue.getSnapshot().failedCount, 1);
+    assert.equal(await queue.discardFailed(record.id), true);
+    assert.equal(queue.getSnapshot().failedCount, 0);
+    assert.equal(queue.getSnapshot().operations.length, 0);
+    assert.equal((await store.list(ownerScope)).length, 0);
+    assert.equal((await store.list(otherScope)).length, 1, 'another owner/workspace record must remain untouched');
+  } finally { queue.dispose(); }
+});
+
+test('discard rechecks the durable failed state and cannot remove a row changed to pending', async () => {
+  const store = new MemoryOutboxStore();
+  const queue = new OfflineWriteQueue(new FakeConnectivity(true), store);
+  const record = leadRecord('discard-stale-state');
+  await store.insert({ ...record, attempts: 1, state: 'failed' } as DurableQueueRecord);
+
+  try {
+    await queue.activateScope(ownerScope, async () => undefined);
+    await store.update({ ...record, attempts: 1, state: 'pending' } as DurableQueueRecord);
+    assert.equal(await queue.discardFailed(record.id), false);
+    assert.equal((await store.list(ownerScope))[0]?.state, 'pending');
+    assert.equal(queue.getSnapshot().failedCount, 1, 'a stale UI snapshot is not treated as a successful deletion');
+  } finally { queue.dispose(); }
+});
+
+test('discard cannot remove pending or in-flight mutations', async () => {
+  const connectivity = new FakeConnectivity(false);
+  const store = new MemoryOutboxStore();
+  const queue = new OfflineWriteQueue(connectivity, store);
+  const record = leadRecord('discard-pending-and-syncing');
+  const write = createDeferred<void>();
+  await store.insert({ ...record, attempts: 0, state: 'pending' } as DurableQueueRecord);
+
+  try {
+    await queue.activateScope(ownerScope, async () => write.promise);
+    assert.equal(queue.getSnapshot().pendingCount, 1);
+    assert.equal(await queue.discardFailed(record.id), false);
+    assert.equal((await store.list(ownerScope))[0]?.state, 'pending');
+
+    connectivity.setOnline(true);
+    assert.equal(queue.startManualReplay(), 1);
+    await waitFor(() => queue.getSnapshot().syncingCount === 1);
+    assert.equal(await queue.discardFailed(record.id), false);
+    assert.equal(queue.getSnapshot().syncingCount, 1);
+    write.resolve();
+    await waitFor(() => queue.getSnapshot().acknowledgedCount === 1);
+    assert.equal((await store.list(ownerScope)).length, 0, 'normal Firestore acknowledgement retains its existing cleanup path');
+  } finally { queue.dispose(); }
+});
+
+test('discard preserves a failed parent while a pending child still depends on it', async () => {
+  const connectivity = new FakeConnectivity(true);
+  const store = new MemoryOutboxStore();
+  const queue = new OfflineWriteQueue(connectivity, store);
+  const parent = leadRecord('discard-parent-with-child');
+  await store.insert({ ...parent, attempts: 1, state: 'failed' } as DurableQueueRecord);
+  let childCalls = 0;
+  try {
+    await queue.activateScope(ownerScope, async () => { assert.fail('parent must not replay automatically'); });
+    const child: DurableQueueInput = {
+      id: 'dependent-pending', label: 'Simpan aktivitas', ...ownerScope,
+      documentId: 'dependent-activity-document', kind: 'create-activity',
+      payload: { lead_id: parent.documentId, activity_type: 'Call', notes: 'Synthetic dependency regression' },
+      createdAt: Date.now(), dependsOn: parent.id,
+    };
+    const receipt = queue.enqueue({ id: child.id, label: child.label, durable: child, run: async () => { childCalls += 1; } });
+    await receipt.accepted;
+    assert.equal(await queue.discardFailed(parent.id), false);
+    connectivity.setOnline(false);
+    connectivity.setOnline(true);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(childCalls, 0);
+    assert.equal(queue.getSnapshot().operations.find((operation) => operation.id === child.id)?.dependencyBlocked, true);
+    assert.equal(queue.getSnapshot().failedCount, 1);
+    assert.equal(queue.getSnapshot().pendingCount, 1);
+    assert.equal((await store.list(ownerScope)).length, 2);
+  } finally { queue.dispose(); }
+});
+
+test('a new dependent cannot be queued while its parent discard is in progress', async () => {
+  const gate = createDeferred<void>();
+  class PausedRemoveStore extends MemoryOutboxStore {
+    override async removeFailed(scope: QueueOwnerScope, id: string): Promise<boolean> {
+      await gate.promise;
+      return super.removeFailed(scope, id);
+    }
+  }
+  const store = new PausedRemoveStore();
+  const queue = new OfflineWriteQueue(new FakeConnectivity(true), store);
+  const parent = leadRecord('discard-parent-in-progress');
+  await store.insert({ ...parent, attempts: 1, state: 'failed' } as DurableQueueRecord);
+  try {
+    await queue.activateScope(ownerScope, async () => undefined);
+    const deletion = queue.discardFailed(parent.id);
+    const child = leadRecord('rejected-concurrent-child', { dependsOn: parent.id });
+    assert.throws(() => queue.enqueue({ id: child.id, label: child.label, durable: child, run: async () => undefined }), /Parent mutation is being discarded/);
+    gate.resolve();
+    assert.equal(await deletion, true);
+    assert.equal((await store.list(ownerScope)).length, 0);
+  } finally { gate.resolve(); queue.dispose(); }
+});
 
 test('offline outbox accepts only real YYYY-MM-DD calendar dates', () => {
   const record = leadRecord('calendar-date-validation');
@@ -864,6 +984,34 @@ test('real IndexedDB outbox encrypts a pending lead and restores it in a fresh q
       await waitFor(() => recoveredQueue.getSnapshot().acknowledgedCount === 1);
       assert.equal((await new IndexedDbOfflineOutboxStore().list(scope)).length, 0);
     } finally { recoveredQueue.dispose(); }
+});
+
+test('IndexedDB removeFailed deletes only the failed row in the requested owner/workspace', async () => {
+  const unique = `${Date.now()}-${Math.random()}`;
+  const scope = { ownerId: `owner-discard-${unique}`, workspaceId: `workspace-discard-${unique}` };
+  const failedId = `failed-discard-${unique}`;
+  const pendingId = `pending-discard-${unique}`;
+  const dependentId = `dependent-discard-${unique}`;
+  const store = new IndexedDbOfflineOutboxStore();
+  const failed = { ...leadRecord(failedId), ...scope } as DurableQueueInput;
+  const pending = { ...leadRecord(pendingId), ...scope } as DurableQueueInput;
+  const dependent = { ...leadRecord(dependentId), ...scope, dependsOn: failedId } as DurableQueueInput;
+  await store.insert({ ...failed, attempts: 1, state: 'failed' } as DurableQueueRecord);
+  await store.insert({ ...pending, attempts: 0, state: 'pending' } as DurableQueueRecord);
+  await store.insert({ ...dependent, attempts: 0, state: 'pending' } as DurableQueueRecord);
+
+  try {
+    assert.equal(await store.removeFailed(scope, pendingId), false);
+    assert.equal(await store.removeFailed(scope, failedId), false, 'persisted dependent blocks deletion even outside a queue snapshot');
+    await store.remove(scope, dependentId);
+    assert.equal(await store.removeFailed(scope, failedId), true);
+    const remaining = await store.list(scope);
+    assert.deepEqual(remaining.map((record) => [record.id, record.state]), [[pendingId, 'pending']]);
+  } finally {
+    await store.remove(scope, failedId);
+    await store.remove(scope, pendingId);
+    await store.remove(scope, dependentId);
+  }
 });
 
 test('encrypted IndexedDB outbox restores payload when caller label is not canonical', async () => {

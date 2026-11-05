@@ -3,6 +3,7 @@ import { Check, Copy, ExternalLink, Linkedin, Mail, Plus, Search, Sparkles, User
 import { getFirebaseAuth } from '../firebase.ts';
 import {
   MAX_PROSPECT_QUERY_LENGTH,
+  buildFallbackGoogleDorks,
   buildGoogleSearchUrl,
   buildLinkedInPeopleSearchUrl,
   parseProspectResearchResponse,
@@ -29,6 +30,9 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({ onSaveToPipeli
   );
   const linkedInSearchUrl = searchQuery.length > 0 && searchQuery.length <= MAX_PROSPECT_QUERY_LENGTH
     ? buildLinkedInPeopleSearchUrl(searchQuery)
+    : undefined;
+  const instantGoogleSearchUrl = searchQuery.length > 0 && searchQuery.length <= MAX_PROSPECT_QUERY_LENGTH
+    ? buildGoogleSearchUrl(buildFallbackGoogleDorks(searchQuery))
     : undefined;
 
   const toggleFilter = (filter: string) => {
@@ -137,7 +141,7 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({ onSaveToPipeli
             <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#ff4800]">AI Prospect Search</p>
             <h3 className="mt-1 text-lg font-bold text-[#1f1f1f] sm:text-xl">Siapa yang ingin Anda temukan?</h3>
           </div>
-          <label htmlFor="prospect-search" className="sr-only">Cari perusahaan, industri, atau jabatan</label>
+          <label htmlFor="prospect-search" className="sr-only">Cari perusahaan, industri, jabatan, atau kota</label>
           <div className="relative">
             <Search aria-hidden="true" className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#6b665c]" />
             <input
@@ -147,7 +151,7 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({ onSaveToPipeli
               value={query}
               onChange={(event) => { setQuery(event.target.value); setError(null); setResult(null); }}
               onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void handleResearch(); } }}
-              placeholder="Perusahaan, industri, atau jabatan…"
+              placeholder="Perusahaan, industri, jabatan, atau kota…"
               className="min-h-14 w-full rounded-[8px] border border-[#1f1f1f] bg-[#f8f5ee] py-3 pl-12 pr-4 text-base text-[#1f1f1f] outline-none transition placeholder:text-[#6b665c] focus:border-[#ff4800] focus:bg-[#fcfcfa] focus:ring-4 focus:ring-[#ff4800]/15"
             />
           </div>
@@ -197,6 +201,14 @@ export const GlobalLeadsView: React.FC<GlobalLeadsViewProps> = ({ onSaveToPipeli
               <span className="text-left">Cari Orang di LinkedIn<span className="mt-0.5 block text-[10px] font-medium text-[#6b665c]">Membuka tab pencarian People</span></span>
             </a>
           </div>
+          {instantGoogleSearchUrl && (
+            <p className="mt-3 text-center text-[11px] leading-5 text-[#6b665c]">
+              <a href={instantGoogleSearchUrl} target="_blank" rel="noopener noreferrer" onClick={() => setError(null)} className="font-semibold text-[#0F2C59] underline decoration-[#0F2C59]/40 underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ff4800]">
+                Cari Google instan tanpa AI
+              </a>
+              <span> · Kata dari kolom di atas dipecah otomatis; hasil perlu diverifikasi.</span>
+            </p>
+          )}
           <p className="mt-3 text-center text-[10px] leading-4 text-[#6b665c]">AI memberi saran awal; verifikasi profil dan kontak sebelum outreach. App Links LinkedIn bergantung pada konfigurasi aplikasi dan perangkat Anda.</p>
         </div>
       </section>

@@ -90,6 +90,7 @@ export interface OfflineOutboxStore {
   update(record: DurableQueueRecord): Promise<void>;
   acknowledge(scope: QueueOwnerScope, id: string): Promise<void>;
   remove(scope: QueueOwnerScope, id: string): Promise<void>;
+  removeFailed(scope: QueueOwnerScope, id: string): Promise<boolean>;
 }
 
 const DATABASE_NAME = 'ar-crm-offline-outbox';
@@ -547,6 +548,29 @@ export class IndexedDbOfflineOutboxStore implements OfflineOutboxStore {
       } satisfies StoredOperation);
     }
     await done;
+  }
+
+  async removeFailed(scope: QueueOwnerScope, id: string): Promise<boolean> {
+    const db = await this.db();
+    const transaction = db.transaction(OPERATIONS_STORE, 'readwrite');
+    const done = transactionDone(transaction);
+    const store = transaction.objectStore(OPERATIONS_STORE);
+    const key = storageKey(scope, id);
+    const existing = await requestResult(store.get(key) as IDBRequest<StoredOperation | undefined>);
+    if (!existing || existing.state !== 'failed') {
+      await done;
+      return false;
+    }
+    const scopedRows = await requestResult(
+      store.index('scopeKey').getAll(scopeKey(scope)) as IDBRequest<StoredOperation[]>,
+    );
+    if (scopedRows.some((row) => row.dependsOn === id && row.state !== 'acknowledged')) {
+      await done;
+      return false;
+    }
+    store.delete(key);
+    await done;
+    return true;
   }
 
   async remove(scope: QueueOwnerScope, id: string): Promise<void> {

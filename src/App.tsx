@@ -20,6 +20,7 @@ import { shouldUseLocalSecurityVault } from './localSecurityPolicy.ts';
 import { createActivity, createLead, deleteLead, subscribeToActivities, subscribeToLeads, subscribeToWonDealArchives, updateLeadDetails, updateLeadStage } from './firebaseRepository.ts';
 import { OptimisticLeadStageOverlay, type LeadSnapshotState } from './utils/optimisticLeadStages.ts';
 import { firestoreWriteQueue, type SyncQueueSnapshot } from './utils/offlineWriteQueue.ts';
+import { confirmAndDiscardFailedQueueOperation } from './utils/queueDiscard.ts';
 import { reconcileDocumentSyncStatuses } from './utils/syncStatus.ts';
 import { cleanupOrphanedActivityPhotos, storeActivityPhoto } from './utils/activityPhotos.ts';
 import { canonicalizeModalHistoryState, createAppHistoryState, getModalLeadId, readAppHistoryState, type AppHistoryState, type AppModalName } from './utils/appHistory.ts';
@@ -355,6 +356,20 @@ export default function App() {
     void firestoreWriteQueue.retry(id).catch(() => undefined);
   };
 
+  const handleDiscardFailedSyncOperation = (id: string) => {
+    const operation = syncQueueSnapshot.operations.find((candidate) => candidate.id === id);
+    void confirmAndDiscardFailedQueueOperation(
+      operation,
+      (message) => window.confirm(message),
+      (selectedId) => firestoreWriteQueue.discardFailed(selectedId),
+    ).then((result) => {
+      if (result === 'discarded') showToast('Item gagal sudah dibuang dari antrean lokal halaman ini.');
+      else if (result === 'unchanged' || result === 'ineligible') showToast('Item tidak dapat dibuang: status berubah atau masih diperlukan mutasi lain. Antrean dipertahankan.');
+    }).catch(() => {
+      showToast('Item gagal tidak dapat dibuang dari antrean lokal; datanya tetap dipertahankan.');
+    });
+  };
+
   // Add Lead
   const handleAddLead = async (leadData: Omit<Lead, 'id' | '_syncStatus' | 'created_at' | 'updated_at'>) => {
     await createLead(getFirebaseAuth().currentUser!.uid, leadData);
@@ -659,6 +674,7 @@ export default function App() {
           onSyncNow={handleSyncNow}
           syncOperations={syncQueueSnapshot.operations}
           onRetrySyncOperation={handleRetrySyncOperation}
+          onDiscardFailedSyncOperation={handleDiscardFailedSyncOperation}
           isPhoneFrame={isPhoneFrame}
           onTogglePhoneFrame={() => setIsPhoneFrame(!isPhoneFrame)}
           isAndroidCodeActive={currentTab === 'android_code'}

@@ -19,22 +19,29 @@ const allKeys = {
   COHERE_API_KEY: 'legacy-not-used',
 };
 
-function openAiResponse(targetRoles = 'Owner, CEO, Head of Procurement') {
+const defaultEntities = {
+  target_role: 'Owner',
+  alt_roles: ['CEO', 'Head of Procurement'],
+  company_or_industry: 'PT Sukses Makmur',
+  city: '',
+};
+
+function openAiResponse(targetRoles = 'Owner, CEO, Head of Procurement', entities = defaultEntities) {
   return new Response(JSON.stringify({
     choices: [{ message: { content: JSON.stringify({
       target_roles: targetRoles,
       email_pattern: 'person@example.com',
-      google_dorks: 'site:linkedin.com/in "unsafe query" OR @gmail.com',
+      entities,
     }) } }],
   }), { status: 200, headers: { 'content-type': 'application/json' } });
 }
 
-function geminiResponse(targetRoles = 'Owner, CEO, Head of Procurement') {
+function geminiResponse(targetRoles = 'Owner, CEO, Head of Procurement', entities = defaultEntities) {
   return new Response(JSON.stringify({
     candidates: [{ content: { parts: [{ text: JSON.stringify({
       target_roles: targetRoles,
       email_pattern: 'person@example.com',
-      google_dorks: 'site:linkedin.com/in "unsafe query" OR @gmail.com',
+      entities,
     }) }] } }],
   }), { status: 200, headers: { 'content-type': 'application/json' } });
 }
@@ -85,7 +92,7 @@ test('waterfall uses Groq, Gemini, then OpenRouter with only pinned Free Tier mo
   assert.deepEqual(response, {
     target_roles: 'Owner / Founder, CEO / Direktur Utama, Head of Procurement',
     email_pattern: 'Dugaan format umum: nama.depan@<domain-perusahaan> — belum diverifikasi, bukan alamat email aktual.',
-    google_dorks: 'site:linkedin.com/in "PT Sukses Makmur" ("Owner" OR "Founder" OR "CEO" OR "Director" OR "Head of Sales" OR "Business Development Manager" OR "Head of Procurement" OR "IT Manager" OR "Finance Manager")',
+    google_dorks: 'site:linkedin.com/in ("Owner" OR "CEO" OR "Head of Procurement") ("PT Sukses Makmur")',
   });
   assert.deepEqual(events.map((event) => [event.provider, event.result, event.reason]), [
     ['groq', 'fallback', 'rate_limit'],
@@ -118,16 +125,36 @@ test('Gemini response is parsed after Groq rate-limits without calling OpenRoute
 test('Google Dorks stay deterministic, target public professional profiles, and avoid generic roles when a role is explicit', async () => {
   const response = await profileProspectWithFallback('IT Manager', {
     environment: { GROQ_API_KEY: 'test-groq' },
-    fetchImpl: async () => openAiResponse('IT Manager'),
+    fetchImpl: async () => openAiResponse('IT Manager', {
+      target_role: 'IT Manager', alt_roles: [], company_or_industry: '', city: '',
+    }),
   });
   assert.equal(response.google_dorks, 'site:linkedin.com/in "IT Manager"');
 
   const sanitized = await profileProspectWithFallback('Acme" OR site:evil.test', {
     environment: { GROQ_API_KEY: 'test-groq' },
-    fetchImpl: async () => openAiResponse(),
+    fetchImpl: async () => openAiResponse('Owner', {
+      target_role: '', alt_roles: [], company_or_industry: 'Acme" OR site:evil.test', city: '',
+    }),
   });
-  assert.match(sanitized.google_dorks, /^site:linkedin\.com\/in "Acme OR site:evil\.test" \(/);
-  assert.doesNotMatch(sanitized.google_dorks, /" OR site:evil\.test/);
+  assert.equal(sanitized.google_dorks, 'site:linkedin.com/in ("Acme")');
+  assert.doesNotMatch(sanitized.google_dorks, /site:evil\.test|\) OR/);
+});
+
+test('backend builds Dorks from separately extracted title, alternative roles, company, and city', async () => {
+  const response = await profileProspectWithFallback('Sales Manager, Software, Bandung', {
+    environment: { GROQ_API_KEY: 'test-groq' },
+    fetchImpl: async () => openAiResponse('Sales Manager', {
+      target_role: 'Sales Manager',
+      alt_roles: ['Business Development Manager'],
+      company_or_industry: 'Software',
+      city: 'Bandung',
+    }),
+  });
+  assert.equal(
+    response.google_dorks,
+    'site:linkedin.com/in ("Sales Manager" OR "Business Development Manager") ("Software") "Bandung"',
+  );
 });
 
 test('server error and timeout fallback advance only through the allowed order', async () => {
