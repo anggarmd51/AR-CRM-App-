@@ -1,5 +1,6 @@
 export interface ActivitySubmissionState {
   selectedLeadId: string;
+  availableLeadIds: readonly string[];
   notes: string;
   isSubmitting: boolean;
   isSummarizing: boolean;
@@ -7,7 +8,9 @@ export interface ActivitySubmissionState {
 }
 
 export function canSubmitActivity(state: ActivitySubmissionState): boolean {
-  return Boolean(state.selectedLeadId.trim() && state.notes.trim())
+  return Boolean(state.selectedLeadId.trim()
+    && state.availableLeadIds.includes(state.selectedLeadId)
+    && state.notes.trim())
     && !state.isSubmitting
     && !state.isSummarizing
     && !state.isCompressingPhoto;

@@ -6,6 +6,7 @@ import {
   hasFreshPinSessionHint,
   resolvePinSessionStartupView,
   savePinSessionHint,
+  shouldPreserveMountedPinSessionTree,
   validatePinSessionInBackground,
   type PinSessionHintStorage,
 } from './accountPinSessionUi.ts';
@@ -62,6 +63,25 @@ test('local expiry hint can select only a warm checking shell, never authorize C
 
 test('without a fresh hint the pending PIN check uses the generic checking shell', () => {
   assert.equal(resolvePinSessionStartupView({ gateState: 'checking', sessionRevalidating: false, hasFreshHint: false }), 'checking-shell');
+});
+
+test('transient background revalidation preserves the mounted tree only for the same owner before server expiry', () => {
+  const validRevalidation = {
+    gateState: 'verified' as const,
+    sessionRevalidating: true,
+    currentOwnerUid: 'owner-a',
+    verifiedOwnerUid: 'owner-a',
+    sessionExpiresAt: ACTIVE_STATUS.sessionExpiresAt,
+    now: NOW,
+  };
+  assert.equal(shouldPreserveMountedPinSessionTree(validRevalidation), true);
+  assert.equal(shouldPreserveMountedPinSessionTree({ ...validRevalidation, verifiedOwnerUid: 'owner-b' }), false);
+  assert.equal(shouldPreserveMountedPinSessionTree({ ...validRevalidation, currentOwnerUid: 'owner-b' }), false);
+  assert.equal(shouldPreserveMountedPinSessionTree({ ...validRevalidation, sessionExpiresAt: ACTIVE_STATUS.sessionExpiresAt, now: Date.parse(ACTIVE_STATUS.sessionExpiresAt!) }), false);
+  assert.equal(shouldPreserveMountedPinSessionTree({ ...validRevalidation, gateState: 'pin-required' }), false);
+  assert.equal(shouldPreserveMountedPinSessionTree({ ...validRevalidation, gateState: 'checking' }), false);
+  assert.equal(shouldPreserveMountedPinSessionTree({ ...validRevalidation, gateState: 'unavailable' }), false);
+  assert.equal(shouldPreserveMountedPinSessionTree({ ...validRevalidation, sessionRevalidating: false }), false);
 });
 
 test('a stale server response after logout or account change is discarded before queue activation', async () => {

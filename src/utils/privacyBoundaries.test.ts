@@ -11,6 +11,7 @@ const topAppBar = readFileSync(new URL('../components/TopAppBar.tsx', import.met
 const accountPinGate = readFileSync(new URL('../components/AccountPinGate.tsx', import.meta.url), 'utf8');
 const accountPinClient = readFileSync(new URL('../accountPinClient.ts', import.meta.url), 'utf8');
 const accountPinSessionUi = readFileSync(new URL('../accountPinSessionUi.ts', import.meta.url), 'utf8');
+const quickLeadModal = readFileSync(new URL('../components/QuickLeadModal.tsx', import.meta.url), 'utf8');
 const startupShell = readFileSync(new URL('../components/SessionStartupShell.tsx', import.meta.url), 'utf8');
 const localSecurityPolicy = readFileSync(new URL('../localSecurityPolicy.ts', import.meta.url), 'utf8');
 const firestoreRules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
@@ -18,13 +19,38 @@ const firestoreRules = readFileSync(new URL('../../firestore.rules', import.meta
 test('activity logger requires explicit consent for notes-only Gemini and user-triggered one-shot GPS', () => {
   assert.match(modal, /fetch\('\/api\/ai\/summarize-notes'/);
   assert.match(modal, /!aiSummarizerEnabled \|\| !aiConsent/);
-  assert.match(modal, /body: JSON\.stringify\(\{ notes: notes\.trim\(\) \}\)/);
+  assert.match(modal, /body: JSON\.stringify\(\{ notes: formDraft\.notes\.trim\(\) \}\)/);
   assert.doesNotMatch(modal, /body: JSON\.stringify\(\{[^}]*lead_id|body: JSON\.stringify\(\{[^}]*contactPerson|body: JSON\.stringify\(\{[^}]*companyName/);
-  assert.match(modal, /summarizeMeetingNotesLocally\(notes\)/);
+  assert.match(modal, /summarizeMeetingNotesLocally\(formDraft\.notes\)/);
+  assert.match(modal, /const availableLeadIds = leads\.map\(\(lead\) => lead\.id\)/);
+  assert.match(modal, /availableLeadIds,/);
   assert.match(modal, /getCurrentPosition/);
   assert.match(modal, /maximumAge: 0/);
   assert.match(modal, /tidak ada pelacakan latar belakang/);
   assert.match(app, /VITE_AI_MEETING_SUMMARIZER_ENABLED === 'true'/);
+});
+
+test('form drafts autosave, survive refresh for the active modal, and clear only on save or explicit discard', () => {
+  assert.match(quickLeadModal, /draftWriter\.schedule\(formDraft\)/);
+  assert.match(modal, /draftWriter\.schedule\(formDraft\)/);
+  assert.match(quickLeadModal, /saveWithDraftCleanup\(draftWriter/);
+  assert.match(modal, /saveWithDraftCleanup\(draftWriter/);
+  assert.match(quickLeadModal, /onClick=\{discardDraft\}/);
+  assert.match(quickLeadModal, /Batal \/ Buang Draft/);
+  assert.match(modal, /draftWriter\.clear\(\); close\(\)/);
+  assert.match(modal, /Batal \/ Buang Draft/);
+  assert.match(app, /isQuickLeadFormDraft\(/);
+  assert.match(app, /isActivityFormDraft\(/);
+  assert.match(app, /activeModal === 'quickLead'/);
+  assert.match(app, /activeModal === 'activityLogger'/);
+});
+
+test('PIN revalidation keeps the same authorized tree mounted but hidden, and same-owner token refresh revalidates', () => {
+  assert.match(authGate, /sessionRevalidateRef\.current\(\)/);
+  assert.match(authGate, /className="hidden" hidden aria-hidden="true"/);
+  assert.match(authGate, /className="contents"/);
+  assert.match(accountPinSessionUi, /verifiedOwnerUid !== input\.currentOwnerUid/);
+  assert.match(accountPinSessionUi, /expiryMs > \(input\.now \?\? Date\.now\(\)\)/);
 });
 
 test('server notes summarizer is disabled before request-body processing or model access', () => {
@@ -74,6 +100,7 @@ test('Google web sign-in and PIN enrollment use GIS credentials without Firebase
 
 test('hosted CRM opens only after the signed claim and server session document are verified', () => {
   assert.match(authGate, /onIdTokenChanged/);
+  assert.match(authGate, /sessionRevalidateRef\.current\(\)/);
   assert.match(authGate, /validatePinSessionInBackground\(/);
   assert.match(authGate, /queueLifecycle\.activate/);
   assert.match(authGate, /resolvePinSessionStartupView/);

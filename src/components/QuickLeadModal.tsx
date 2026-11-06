@@ -1,7 +1,15 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { X, Plus, Calendar, Flame, Check } from 'lucide-react';
 import { Lead, PipelineStage, LeadScore, PIPELINE_STAGES } from '../types/crm.ts';
+import { getFirebaseAuth, workspaceId } from '../firebase.ts';
 import { useModalAccessibility } from '../utils/useModalAccessibility.ts';
+import {
+  createScopedFormDraftWriter,
+  EMPTY_QUICK_LEAD_FORM_DRAFT,
+  restoreQuickLeadFormDraft,
+  saveWithDraftCleanup,
+  type QuickLeadFormDraft,
+} from '../utils/formDrafts.ts';
 
 interface QuickLeadModalProps {
   isOpen: boolean;
@@ -16,67 +24,87 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
   initialCompanyName = '',
   onAddLead,
 }) => {
-  const [companyName, setCompanyName] = useState('');
-  const [contactPerson, setContactPerson] = useState('');
-  const [email, setEmail] = useState('');
-  const [phone, setPhone] = useState('');
-  const [address, setAddress] = useState('');
-  const [industry, setIndustry] = useState('');
-  const [city, setCity] = useState('');
-  const [pipelineStage, setPipelineStage] = useState<PipelineStage>('Prospect');
-  const [dealValue, setDealValue] = useState<number>(0);
-  const [nextFollowupDate, setNextFollowupDate] = useState('');
-  const [leadScore, setLeadScore] = useState<LeadScore>('Unrated');
-  const [isVerified, setIsVerified] = useState(false);
+  const ownerUid = getFirebaseAuth().currentUser?.uid ?? '';
+  const draftWriter = useMemo(
+    () => createScopedFormDraftWriter<QuickLeadFormDraft>('quick_lead', workspaceId, ownerUid),
+    [ownerUid],
+  );
+  const initialCompanyNameRef = useRef(initialCompanyName);
+  initialCompanyNameRef.current = initialCompanyName;
+  const [formDraft, setFormDraft] = useState<QuickLeadFormDraft>(EMPTY_QUICK_LEAD_FORM_DRAFT);
+  const [draftHydrated, setDraftHydrated] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const close = () => { if (!isSubmitting) onClose(); };
   const { dialogRef } = useModalAccessibility({ isOpen, onClose: close, titleId: 'quick-lead-modal-title' });
 
   useEffect(() => {
-    if (isOpen) {
-      setCompanyName(initialCompanyName);
-      setIsVerified(false);
+    if (!isOpen) {
+      draftWriter.flush();
+      setDraftHydrated(false);
+      setFormDraft(EMPTY_QUICK_LEAD_FORM_DRAFT);
+      setSubmitError(null);
       return;
     }
-    setCompanyName('');
-    setContactPerson('');
-    setEmail('');
-    setPhone('');
-    setAddress('');
-    setIndustry('');
-    setCity('');
-    setPipelineStage('Prospect');
-    setDealValue(0);
-    setNextFollowupDate('');
-    setLeadScore('Unrated');
-    setIsVerified(false);
+    draftWriter.resume();
+    setFormDraft(restoreQuickLeadFormDraft(draftWriter.read(), initialCompanyNameRef.current));
     setSubmitError(null);
-  }, [initialCompanyName, isOpen]);
+    setDraftHydrated(true);
+  }, [draftWriter, isOpen]);
+
+  useEffect(() => () => draftWriter.dispose(), [draftWriter]);
+
+  useEffect(() => {
+    if (!isOpen || !draftHydrated) return;
+    draftWriter.schedule(formDraft);
+  }, [draftHydrated, draftWriter, formDraft, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || !draftHydrated) return;
+    const flushOnBackground = () => {
+      if (document.visibilityState === 'hidden') draftWriter.flush();
+    };
+    document.addEventListener('visibilitychange', flushOnBackground);
+    window.addEventListener('pagehide', flushOnBackground);
+    return () => {
+      document.removeEventListener('visibilitychange', flushOnBackground);
+      window.removeEventListener('pagehide', flushOnBackground);
+    };
+  }, [draftHydrated, draftWriter, isOpen]);
+
+  const updateDraftField = <Field extends keyof QuickLeadFormDraft>(field: Field, value: QuickLeadFormDraft[Field]) => {
+    setFormDraft((current) => ({ ...current, [field]: value }));
+  };
+
+  const discardDraft = () => {
+    if (isSubmitting) return;
+    draftWriter.clear();
+    onClose();
+  };
 
   if (!isOpen) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!companyName.trim() || !contactPerson.trim() || isSubmitting) return;
+    if (!formDraft.companyName.trim() || !formDraft.contactPerson.trim() || isSubmitting) return;
 
     setIsSubmitting(true);
     setSubmitError(null);
     try {
-      await onAddLead({
-        company_name: companyName.trim(),
-        contact_person: contactPerson.trim(),
-        email: email.trim(),
-        phone: phone.trim(),
-        ...(address.trim() ? { address: address.trim() } : {}),
-        industry,
-        city,
-        pipeline_stage: pipelineStage,
-        deal_value: Number(dealValue) || 0,
-        next_followup_date: nextFollowupDate,
-        lead_score: leadScore,
-        isVerified,
-      });
+      await saveWithDraftCleanup(draftWriter, () => onAddLead({
+        company_name: formDraft.companyName.trim(),
+        contact_person: formDraft.contactPerson.trim(),
+        email: formDraft.email.trim(),
+        phone: formDraft.phone.trim(),
+        ...(formDraft.address.trim() ? { address: formDraft.address.trim() } : {}),
+        industry: formDraft.industry,
+        city: formDraft.city,
+        pipeline_stage: formDraft.pipelineStage,
+        deal_value: Number(formDraft.dealValue) || 0,
+        next_followup_date: formDraft.nextFollowupDate,
+        lead_score: formDraft.leadScore,
+        isVerified: formDraft.isVerified,
+      }));
       onClose();
     } catch (error) {
       setSubmitError(error instanceof Error
@@ -132,8 +160,8 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
                 type="text"
                 required
                 placeholder="e.g. PT Artha Sentosa"
-                value={companyName}
-                onChange={(e) => setCompanyName(e.target.value)}
+                value={formDraft.companyName}
+                onChange={(e) => updateDraftField('companyName', e.target.value)}
                 className="w-full bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] px-3 py-2 text-[#1f1f1f] placeholder-[#6b665c] focus:outline-none focus:bg-[#fcfcfa]"
               />
               {initialCompanyName && <p className="text-[10px] leading-4 text-[#6b665c]">Terisi dari kata pencarian; periksa dan ubah jika bukan nama perusahaan.</p>}
@@ -145,8 +173,8 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
                 type="text"
                 required
                 placeholder="e.g. Maya Indah (VP Sales)"
-                value={contactPerson}
-                onChange={(e) => setContactPerson(e.target.value)}
+                value={formDraft.contactPerson}
+                onChange={(e) => updateDraftField('contactPerson', e.target.value)}
                 className="w-full bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] px-3 py-2 text-[#1f1f1f] placeholder-[#6b665c] focus:outline-none focus:bg-[#fcfcfa]"
               />
             </div>
@@ -159,8 +187,8 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
               <input id="quick-lead-phone"
                 type="text"
                 placeholder="e.g. +628123456789"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
+                value={formDraft.phone}
+                onChange={(e) => updateDraftField('phone', e.target.value)}
                 className="w-full bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] px-3 py-2 text-[#1f1f1f] placeholder-[#6b665c] focus:outline-none focus:bg-[#fcfcfa] font-mono"
               />
             </div>
@@ -170,8 +198,8 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
               <input id="quick-lead-city"
                 type="text"
                 placeholder="e.g. Jakarta, Surabaya"
-                value={city}
-                onChange={(e) => setCity(e.target.value)}
+                value={formDraft.city}
+                onChange={(e) => updateDraftField('city', e.target.value)}
                 className="w-full bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] px-3 py-2 text-[#1f1f1f] placeholder-[#6b665c] focus:outline-none focus:bg-[#fcfcfa]"
               />
             </div>
@@ -179,17 +207,17 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
 
           <div className="space-y-1">
             <label htmlFor="quick-lead-email" className="text-[#1f1f1f] font-semibold">Email</label>
-            <input id="quick-lead-email" type="email" maxLength={320} placeholder="contoh: sales@perusahaan.id" value={email} onChange={(event) => setEmail(event.target.value)} className="w-full bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] px-3 py-2 text-[#1f1f1f] placeholder-[#6b665c] focus:outline-none focus:bg-[#fcfcfa]" />
+            <input id="quick-lead-email" type="email" maxLength={320} placeholder="contoh: sales@perusahaan.id" value={formDraft.email} onChange={(event) => updateDraftField('email', event.target.value)} className="w-full bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] px-3 py-2 text-[#1f1f1f] placeholder-[#6b665c] focus:outline-none focus:bg-[#fcfcfa]" />
           </div>
 
           <div className="space-y-1">
             <label htmlFor="quick-lead-address" className="text-[#1f1f1f] font-semibold">Alamat</label>
-            <textarea id="quick-lead-address" maxLength={500} rows={2} placeholder="Alamat usaha atau kantor" value={address} onChange={(event) => setAddress(event.target.value)} className="w-full resize-y bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] px-3 py-2 text-[#1f1f1f] placeholder-[#6b665c] focus:outline-none focus:bg-[#fcfcfa]" />
+            <textarea id="quick-lead-address" maxLength={500} rows={2} placeholder="Alamat usaha atau kantor" value={formDraft.address} onChange={(event) => updateDraftField('address', event.target.value)} className="w-full resize-y bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] px-3 py-2 text-[#1f1f1f] placeholder-[#6b665c] focus:outline-none focus:bg-[#fcfcfa]" />
           </div>
 
           <div className="rounded-[8px] border border-[#1f1f1f]/20 bg-white px-3 py-2.5">
             <label htmlFor="quick-lead-is-verified" className="flex min-h-11 cursor-pointer items-center gap-2 font-semibold text-[#1f1f1f]">
-              <input id="quick-lead-is-verified" type="checkbox" checked={isVerified} onChange={(event) => setIsVerified(event.target.checked)} className="h-4 w-4 accent-[#155e3c]" />
+              <input id="quick-lead-is-verified" type="checkbox" checked={formDraft.isVerified} onChange={(event) => updateDraftField('isVerified', event.target.checked)} className="h-4 w-4 accent-[#155e3c]" />
               <span>Kontak Terverifikasi</span>
             </label>
             <p className="pl-6 text-[10px] leading-4 text-[#6b665c]">Centang hanya setelah kontak dikonfirmasi secara manual.</p>
@@ -199,8 +227,8 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
           <div className="space-y-1">
             <label htmlFor="quick-lead-industry" className="text-[#1f1f1f] font-semibold">Industry</label>
             <select id="quick-lead-industry"
-              value={industry}
-              onChange={(e) => setIndustry(e.target.value)}
+              value={formDraft.industry}
+              onChange={(e) => updateDraftField('industry', e.target.value)}
               className="w-full bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] px-3 py-2 text-[#1f1f1f] font-medium focus:outline-none"
             >
               <option value="">Pilih industri (opsional)</option>
@@ -217,8 +245,8 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
             <div className="space-y-1">
               <label htmlFor="quick-lead-stage" className="text-[#1f1f1f] font-semibold">Initial Stage</label>
               <select id="quick-lead-stage"
-                value={pipelineStage}
-                onChange={(e) => setPipelineStage(e.target.value as PipelineStage)}
+                value={formDraft.pipelineStage}
+                onChange={(e) => updateDraftField('pipelineStage', e.target.value as PipelineStage)}
                 className="w-full bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] px-3 py-2 text-[#1f1f1f] font-medium focus:outline-none"
               >
                 {PIPELINE_STAGES.map((st) => (
@@ -234,8 +262,8 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
               <input id="quick-lead-deal-value"
                 type="number"
                 step="1000000"
-                value={dealValue}
-                onChange={(e) => setDealValue(Number(e.target.value))}
+                value={formDraft.dealValue}
+                onChange={(e) => updateDraftField('dealValue', Number(e.target.value))}
                 className="w-full bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] px-3 py-2 text-[#1f1f1f] font-bold font-mono focus:outline-none focus:bg-[#fcfcfa]"
               />
             </div>
@@ -250,8 +278,8 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
               </label>
               <input id="quick-lead-followup"
                 type="date"
-                value={nextFollowupDate}
-                onChange={(e) => setNextFollowupDate(e.target.value)}
+                value={formDraft.nextFollowupDate}
+                onChange={(e) => updateDraftField('nextFollowupDate', e.target.value)}
                 className="w-full bg-[#f8f5ee] border border-[#1f1f1f] rounded-[8px] px-3 py-2 text-[#1f1f1f] font-medium focus:outline-none focus:bg-[#fcfcfa]"
               />
             </div>
@@ -266,10 +294,10 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
                   <button
                     key={score}
                     type="button"
-                    onClick={() => setLeadScore(score)}
+                    onClick={() => updateDraftField('leadScore', score)}
                     aria-label={`Lead score ${score}`}
                     className={`py-1.5 rounded-[8px] border text-center font-bold transition-all ${
-                      leadScore === score
+                      formDraft.leadScore === score
                         ? score === 'Hot'
                           ? 'bg-[#1f1f1f] border-[#1f1f1f] text-[#ff4800]'
                           : 'bg-[#1f1f1f] border-[#1f1f1f] text-white'
@@ -287,11 +315,11 @@ export const QuickLeadModal: React.FC<QuickLeadModalProps> = ({
           <div className="flex items-center justify-end gap-2 pt-3 border-t border-[#1f1f1f]/10">
             <button
               type="button"
-              onClick={close}
+              onClick={discardDraft}
               disabled={isSubmitting}
               className="px-4 py-2 rounded-[8px] text-[#6b665c] hover:text-[#1f1f1f] font-semibold transition-colors"
             >
-              Cancel
+              Batal / Buang Draft
             </button>
             <button
               type="submit"

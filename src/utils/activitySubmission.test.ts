@@ -4,6 +4,7 @@ import { canSubmitActivity } from './activitySubmission.ts';
 
 const validSubmission = {
   selectedLeadId: 'lead-1',
+  availableLeadIds: ['lead-1'],
   notes: 'Catatan kunjungan',
   isSubmitting: false,
   isSummarizing: false,
@@ -17,4 +18,6 @@ test('Activity can be saved only after photo compression has completed', () => {
   assert.equal(canSubmitActivity({ ...validSubmission, isSummarizing: true }), false);
   assert.equal(canSubmitActivity({ ...validSubmission, notes: '   ' }), false);
   assert.equal(canSubmitActivity({ ...validSubmission, selectedLeadId: '' }), false);
+  assert.equal(canSubmitActivity({ ...validSubmission, availableLeadIds: [] }), false);
+  assert.equal(canSubmitActivity({ ...validSubmission, availableLeadIds: ['lead-2'] }), false);
 });

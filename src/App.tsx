@@ -24,6 +24,7 @@ import { confirmAndDiscardFailedQueueOperation } from './utils/queueDiscard.ts';
 import { reconcileDocumentSyncStatuses } from './utils/syncStatus.ts';
 import { cleanupOrphanedActivityPhotos, storeActivityPhoto } from './utils/activityPhotos.ts';
 import { canonicalizeModalHistoryState, createAppHistoryState, getModalLeadId, readAppHistoryState, type AppHistoryState, type AppModalName } from './utils/appHistory.ts';
+import { createScopedFormDraftWriter, isActivityFormDraft, isQuickLeadFormDraft } from './utils/formDrafts.ts';
 const DashboardView = lazy(() => import('./components/DashboardView.tsx').then(({ DashboardView }) => ({ default: DashboardView })));
 const PipelineKanbanView = lazy(() => import('./components/PipelineKanbanView.tsx').then(({ PipelineKanbanView }) => ({ default: PipelineKanbanView })));
 const GlobalLeadsView = lazy(() => import('./components/GlobalLeadsView.tsx').then(({ GlobalLeadsView }) => ({ default: GlobalLeadsView })));
@@ -169,13 +170,27 @@ export default function App() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
-    // Establish a canonical current entry. A modal cannot be restored from a
-    // browser entry alone after a full reload, so keep its tab but clear layers.
+    // Restore only an active form modal with a draft scoped to the signed-in owner/workspace.
     const existingState = readAppHistoryState(window.history.state, APP_TABS);
-    const initialState = createAppHistoryState(existingState?.tab ?? currentTabRef.current);
+    const ownerUid = getFirebaseAuth().currentUser?.uid ?? '';
+    const activeModal = existingState?.modalStack.at(-1);
+    const restoreQuickLead = activeModal === 'quickLead'
+      && isQuickLeadFormDraft(createScopedFormDraftWriter<Record<string, unknown>>('quick_lead', workspaceId, ownerUid).read());
+    const restoreActivity = activeModal === 'activityLogger'
+      && isActivityFormDraft(createScopedFormDraftWriter<Record<string, unknown>>('activity', workspaceId, ownerUid).read());
+    const initialTab = existingState?.tab ?? currentTabRef.current;
+    const initialState = restoreQuickLead
+      ? createAppHistoryState(initialTab, ['quickLead'], [null])
+      : restoreActivity
+        ? createAppHistoryState(initialTab, ['activityLogger'], [getModalLeadId(existingState!, 'activityLogger')])
+        : createAppHistoryState(initialTab);
     window.history.replaceState(initialState, '');
     historyEntryRef.current = initialState;
     setCurrentTab(initialState.tab);
+    if (restoreQuickLead) setHasOpenedQuickLead(true);
+    if (restoreActivity) setHasOpenedActivityLogger(true);
+    setIsQuickLeadOpen(restoreQuickLead);
+    setIsActivityLoggerOpen(restoreActivity);
 
     const handlePopState = (event: PopStateEvent) => {
       let destination = readAppHistoryState(event.state, APP_TABS);

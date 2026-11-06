@@ -89,6 +89,21 @@ export function resolvePinSessionStartupView(input: {
   return 'pin-gate';
 }
 
+/** Keep the previously authorized tree mounted but concealed only for a transient check of the same unexpired owner session. */
+export function shouldPreserveMountedPinSessionTree(input: {
+  gateState: 'checking' | 'verified' | 'pin-required' | 'enrollment-available' | 'enrollment-blocked' | 'unavailable';
+  sessionRevalidating: boolean;
+  currentOwnerUid: string;
+  verifiedOwnerUid: string | undefined;
+  sessionExpiresAt: string | undefined;
+  now?: number;
+}): boolean {
+  if (input.gateState !== 'verified' || !input.sessionRevalidating
+    || !input.currentOwnerUid || input.verifiedOwnerUid !== input.currentOwnerUid) return false;
+  const expiryMs = Date.parse(input.sessionExpiresAt ?? '');
+  return Number.isFinite(expiryMs) && expiryMs > (input.now ?? Date.now());
+}
+
 export interface QueueLifecycleDependencies {
   activate(ownerId: string): Promise<void>;
   deactivate(): void;

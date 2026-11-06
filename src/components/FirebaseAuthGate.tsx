@@ -28,6 +28,7 @@ import {
   hasFreshPinSessionHint,
   resolvePinSessionStartupView,
   savePinSessionHint,
+  shouldPreserveMountedPinSessionTree,
   validatePinSessionInBackground,
 } from '../accountPinSessionUi.ts';
 import { AccountPinGate } from './AccountPinGate.tsx';
@@ -123,6 +124,8 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
   const [sessionCheckTrigger, setSessionCheckTrigger] = useState(0);
   const [pinRefreshTrigger, setPinRefreshTrigger] = useState(0);
   const lastAuthUidRef = useRef<string | undefined>(undefined);
+  const verifiedSessionOwnerRef = useRef<string | undefined>(undefined);
+  const sessionRevalidateRef = useRef<(() => void) | null>(null);
   const queueLifecycleRef = useRef<ReturnType<typeof createSerializedQueueLifecycle> | null>(null);
   if (!queueLifecycleRef.current) {
     queueLifecycleRef.current = createSerializedQueueLifecycle({
@@ -149,9 +152,17 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
         await verifyFirebaseStartup();
         if (!active) return;
         unsubscribe = onIdTokenChanged(getFirebaseAuth(), (nextUser) => {
+          const previousUid = lastAuthUidRef.current;
+          if (serverPinRequired && nextUser && previousUid === nextUser.uid
+            && verifiedSessionOwnerRef.current === nextUser.uid) {
+            // Revalidate the same owner without resetting readiness or unmounting the CRM.
+            if (sessionRevalidateRef.current) sessionRevalidateRef.current();
+            else setSessionCheckTrigger((value) => value + 1);
+            return;
+          }
           const eventGeneration = ++generation;
           const isCurrent = () => active && eventGeneration === generation;
-          const previousUid = lastAuthUidRef.current;
+          if (verifiedSessionOwnerRef.current !== nextUser?.uid) verifiedSessionOwnerRef.current = undefined;
           if (previousUid && previousUid !== nextUser?.uid) clearPinSessionHint(previousUid);
           lastAuthUidRef.current = nextUser?.uid;
           setReady(false);
@@ -183,17 +194,20 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
                 if (!isCurrent() || result.outcome === 'stale') return;
                 if ('status' in result) setAccountPinStatus(result.status);
                 if (result.outcome === 'verified') {
+                  verifiedSessionOwnerRef.current = nextUser.uid;
                   setSessionExpiresAt(result.status.sessionExpiresAt);
                   setHasFreshPinHint(savePinSessionHint(nextUser.uid, result.status.sessionExpiresAt ?? ''));
                   setAccountPinGateState('verified');
                 } else if (result.outcome === 'pin-required'
                   || result.outcome === 'enrollment-available'
                   || result.outcome === 'enrollment-blocked') {
+                  verifiedSessionOwnerRef.current = undefined;
                   clearPinSessionHint(nextUser.uid);
                   setHasFreshPinHint(false);
                   setSessionExpiresAt(undefined);
                   setAccountPinGateState(result.outcome);
                 } else if (result.outcome === 'queue-unavailable') {
+                  verifiedSessionOwnerRef.current = undefined;
                   clearPinSessionHint(nextUser.uid);
                   setHasFreshPinHint(false);
                   setSessionExpiresAt(undefined);
@@ -201,6 +215,7 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
                   setStartupError('Antrean lokal tertunda tidak dapat dipulihkan dengan aman. Operasi tidak dikirim dan akses CRM ditahan; jangan hapus data situs sebelum antrean diperiksa.');
                   return;
                 } else {
+                  verifiedSessionOwnerRef.current = undefined;
                   clearPinSessionHint(nextUser.uid);
                   setHasFreshPinHint(false);
                   setSessionExpiresAt(undefined);
@@ -237,6 +252,7 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
           void queueLifecycle.deactivate();
           clearPinSessionHint(lastAuthUidRef.current ?? '');
           lastAuthUidRef.current = undefined;
+          verifiedSessionOwnerRef.current = undefined;
           setUser(null);
           setAccountPinStatus(undefined);
           setSessionExpiresAt(undefined);
@@ -288,6 +304,7 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
         if (!active || result.outcome === 'stale') return;
         if ('status' in result) setAccountPinStatus(result.status);
         if (result.outcome === 'verified') {
+          verifiedSessionOwnerRef.current = user.uid;
           setHasFreshPinHint(savePinSessionHint(user.uid, result.status.sessionExpiresAt ?? ''));
           setSessionExpiresAt(result.status.sessionExpiresAt);
           setSessionRevalidating(false);
@@ -295,12 +312,14 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
         } else if (result.outcome === 'pin-required'
           || result.outcome === 'enrollment-available'
           || result.outcome === 'enrollment-blocked') {
+          verifiedSessionOwnerRef.current = undefined;
           clearPinSessionHint(user.uid);
           setHasFreshPinHint(false);
           setAccountPinGateState(result.outcome);
           setSessionExpiresAt(undefined);
           setSessionRevalidating(false);
         } else if (result.outcome === 'queue-unavailable') {
+          verifiedSessionOwnerRef.current = undefined;
           clearPinSessionHint(user.uid);
           setHasFreshPinHint(false);
           setAccountPinGateState('unavailable');
@@ -308,6 +327,7 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
           setSessionExpiresAt(undefined);
           setSessionRevalidating(false);
         } else {
+          verifiedSessionOwnerRef.current = undefined;
           clearPinSessionHint(user.uid);
           setHasFreshPinHint(false);
           setAccountPinGateState('unavailable');
@@ -316,6 +336,7 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
         }
       } catch {
         if (!active) return;
+        verifiedSessionOwnerRef.current = undefined;
         clearPinSessionHint(user.uid);
         setHasFreshPinHint(false);
         setAccountPinGateState('unavailable');
@@ -325,6 +346,10 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
         checking = false;
       }
     };
+    const requestRevalidation = () => {
+      if (active) void revalidate();
+    };
+    sessionRevalidateRef.current = requestRevalidation;
 
     const expiryMs = Date.parse(sessionExpiresAt);
     const timerDelay = Number.isFinite(expiryMs) ? Math.max(0, expiryMs - Date.now()) : 0;
@@ -336,6 +361,7 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
     document.addEventListener('visibilitychange', handleVisibility);
     return () => {
       active = false;
+      if (sessionRevalidateRef.current === requestRevalidation) sessionRevalidateRef.current = null;
       window.clearTimeout(timer);
       window.removeEventListener('focus', handleVisibility);
       document.removeEventListener('visibilitychange', handleVisibility);
@@ -373,6 +399,7 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
       if (!confirmed) return;
     }
     clearPinSessionHint(lastAuthUidRef.current ?? user?.uid ?? '');
+    verifiedSessionOwnerRef.current = undefined;
     setHasFreshPinHint(false);
     await signOut(getFirebaseAuth());
   }, []);
@@ -417,9 +444,21 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
     sessionRevalidating,
     hasFreshHint: hasFreshPinHint,
   });
+  const preserveMountedApp = shouldPreserveMountedPinSessionTree({
+    gateState: accountPinGateState,
+    sessionRevalidating,
+    currentOwnerUid: user.uid,
+    verifiedOwnerUid: verifiedSessionOwnerRef.current,
+    sessionExpiresAt,
+  });
   if (requiresServerIssuedPinSession(firebaseTarget)
     && (pinStartupView === 'warm-shell' || pinStartupView === 'checking-shell')) {
-    return <SessionStartupShell mode="pin" hasFreshPinHint={pinStartupView === 'warm-shell'} />;
+    return (
+      <>
+        <SessionStartupShell mode="pin" hasFreshPinHint={pinStartupView === 'warm-shell'} />
+        {preserveMountedApp && <div className="hidden" hidden aria-hidden="true">{children}</div>}
+      </>
+    );
   }
   if (requiresServerIssuedPinSession(firebaseTarget)
     && (accountPinGateState !== 'verified' || sessionRevalidating)) {
@@ -446,7 +485,7 @@ export function FirebaseAuthGate({ children }: FirebaseAuthGateProps) {
         <span className="min-w-0 max-w-full truncate" title={user.email || 'Google user'}>{user.email || 'Google user'}</span>
         <button onClick={handleSignOut} className="min-h-11 shrink-0 rounded-[8px] px-2 font-bold text-[#ff4800] hover:bg-[#fff0e8]">Keluar</button>
       </div>
-      {children}
+      <div className="contents">{children}</div>
     </>
   );
 }
